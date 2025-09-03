@@ -1,0 +1,12 @@
+{
+  "name": "AC Pay Calculator",
+  "short_name": "AC Pay",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0b0c0f",
+  "theme_color": "#0a84ff",
+  "icons": [
+  { "src": "icons/icon-192-red.png", "sizes": "192x192", "type": "image/png" },
+  { "src": "icons/icon-512-red.png", "sizes": "512x512", "type": "image/png" }
+]
+}

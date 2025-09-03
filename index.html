@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';">
+  <meta name="theme-color" content="#0a84ff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180-red.png">
+  <title>AC Pay Calculator</title>
+  <style>
+    :root{ --bg:#0b0c0f; --card:#141825; --muted:#9aa3b2; --acc:#0a84ff; --txt:#e9edf1; --mono:"Menlo",monospace; }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
+    .wrap{
+  max-width:980px;
+  margin:0 auto;
+  padding:12px 14px 60px 14px;
+  /* Safe-area padding for iPhone notch */
+  padding-top: calc(12px + constant(safe-area-inset-top)); /* legacy iOS */
+  padding-top: calc(12px + env(safe-area-inset-top));      /* modern iOS */
+}
+    h1{font-size:22px;margin:8px 0 14px 0}
+    .tabs{display:flex;gap:8px;margin:0 0 10px 0}
+    .tabbtn{flex:1;background:#0f1218;border:1px solid #2a2f3b;color:#c9d2de;padding:12px 10px;border-radius:10px;font-weight:600;cursor:pointer}
+    .tabbtn.active{background:var(--acc);color:white;border-color:transparent}
+    .card{background:var(--card);border-radius:14px;padding:12px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);}
+    label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
+    select,input[type=number]{width:100%;padding:12px;border-radius:10px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt)}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .row-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
+    @media (max-width:760px){.row,.row-4{grid-template-columns:1fr}}
+    .slider{display:flex;align-items:center;gap:10px}
+    input[type=range]{width:100%}
+    .btn{background:var(--acc);color:white;border:none;border-radius:12px;padding:14px 16px;font-weight:700;cursor:pointer}
+    .btn:active{opacity:.9}
+    .hdr{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px;color:#cbd5e1;margin-top:10px}
+    .pill{background:#0f1218;border:1px solid #2a2f3b;border-radius:999px;padding:6px 10px}
+    .sectionTitle{margin:14px 0 8px 0;font-weight:800;font-size:13px;color:#cbd5e1;letter-spacing:.2px}
+    .audit{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+    .audit th,.audit td{border-bottom:1px solid #2a2f3b;padding:8px 6px;text-align:left;white-space:nowrap}
+    .audit th{color:#b9c2cf;font-weight:700;font-size:12px}
+    .audit td.num{text-align:right}
+    .simple{margin-top:12px}
+    .simple .block{margin-bottom:16px}
+    .simple .label{font-size:13px;color:var(--muted);margin-bottom:4px}
+    .simple .value{font-size:22px;font-weight:800;letter-spacing:.2px}
+    .hidden{display:none}
+    @keyframes tapPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.985); }
+  100% { transform: scale(1); }
+}
+.haptic-tap { animation: tapPulse 120ms ease-out; }
+    /* Audit table: safe horizontal scroll on small screens */
+.auditwrap{
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #2a2f3b;
+  border-radius: 12px;
+  margin-top: 8px;
+}
+
+/* Give the table a minimum width so columns don’t squish */
+.audit{
+  min-width: 760px; /* adjust if you prefer tighter */
+}
+
+/* Optional: sticky header while scrolling */
+.audit thead th{
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  z-index: 1;
+}
+
+/* Slightly tighter on very small screens */
+@media (max-width: 420px){
+  .audit{ min-width: 700px; }
+  .audit th, .audit td{ font-size: 11px; }
+}
+    /* Prevent iOS auto-zoom on input focus (≥16px) */
+select, input { font-size: 16px; }
+
+/* Reduce unintended zoom/pan gestures */
+body { touch-action: manipulation; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AC Pay Calculator</h1>
+
+    <div class="tabs">
+      <button class="tabbtn active" data-tab="annual" id="tabbtn-annual">Annual</button>
+      <button class="tabbtn" data-tab="vo" id="tabbtn-vo">VO</button>
+    </div>
+
+    <!-- Annual Tab -->
+    <div class="card" id="tab-annual">
+      <div class="row-4">
+        <div>
+          <label>Seat</label>
+          <select id="seat">
+            <option selected>FO</option>
+            <option>CA</option>
+            <option>RP</option>
+          </select>
+        </div>
+        <div>
+          <label>Aircraft</label>
+          <select id="ac">
+            <option>777</option><option>787</option><option>330</option><option>767</option>
+            <option selected>320</option><option>737</option><option>220</option>
+          </select>
+        </div>
+        <div>
+          <label>Year</label>
+          <select id="year">
+            <option>2023</option><option>2024</option><option selected>2025</option><option>2026</option>
+            <option>2027</option><option>2028</option><option>2029</option><option>2030</option><option>2031</option>
+          </select>
+        </div>
+        <div>
+          <label>Step (Jan 1)</label>
+          <select id="step">
+            <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+            <option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option>
+          </select>
+        </div>
+      </div>
+      <div class="row-4" style="margin-top:10px">
+        <div>
+          <label>Province/Territory</label>
+          <select id="prov">
+            <option>AB</option><option>BC</option><option selected>MB</option><option>NB</option><option>NL</option><option>NS</option>
+            <option>NT</option><option>NU</option><option>ON</option><option>PE</option><option>QC</option><option>SK</option><option>YT</option>
+          </select>
+        </div>
+        <div>
+          <label>Avg monthly credit hours</label>
+          <input id="avgHrs" type="number" min="0" max="200" step="0.25" value="80">
+        </div>
+        <div class="hdr">
+          <span class="pill"><input id="tie" type="checkbox" checked> Tie Year/Step</span>
+          <span class="pill"><input id="xlr" type="checkbox"> XLR</span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="slider">
+          <label style="min-width:54px">ESOP</label>
+          <input id="esop" type="range" min="2" max="10" value="10" step="1">
+          <div class="pill"><span id="esopPct">10%</span></div>
+        </div>
+        <button id="calc" class="btn" type="button">Calculate</button>
+      </div>
+      <div id="out"></div>
+    </div>
+
+    <!-- VO Tab -->
+    <div class="card hidden" id="tab-vo">
+      <div class="row-4">
+        <div>
+          <label>Seat</label>
+          <select id="ot-seat">
+            <option selected>FO</option>
+            <option>CA</option>
+            <option>RP</option>
+          </select>
+        </div>
+        <div>
+          <label>Aircraft</label>
+          <select id="ot-ac">
+            <option>777</option><option>787</option><option>330</option><option>767</option>
+            <option selected>320</option><option>737</option><option>220</option>
+          </select>
+        </div>
+        <div>
+          <label>Year</label>
+          <select id="ot-year">
+            <option>2023</option><option>2024</option><option selected>2025</option><option>2026</option>
+            <option>2027</option><option>2028</option><option>2029</option><option>2030</option><option>2031</option>
+          </select>
+        </div>
+        <div>
+          <label>Step</label>
+          <select id="ot-step">
+            <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+            <option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option>
+          </select>
+        </div>
+      </div>
+      <div class="row-4" style="margin-top:10px">
+        <div>
+          <label>Province/Territory</label>
+          <select id="ot-prov">
+            <option>AB</option><option>BC</option><option selected>MB</option><option>NB</option><option>NL</option><option>NS</option>
+            <option>NT</option><option>NU</option><option>ON</option><option>PE</option><option>QC</option><option>SK</option><option>YT</option>
+          </select>
+        </div>
+        <div>
+          <label>Credit Hours</label>
+          <input id="ot-cred-h" type="number" min="0" step="1" value="10">
+        </div>
+        <div>
+          <label>Credit Minutes</label>
+          <input id="ot-cred-m" type="number" min="0" max="59" step="1" value="0">
+        </div>
+        <div class="hdr">
+          <span class="pill"><input id="ot-tie" type="checkbox"> Tie Year/Step</span>
+          <span class="pill"><input id="ot-xlr" type="checkbox"> XLR</span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="ot-calc" class="btn" type="button">Calculate VO</button>
+      </div>
+      <div id="ot-out"></div>
+    </div>
+
+  </div>
+  <script src="app.js" defer></script>
+</body>
+</html>
