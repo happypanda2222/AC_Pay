@@ -458,7 +458,9 @@ function computeAnnual(params){
     const rate = rateFor(seat, ac, py, st, !!params.xlrOn);
     const dayPay = dailyHours*rate; pension += dayPay*pct;
   }
-  const taxable = Math.max(0, gross - pension);
+  const rrsp = Math.max(0, +params.rrsp || 0);
+  // Taxable income before RRSP: used to compute original tax and monthly figures
+  const taxable_pre = Math.max(0, gross - pension);
 
   // Precise CPP/QPP & EI using daily caps
   const ded = computeCPP_EI_Daily({
@@ -479,18 +481,28 @@ function computeAnnual(params){
   const p = provMap[province];
   if (!p) throw new Error('Unsupported province '+province);
   // Taxes with credits on lowest rates
-  const fed_gross = taxFromBrackets(taxable, fedData.brackets);
-  const prov_gross = taxFromBrackets(taxable, p.brackets);
+  const fed_gross_pre  = taxFromBrackets(taxable_pre, fedData.brackets);
+  const prov_gross_pre = taxFromBrackets(taxable_pre, p.brackets);
   const fed_low = fedData.brackets[0][1];
   const prov_low = p.brackets[0][1];
-  const fed_tax = Math.max(0, fed_gross - (fed_low * federalBPA(year, taxable) + 0.15 * (cpp_total + eiPrem)));
-  const prov_tax = Math.max(0, prov_gross - (prov_low * p.bpa + prov_low * (cpp_total + eiPrem)));
-  const income_tax = fed_tax + prov_tax;
+  const fed_tax_pre  = Math.max(0, fed_gross_pre - (fed_low * federalBPA(year, taxable_pre) + 0.15 * (cpp_total + eiPrem)));
+  const prov_tax_pre = Math.max(0, prov_gross_pre - (prov_low * p.bpa + prov_low * (cpp_total + eiPrem)));
+  const income_tax_pre = fed_tax_pre + prov_tax_pre;
 
-  // ESOP and match (approx. after‑tax value using combined marginal rate at taxable)
+  // ESOP contribution based on gross
   const esop = Math.min((+params.esopPct/100)*gross, 30000);
-  const comb_top = marginalRate(taxable, fedData.brackets) + marginalRate(taxable, p.brackets);
-  const esop_match_net = +(0.30*esop*(1 - comb_top)).toFixed(2);
+
+  // Compute taxable income after RRSP contribution
+  const taxable_rrsp = Math.max(0, taxable_pre - rrsp);
+  const fed_gross_rrsp  = taxFromBrackets(taxable_rrsp, fedData.brackets);
+  const prov_gross_rrsp = taxFromBrackets(taxable_rrsp, p.brackets);
+  const fed_tax_rrsp  = Math.max(0, fed_gross_rrsp - (fed_low * federalBPA(year, taxable_rrsp) + 0.15 * (cpp_total + eiPrem)));
+  const prov_tax_rrsp = Math.max(0, prov_gross_rrsp - (prov_low * p.bpa + prov_low * (cpp_total + eiPrem)));
+  const income_tax = fed_tax_rrsp + prov_tax_rrsp;
+
+  // ESOP match after tax uses marginal rate at taxable income after RRSP
+  const comb_top = marginalRate(taxable_rrsp, fedData.brackets) + marginalRate(taxable_rrsp, p.brackets);
+  const esop_match_net = +(0.30 * esop * (1 - comb_top)).toFixed(2);
 
   // Union dues (1.85% of gross) computed monthly
   const union = computeUnionDuesMonthly({
@@ -504,12 +516,15 @@ function computeAnnual(params){
 
   // Totals
   const annual_health = HEALTH_MO*12;
-  const net = gross - income_tax - cpp_total - eiPrem - annual_health - union.annual + esop_match_net;
+  // Annual net: subtract tax, payroll deductions, RRSP contributions and add employer ESOP match
+  const net = gross - income_tax - cpp_total - eiPrem - annual_health - union.annual - rrsp + esop_match_net;
 
+  // Monthly results: do not adjust net for RRSP contributions; use pre‑RRSP taxable tax and net for monthly snapshot
   const monthly = {
     gross: +(gross/12).toFixed(2),
-    net: +((net - esop - esop_match_net)/12).toFixed(2), // take‑home excluding ESOP and match
-    income_tax: +(income_tax/12).toFixed(2),
+    // monthly net excludes ESOP contributions and match; and does not reflect RRSP contributions
+    net: +(((gross - income_tax_pre - cpp_total - eiPrem - annual_health - union.annual + esop_match_net) - esop - esop_match_net)/12).toFixed(2),
+    income_tax: +(income_tax_pre/12).toFixed(2),
     cpp: +(cpp_total/12).toFixed(2),
     ei: +(eiPrem/12).toFixed(2),
     health: +(annual_health/12).toFixed(2),
@@ -530,6 +545,7 @@ function computeAnnual(params){
     pension:+pension.toFixed(2),
     esop:+esop.toFixed(2),
     esop_match_after_tax:+esop_match_net.toFixed(2),
+    rrsp:+rrsp.toFixed(2),
     monthly,
     step_jan1:stepJan1
   };
@@ -564,31 +580,41 @@ function computeMonthly(params){
   const step = params.tieOn ? stepOnJan1(params.stepInput, true, year) : clampStep(params.stepInput);
   const rate = rateFor(seat, ac, year, step, !!params.xlrOn);
   const credits = Math.max(0, +params.credits);
+  const voCredits = Math.max(0, +params.voCredits || 0);
+  // Regular pay hours (<=85), overtime beyond 85, and VO credits (all double time)
   const regHours = Math.min(85, credits);
   const overtime = Math.max(0, credits - 85);
-  const gross = regHours * rate + overtime * 2 * rate;
+  const gross = regHours * rate + overtime * 2 * rate + voCredits * 2 * rate;
   const fedData = (year <= 2025 ? FED : FED_2026);
   const provMap = (year <= 2025 ? PROV : PROV_2026);
   const p = provMap[province];
   if (!p) throw new Error('Unsupported province '+province);
-  const fed_m = marginalRate(gross, fedData.brackets);
-  const prov_m = marginalRate(gross, p.brackets);
+  // Annualize gross and pension for marginal rate determination
+  const annualGrossApprox = gross * 12;
+  const pensionRate = pensionRateOnDate(new Date());
+  const annualPensionApprox = annualGrossApprox * pensionRate;
+  const taxableAnnualApprox = Math.max(0, annualGrossApprox - annualPensionApprox);
+  const fed_m = marginalRate(taxableAnnualApprox, fedData.brackets);
+  const prov_m = marginalRate(taxableAnnualApprox, p.brackets);
+  // Monthly tax approximated using marginal rates
   const tax = gross * (fed_m + prov_m);
-  // Approximate CPP/QPP & EI contributions by annualizing and dividing by 12
-  const ded = computeCPP_EI_Daily({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits, province });
+  // Approximate CPP/QPP & EI contributions by annualizing and dividing by 12; include VO credits
+  const ded = computeCPP_EI_Daily({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits + voCredits, province });
   const cpp_month = ded.cpp_total / 12;
   const ei_month  = ded.ei / 12;
-  // Union dues: use average monthly from annual computation
-  const union = computeUnionDuesMonthly({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits });
+  // Union dues: use average monthly from annual computation (include VO credits)
+  const union = computeUnionDuesMonthly({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits + voCredits });
   const union_month = union.avgMonthly;
   // Pension: approximate using current pension rate
-  const pensionRate = pensionRateOnDate(new Date());
   const pension = gross * pensionRate;
   const health = HEALTH_MO;
   const esop = Math.min((+params.esopPct/100)*gross, 30000/12);
   const esop_match_after_tax = 0.30 * esop * (1 - (fed_m + prov_m));
-  const net = gross - tax - cpp_month - ei_month - health - union_month - pension + esop_match_after_tax;
-  return { rate, credits, regHours, overtime, gross, net, tax, cpp: cpp_month, ei: ei_month, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, step_used: step };
+  // TAFB: per diem hours times $5.427/hr (paid after tax)
+  const tafbHours = Math.max(0, +params.tafb || 0);
+  const tafb_net = tafbHours * 5.427;
+  const net = gross - tax - cpp_month - ei_month - health - union_month - pension + esop_match_after_tax + tafb_net;
+  return { rate, credits, voCredits, regHours, overtime, gross, net, tax, cpp: cpp_month, ei: ei_month, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, tafb_net, step_used: step };
 }
 
 // --- UI helpers ---
@@ -681,6 +707,7 @@ function renderAnnual(res, params){
       <div class="block"><div class="label">Pension</div><div class="value">${money(res.pension)}</div></div>
       <div class="block"><div class="label">ESOP Contributions</div><div class="value">${money(res.esop)}</div></div>
       <div class="block"><div class="label">ESOP match (after tax)</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
+      <div class="block"><div class="label">RRSP Contributions</div><div class="value">${money(res.rrsp)}</div></div>
     </div>`;
   const auditRows = res.audit.map(seg=>{
     const fmt = d => d.toISOString().slice(0,10);
@@ -727,6 +754,7 @@ function renderMonthly(res, params){
     <div class="simple">
       <div class="block"><div class="label">Hourly Rate</div><div class="value">${money(res.rate)}</div></div>
       <div class="block"><div class="label">Credits</div><div class="value">${res.credits.toFixed(2)}</div></div>
+      <div class="block"><div class="label">VO Credits</div><div class="value">${res.voCredits.toFixed(2)}</div></div>
       <div class="block"><div class="label">Gross</div><div class="value">${money(res.gross)}</div></div>
       <div class="block"><div class="label">Net</div><div class="value">${money(res.net)}</div></div>
       <div class="block"><div class="label">Income Tax</div><div class="value">${money(res.tax)}</div></div>
@@ -737,6 +765,7 @@ function renderMonthly(res, params){
       <div class="block"><div class="label">ESOP</div><div class="value">${money(res.esop)}</div></div>
       <div class="block"><div class="label">ESOP match (after tax)</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
       <div class="block"><div class="label">Union Dues</div><div class="value">${money(res.union)}</div></div>
+      <div class="block"><div class="label">TAFB (after tax)</div><div class="value">${money(res.tafb_net)}</div></div>
       <div class="block"><div class="label">Marginal FED</div><div class="value">${(100*res.fed_m).toFixed(1)}%</div></div>
       <div class="block"><div class="label">Marginal PROV</div><div class="value">${(100*res.prov_m).toFixed(1)}%</div></div>
     </div>`;
@@ -755,7 +784,8 @@ function calcAnnual(){
       xlrOn: document.getElementById('xlr').checked,
       avgMonthlyHours: +document.getElementById('avgHrs').value,
       province: document.getElementById('prov').value,
-      esopPct: +document.getElementById('esop').value
+      esopPct: +document.getElementById('esop').value,
+      rrsp: +document.getElementById('rrsp').value
     };
     const res = computeAnnual(params);
     renderAnnual(res, params);
@@ -795,6 +825,8 @@ function calcMonthly(){
       xlrOn: document.getElementById('mon-xlr').checked,
       province: document.getElementById('mon-prov').value,
       credits: +document.getElementById('mon-hrs').value,
+      voCredits: +document.getElementById('mon-vo').value,
+      tafb: +document.getElementById('mon-tafb').value,
       esopPct: +document.getElementById('mon-esop').value
     };
     const res = computeMonthly(params);
