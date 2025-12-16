@@ -670,72 +670,68 @@ if ('serviceWorker' in navigator) {
       .catch(() => { /* no-op */ });
   });
 }
-// ===== Auto-select current Year & Step on app load =====
+// ===== Auto-select current Year & Step on app load (scoped) =====
+(() => {
 
-// CONFIG
-const HIRE_DATE = new Date(2024, 7, 7); // Aug 7 2024
-const YEAR_ROLLOVER_MONTH = 8; // September
-const YEAR_ROLLOVER_DAY = 30;
-const STEP_ROLLOVER_MONTH = 10; // November
-const STEP_ROLLOVER_DAY = 5;
+  const HIRE_DATE = new Date(2024, 7, 7); // Aug 7 2024
+  const YEAR_ROLLOVER_MONTH = 8; // September
+  const YEAR_ROLLOVER_DAY = 30;
+  const STEP_ROLLOVER_MONTH = 10; // November
+  const STEP_ROLLOVER_DAY = 10;
 
-function getCurrentPayYear(today) {
-  const rollover = new Date(
-    today.getFullYear(),
-    YEAR_ROLLOVER_MONTH,
-    YEAR_ROLLOVER_DAY
-  );
-  return today > rollover ? today.getFullYear() : today.getFullYear() - 1;
-}
-
-function getCurrentStep(today) {
-  if (today < HIRE_DATE) return 1;
-
-  let step = 1;
-  let yearCursor = HIRE_DATE.getFullYear();
-
-  while (true) {
-    const nextStepDate = new Date(
-      yearCursor,
-      STEP_ROLLOVER_MONTH,
-      STEP_ROLLOVER_DAY
+  function getCurrentPayYear(d) {
+    const rollover = new Date(
+      d.getFullYear(),
+      YEAR_ROLLOVER_MONTH,
+      YEAR_ROLLOVER_DAY
     );
+    return d > rollover ? d.getFullYear() : d.getFullYear() - 1;
+  }
 
-    if (today >= nextStepDate) {
-      step++;
-      yearCursor++;
-    } else {
-      break;
+  function getCurrentStep(d) {
+    if (d < HIRE_DATE) return 1;
+
+    let stepNum = 1;
+    let y = HIRE_DATE.getFullYear();
+
+    while (true) {
+      const nextStep = new Date(y, STEP_ROLLOVER_MONTH, STEP_ROLLOVER_DAY);
+      if (d >= nextStep) {
+        stepNum++;
+        y++;
+      } else {
+        break;
+      }
+    }
+    return stepNum;
+  }
+
+  function setDropdownValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    for (let i = 0; i < el.options.length; i++) {
+      if (String(el.options[i].value) === String(value)) {
+        el.selectedIndex = i;
+        el.dispatchEvent(new Event("change"));
+        break;
+      }
     }
   }
 
-  return step;
-}
+  document.addEventListener("DOMContentLoaded", () => {
+    const now = new Date();
 
-function setDropdownValue(selectId, value) {
-  const el = document.getElementById(selectId);
-  if (!el) return;
+    const payYear = getCurrentPayYear(now);
+    const payStep = getCurrentStep(now);
 
-  for (let i = 0; i < el.options.length; i++) {
-    if (String(el.options[i].value) === String(value)) {
-      el.selectedIndex = i;
-      el.dispatchEvent(new Event("change"));
-      break;
-    }
-  }
-}
+    // Annual tab
+    setDropdownValue("yearSelectAnnual", payYear);
+    setDropdownValue("stepSelectAnnual", payStep);
 
-document.addEventListener("DOMContentLoaded", () => {
-  const today = new Date();
+    // VO tab
+    setDropdownValue("yearSelectVO", payYear);
+    setDropdownValue("stepSelectVO", payStep);
+  });
 
-  const year = getCurrentPayYear(today);
-  const step = getCurrentStep(today);
-
-  // ANNUAL TAB
-  setDropdownValue("yearSelectAnnual", year);
-  setDropdownValue("stepSelectAnnual", step);
-
-  // VO TAB
-  setDropdownValue("yearSelectVO", year);
-  setDropdownValue("stepSelectVO", step);
-});
+})();
