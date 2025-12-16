@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180-red.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180-red.png">
   <title>AC Pay Calculator</title>
   <style>
     :root{ --bg:#0b0c0f; --card:#141825; --muted:#9aa3b2; --acc:#0a84ff; --txt:#e9edf1; --mono:"Menlo",monospace; }
@@ -63,30 +63,32 @@
   border-radius: 12px;
   margin-top: 8px;
 }
-
-/* Give the table a minimum width so columns don’t squish */
-.audit{
+    /* Give the table a minimum width so columns don’t squish */
+    .audit{
   min-width: 760px; /* adjust if you prefer tighter */
 }
-
-/* Optional: sticky header while scrolling */
-.audit thead th{
+    /* Optional: sticky header while scrolling */
+    .audit thead th{
   position: sticky;
   top: 0;
   background: var(--card);
   z-index: 1;
 }
-
-/* Slightly tighter on very small screens */
-@media (max-width: 420px){
+    /* Slightly tighter on very small screens */
+    @media (max-width: 420px){
   .audit{ min-width: 700px; }
   .audit th, .audit td{ font-size: 11px; }
 }
     /* Prevent iOS auto-zoom on input focus (≥16px) */
-select, input { font-size: 16px; }
-
-/* Reduce unintended zoom/pan gestures */
-body { touch-action: manipulation; }
+    select, input { font-size: 16px; }
+    /* Reduce unintended zoom/pan gestures */
+    body { touch-action: manipulation; }
+    /* Align numeric headers with numeric columns in audit table */
+    .audit thead th:nth-child(5),
+    .audit thead th:nth-child(6),
+    .audit thead th:nth-child(7) {
+      text-align: right;
+    }
   </style>
 </head>
 <body>
@@ -94,7 +96,9 @@ body { touch-action: manipulation; }
     <h1>AC Pay Calculator</h1>
 
     <div class="tabs">
+      <!-- Tab buttons: Monthly inserted between Annual and VO -->
       <button class="tabbtn active" data-tab="annual" id="tabbtn-annual">Annual</button>
+      <button class="tabbtn" data-tab="monthly" id="tabbtn-monthly">Monthly</button>
       <button class="tabbtn" data-tab="vo" id="tabbtn-vo">VO</button>
     </div>
 
@@ -158,6 +162,73 @@ body { touch-action: manipulation; }
         <button id="calc" class="btn" type="button">Calculate</button>
       </div>
       <div id="out"></div>
+    </div>
+
+    <!-- Monthly Tab -->
+    <!--
+      The Monthly tab mirrors the Annual tab’s controls but allows pilots to enter a specific
+      monthly credit hour value.  It uses the same seat, aircraft, year, step, province,
+      tie year/step and XLR toggles, and ESOP slider.  Results show a monthly snapshot
+      including gross, net, tax, CPP/QPP, EI, pension, ESOP contributions and union dues.
+    -->
+    <div class="card hidden" id="tab-monthly">
+      <div class="row-4">
+        <div>
+          <label>Seat</label>
+          <select id="mon-seat">
+            <option selected>FO</option>
+            <option>CA</option>
+            <option>RP</option>
+          </select>
+        </div>
+        <div>
+          <label>Aircraft</label>
+          <select id="mon-ac">
+            <option>777</option><option>787</option><option>330</option><option>767</option>
+            <option selected>320</option><option>737</option><option>220</option>
+          </select>
+        </div>
+        <div>
+          <label>Year</label>
+          <select id="mon-year">
+            <option>2023</option><option>2024</option><option selected>2025</option><option>2026</option>
+            <option>2027</option><option>2028</option><option>2029</option><option>2030</option><option>2031</option>
+          </select>
+        </div>
+        <div>
+          <label>Step (Jan 1)</label>
+          <select id="mon-step">
+            <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+            <option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option>
+          </select>
+        </div>
+      </div>
+      <div class="row-4" style="margin-top:10px">
+        <div>
+          <label>Province/Territory</label>
+          <select id="mon-prov">
+            <option>AB</option><option>BC</option><option selected>MB</option><option>NB</option><option>NL</option><option>NS</option>
+            <option>NT</option><option>NU</option><option>ON</option><option>PE</option><option>QC</option><option>SK</option><option>YT</option>
+          </select>
+        </div>
+        <div>
+          <label>Monthly credit hours</label>
+          <input id="mon-hrs" type="number" min="0" max="300" step="0.25" value="80">
+        </div>
+        <div class="hdr">
+          <span class="pill"><input id="mon-tie" type="checkbox"> Tie Year/Step</span>
+          <span class="pill"><input id="mon-xlr" type="checkbox"> XLR</span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="slider">
+          <label style="min-width:54px">ESOP</label>
+          <input id="mon-esop" type="range" min="2" max="10" value="10" step="1">
+          <div class="pill"><span id="mon-esopPct">10%</span></div>
+        </div>
+        <button id="mon-calc" class="btn" type="button">Calculate</button>
+      </div>
+      <div id="mon-out"></div>
     </div>
 
     <!-- VO Tab -->

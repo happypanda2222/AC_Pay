@@ -1,3 +1,14 @@
+/*
+ * This is an enhanced version of the original AC Pay Calculator logic.  It adds
+ * support for 2026 federal and provincial tax brackets, introduces a new
+ * Monthly tab calculation, and fixes a cosmetic alignment issue in the audit
+ * table headers.  Tax years 2025 and earlier will continue to use the 2025
+ * brackets and credits defined below, while years 2026 and beyond will use
+ * the 2026 data defined alongside.  The monthly calculator computes gross
+ * pay on a per‑month basis using user‑entered credit hours and applies
+ * double‑time pay for credits in excess of 85 per month.
+ */
+
 'use strict';
 // --- Lock zoom: block pinch & double-tap zoom (best-effort for iOS PWAs) ---
 (function preventZoom(){
@@ -113,7 +124,7 @@ const PAY_TABLES = {
 
 // === Projected 2027–2031: FO & RP anchored to CA Step 12 ===
 // Captain "composite" anchor interpreted as CA Step 12 on the same fleet/year.
-// FO1/FO2 remain flat across fleets (use the year's flat values as-is).
+// FO1/FO2 remain flat across fleets (use the year's flat values as‑is).
 
 const NB_FLEETS = new Set(['320','737','220']);           // narrow-body
 const WB_FLEETS = new Set(['777','787','330','767']);      // wide-body
@@ -231,6 +242,27 @@ const PROV = {
   SK:{brackets:[[53463,0.105],[152750,0.125],[Infinity,0.145]], bpa:19241},
   YT:{brackets:[[57375,0.064],[114750,0.09],[177882,0.109],[500000,0.128],[Infinity,0.15]], bpa:15805}
 };
+// --- 2026 Tax Data ---
+// Federal: threshold and rates indexed for 2026; BPA increases with clawback starting at $181,440 and ending at $258,482.
+const FED_2026 = { brackets:[[58523,0.14],[117045,0.205],[181440,0.26],[258482,0.29],[Infinity,0.33]],
+                   bpa_base:14829,bpa_additional:1623,bpa_addl_start:181440,bpa_addl_end:258482 };
+// Provincial: 2026 brackets indexed; BPAs generally mirror 2025 values except where noted (AB and BC).
+const PROV_2026 = {
+  AB:{brackets:[[61200,0.08],[154259,0.10],[185111,0.12],[246813,0.13],[370220,0.14],[Infinity,0.15]], bpa:22769},
+  BC:{brackets:[[50363,0.0506],[100728,0.077],[115648,0.105],[140430,0.1229],[190405,0.147],[265545,0.168],[Infinity,0.205]], bpa:13216},
+  MB:{brackets:[[47000,0.108],[100000,0.1275],[Infinity,0.174]], bpa:15780},
+  NB:{brackets:[[52333,0.094],[104666,0.14],[193861,0.16],[Infinity,0.195]], bpa:13261},
+  NL:{brackets:[[44678,0.087],[89355,0.145],[154639,0.158],[215913,0.178],[275999,0.198],[551999,0.208],[1103999,0.213],[Infinity,0.218]], bpa:10882},
+  NS:{brackets:[[30995,0.0879],[61991,0.1495],[97417,0.1667],[157124,0.175],[Infinity,0.21]], bpa:8841},
+  NT:{brackets:[[53003,0.059],[106009,0.086],[172346,0.122],[Infinity,0.1405]], bpa:16673},
+  NU:{brackets:[[55801,0.04],[111602,0.07],[181439,0.09],[Infinity,0.115]], bpa:16862},
+  ON:{brackets:[[53891,0.0505],[107785,0.0915],[150000,0.1116],[220000,0.1216],[Infinity,0.1316]], bpa:12399},
+  PE:{brackets:[[33928,0.095],[65820,0.1347],[106890,0.166],[142250,0.1762],[Infinity,0.19]], bpa:13000},
+  QC:{brackets:[[53255,0.14],[106495,0.19],[129590,0.24],[Infinity,0.2575]], bpa:18571},
+  SK:{brackets:[[54532,0.105],[155805,0.125],[Infinity,0.145]], bpa:19241},
+  YT:{brackets:[[58523,0.064],[117045,0.09],[181440,0.109],[500000,0.128],[Infinity,0.15]], bpa:15805}
+};
+
 const CPP = {ympe:71300,yampe:81200,ybe:3500, rate_base:0.0595, rate_cpp2:0.04, max_base:4034.10, max_cpp2:396.00};
 const QPP = {ympe:71300,yampe:81200,ybe:3500, rate_base_total:0.064, rate_qpp2:0.04};
 const EI = {mie:65700, rate:0.0164, rate_qc:0.0131, max_prem:1077.48, max_prem_qc:860.67};
@@ -239,62 +271,23 @@ const EI = {mie:65700, rate:0.0164, rate_qc:0.0131, max_prem:1077.48, max_prem_q
 function clampStep(s){ s=+s; if (s<1) return 1; if (s>12) return 12; return s; }
 
 /*
- * Automatically select the current pay year and step on initial page load.  The
- * pay year changes after September 30 each year.  The pay step increases on
- * November 10, but only after the pilot has completed at least one full
- * year of service (hire date: Aug 7 2024).  Each subsequent Nov 10 after
- * that threshold advances the step.  If the resulting step exceeds 12,
- * it is clamped to 12.  This function updates both the Annual and VO
- * dropdowns and fires change events so downstream logic reacts accordingly.
+ * Compute the federal basic personal amount (BPA) for a given income and year.
+ * For 2025 the BPA ranges from $14,538 to $16,129 with clawback between
+ * $177,882 and $253,414.  For 2026 the BPA ranges from $14,829 to $16,452
+ * with clawback between $181,440 and $258,482.  Years 2025 and prior use
+ * the 2025 data; years 2026 and beyond use the 2026 data.
  */
-function autoSelectDefaults() {
-  try {
-    const now = new Date();
-    // Determine pay year: dates on/after Oct 1 use the current year, else previous year.
-    const rollover = new Date(now.getFullYear(), SWITCH.m - 1, SWITCH.d);
-    let payYear = now.getFullYear();
-    if (now < rollover) {
-      payYear = now.getFullYear() - 1;
-    }
-    // Determine current step: first eligible progression date is one year after hire.
-    const hireDate = DOH;
-    const threshold = new Date(hireDate.getFullYear() + 1, hireDate.getMonth(), hireDate.getDate());
-    let step = 1;
-    let y = threshold.getFullYear();
-    while (true) {
-      const stepDate = new Date(y, PROGRESSION.m - 1, PROGRESSION.d);
-      if (stepDate >= threshold && stepDate <= now) {
-        step++;
-        y++;
-      } else {
-        break;
-      }
-    }
-    if (step > 12) step = 12;
-    // Apply to dropdowns
-    const ids = ['year','step','ot-year','ot-step'];
-    const vals = [payYear, step, payYear, step];
-    ids.forEach((id, idx) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      for (let i = 0; i < el.options.length; i++) {
-        if (String(el.options[i].value) === String(vals[idx])) {
-          el.selectedIndex = i;
-          el.dispatchEvent(new Event('change'));
-          break;
-        }
-      }
-    });
-  } catch (e) {
-    console.error('autoSelectDefaults error:', e);
+function federalBPA(year, income){
+  const b = (year <= 2025 ? FED : FED_2026);
+  let addl = 0;
+  if (income <= b.bpa_addl_start) addl = b.bpa_additional;
+  else if (income < b.bpa_addl_end){
+    const frac = (b.bpa_addl_end - income) / (b.bpa_addl_end - b.bpa_addl_start);
+    addl = b.bpa_additional * Math.max(0, Math.min(1, frac));
   }
+  return b.bpa_base + addl;
 }
-function federalBPA2025(income){
-  const b=FED; let addl=0;
-  if (income<=b.bpa_addl_start) addl=b.bpa_additional;
-  else if (income<b.bpa_addl_end){ const frac=(b.bpa_addl_end-income)/(b.bpa_addl_end-b.bpa_addl_start); addl=b.bpa_additional*Math.max(0,Math.min(1,frac)); }
-  return b.bpa_base+addl;
-}
+
 function taxFromBrackets(taxable, brackets){
   let tax=0,last=0;
   for (let i=0;i<brackets.length;i++){
@@ -345,7 +338,7 @@ function computeCPP_EI_Daily({ year, seat, ac, stepJan1, xlrOn, avgMonthlyHours,
   // Cumulative earnings trackers (used to compute incremental eligible bases)
   let cumGross = 0;           // cumulative pensionable/insurable gross
   let cumEIBase = 0;          // EI base already counted
-  let cumBaseElig = 0;        // CPP/QPP Tier-1 eligible base counted (above YBE, up to YMPE)
+  let cumBaseElig = 0;        // CPP/QPP Tier‑1 eligible base counted (above YBE, up to YMPE)
   let cumTier2Elig = 0;       // CPP2/QPP2 eligible base counted (between YMPE and YAMPE)
 
   for (let t = Date.UTC(year,0,1); t <= Date.UTC(year,11,31); t += 86400000) {
@@ -369,9 +362,9 @@ function computeCPP_EI_Daily({ year, seat, ac, stepJan1, xlrOn, avgMonthlyHours,
       if (ei > ei_maxPrem) ei = ei_maxPrem; // rounding guard
     }
 
-    // --- CPP/QPP base (Tier-1) & Tier-2 using cumulative windows ---
+    // --- CPP/QPP base (Tier‑1) & Tier‑2 using cumulative windows ---
     if (inQC) {
-      // QPP Tier-1: between YBE and YMPE
+      // QPP Tier‑1: between YBE and YMPE
       const baseEligToDate = Math.max(0, Math.min(cumGross, QPP.ympe) - QPP.ybe);
       const addBase = Math.max(0, baseEligToDate - cumBaseElig);
       cpp += addBase * QPP.rate_base_total;
@@ -383,7 +376,7 @@ function computeCPP_EI_Daily({ year, seat, ac, stepJan1, xlrOn, avgMonthlyHours,
       cpp += add2 * QPP.rate_qpp2;
       cumTier2Elig += add2;
     } else {
-      // CPP Tier-1: between YBE and YMPE
+      // CPP Tier‑1: between YBE and YMPE
       const baseEligToDate = Math.max(0, Math.min(cumGross, CPP.ympe) - CPP.ybe);
       const addBase = Math.max(0, baseEligToDate - cumBaseElig);
       cpp += addBase * CPP.rate_base;
@@ -399,7 +392,7 @@ function computeCPP_EI_Daily({ year, seat, ac, stepJan1, xlrOn, avgMonthlyHours,
 
   return { cpp_total: +cpp.toFixed(2), ei: +ei.toFixed(2) };
 }
-// ---- Best-effort haptic tap ----
+// ---- Best‑effort haptic tap ----
 const hapticTap = (() => {
   let ac; // audio context
   return (el) => {
@@ -480,17 +473,23 @@ function computeAnnual(params){
   const cpp_total = ded.cpp_total;
   const eiPrem    = ded.ei;
 
+  // Determine appropriate tax data sets based on year
+  const fedData = (year <= 2025 ? FED : FED_2026);
+  const provMap = (year <= 2025 ? PROV : PROV_2026);
+  const p = provMap[province];
+  if (!p) throw new Error('Unsupported province '+province);
   // Taxes with credits on lowest rates
-  const fed_tax = Math.max(0, taxFromBrackets(taxable, FED.brackets) - (0.145*federalBPA2025(taxable) + 0.15*(cpp_total+eiPrem)));
-  const p = PROV[province];
+  const fed_gross = taxFromBrackets(taxable, fedData.brackets);
   const prov_gross = taxFromBrackets(taxable, p.brackets);
+  const fed_low = fedData.brackets[0][1];
   const prov_low = p.brackets[0][1];
-  const prov_tax = Math.max(0, prov_gross - (prov_low*p.bpa + prov_low*(cpp_total+eiPrem)));
+  const fed_tax = Math.max(0, fed_gross - (fed_low * federalBPA(year, taxable) + 0.15 * (cpp_total + eiPrem)));
+  const prov_tax = Math.max(0, prov_gross - (prov_low * p.bpa + prov_low * (cpp_total + eiPrem)));
   const income_tax = fed_tax + prov_tax;
 
-  // ESOP and match (approx. after-tax value using combined marginal rate at taxable)
+  // ESOP and match (approx. after‑tax value using combined marginal rate at taxable)
   const esop = Math.min((+params.esopPct/100)*gross, 30000);
-  const comb_top = marginalRate(taxable, FED.brackets) + marginalRate(taxable, p.brackets);
+  const comb_top = marginalRate(taxable, fedData.brackets) + marginalRate(taxable, p.brackets);
   const esop_match_net = +(0.30*esop*(1 - comb_top)).toFixed(2);
 
   // Union dues (1.85% of gross) computed monthly
@@ -509,7 +508,7 @@ function computeAnnual(params){
 
   const monthly = {
     gross: +(gross/12).toFixed(2),
-    net: +((net - esop - esop_match_net)/12).toFixed(2), // take-home excluding ESOP and match
+    net: +((net - esop - esop_match_net)/12).toFixed(2), // take‑home excluding ESOP and match
     income_tax: +(income_tax/12).toFixed(2),
     cpp: +(cpp_total/12).toFixed(2),
     ei: +(eiPrem/12).toFixed(2),
@@ -537,7 +536,6 @@ function computeAnnual(params){
 }
 
 // --- VO computation ---
-
 function computeVO(params){
   const seat=params.seat, ac=params.ac, year=+params.year, province=params.province;
   const step = params.tieOn ? stepOnJan1(params.stepInput, true, year) : clampStep(params.stepInput);
@@ -545,29 +543,88 @@ function computeVO(params){
   const credits = Math.max(0, (+params.creditH) + Math.max(0, Math.min(59, +params.creditM))/60);
   const hours = credits * 2;
   const gross = hours * rate;
-  const fed_m = marginalRate(gross, FED.brackets);
-  const prov_m = marginalRate(gross, PROV[province].brackets);
+  const fedData = (year <= 2025 ? FED : FED_2026);
+  const provMap = (year <= 2025 ? PROV : PROV_2026);
+  const p = provMap[province];
+  if (!p) throw new Error('Unsupported province '+province);
+  const fed_m = marginalRate(gross, fedData.brackets);
+  const prov_m = marginalRate(gross, p.brackets);
   const net = gross*(1-(fed_m+prov_m));
   return {rate,hours,gross,net,fed_m,prov_m,step_used:step};
+}
+
+// --- Monthly computation ---
+/*
+ * Compute a monthly snapshot based on a specific number of credit hours.
+ * Credits beyond 85 in a month are paid at double the hourly rate (per contract).
+ */
+function computeMonthly(params){
+  const seat=params.seat, ac=params.ac, year=+params.year, province=params.province;
+  // Step on Jan1 if tie enabled; else use provided stepInput
+  const step = params.tieOn ? stepOnJan1(params.stepInput, true, year) : clampStep(params.stepInput);
+  const rate = rateFor(seat, ac, year, step, !!params.xlrOn);
+  const credits = Math.max(0, +params.credits);
+  const regHours = Math.min(85, credits);
+  const overtime = Math.max(0, credits - 85);
+  const gross = regHours * rate + overtime * 2 * rate;
+  const fedData = (year <= 2025 ? FED : FED_2026);
+  const provMap = (year <= 2025 ? PROV : PROV_2026);
+  const p = provMap[province];
+  if (!p) throw new Error('Unsupported province '+province);
+  const fed_m = marginalRate(gross, fedData.brackets);
+  const prov_m = marginalRate(gross, p.brackets);
+  const tax = gross * (fed_m + prov_m);
+  // Approximate CPP/QPP & EI contributions by annualizing and dividing by 12
+  const ded = computeCPP_EI_Daily({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits, province });
+  const cpp_month = ded.cpp_total / 12;
+  const ei_month  = ded.ei / 12;
+  // Union dues: use average monthly from annual computation
+  const union = computeUnionDuesMonthly({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits });
+  const union_month = union.avgMonthly;
+  // Pension: approximate using current pension rate
+  const pensionRate = pensionRateOnDate(new Date());
+  const pension = gross * pensionRate;
+  const health = HEALTH_MO;
+  const esop = Math.min((+params.esopPct/100)*gross, 30000/12);
+  const esop_match_after_tax = 0.30 * esop * (1 - (fed_m + prov_m));
+  const net = gross - tax - cpp_month - ei_month - health - union_month - pension + esop_match_after_tax;
+  return { rate, credits, regHours, overtime, gross, net, tax, cpp: cpp_month, ei: ei_month, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, step_used: step };
 }
 
 // --- UI helpers ---
 function setActiveTab(which){
   const btnA=document.getElementById('tabbtn-annual');
+  const btnM=document.getElementById('tabbtn-monthly');
   const btnV=document.getElementById('tabbtn-vo');
   const tabA=document.getElementById('tab-annual');
+  const tabM=document.getElementById('tab-monthly');
   const tabV=document.getElementById('tab-vo');
   if (which==='annual'){
-    btnA.classList.add('active'); btnV.classList.remove('active');
-    tabA.classList.remove('hidden'); tabV.classList.add('hidden');
+    btnA.classList.add('active'); btnM.classList.remove('active'); btnV.classList.remove('active');
+    tabA.classList.remove('hidden'); tabM.classList.add('hidden'); tabV.classList.add('hidden');
+  } else if (which==='monthly') {
+    btnM.classList.add('active'); btnA.classList.remove('active'); btnV.classList.remove('active');
+    tabM.classList.remove('hidden'); tabA.classList.add('hidden'); tabV.classList.add('hidden');
   } else {
-    btnV.classList.add('active'); btnA.classList.remove('active');
-    tabV.classList.remove('hidden'); tabA.classList.add('hidden');
+    btnV.classList.add('active'); btnA.classList.remove('active'); btnM.classList.remove('active');
+    tabV.classList.remove('hidden'); tabA.classList.add('hidden'); tabM.classList.add('hidden');
   }
 }
+
 function onSeatChange(isVO){
   const seat = (isVO? document.getElementById('ot-seat').value : document.getElementById('seat').value);
   const acSel = isVO? document.getElementById('ot-ac') : document.getElementById('ac');
+  const allowed = (seat==='RP') ? ["777","787","330"] : AIRCRAFT_ORDER.slice();
+  acSel.innerHTML = '';
+  allowed.forEach(ac => {
+    const opt=document.createElement('option'); opt.textContent=ac; acSel.appendChild(opt);
+  });
+  if (allowed.includes('320')) acSel.value='320';
+}
+// Seat change for Monthly tab
+function onSeatChangeMonthly(){
+  const seat = document.getElementById('mon-seat').value;
+  const acSel = document.getElementById('mon-ac');
   const allowed = (seat==='RP') ? ["777","787","330"] : AIRCRAFT_ORDER.slice();
   acSel.innerHTML = '';
   allowed.forEach(ac => {
@@ -588,6 +645,23 @@ function tieYearStepFromStep(isVO){
   if (!tie) return;
   const yearEl = isVO? document.getElementById('ot-year') : document.getElementById('year');
   const stepEl = isVO? document.getElementById('ot-step') : document.getElementById('step');
+  const s = Math.max(1, Math.min(12, +stepEl.value));
+  yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
+}
+// Tie logic for Monthly tab
+function tieYearStepFromYearMonthly(){
+  const tie = document.getElementById('mon-tie').checked;
+  if (!tie) return;
+  const yearEl = document.getElementById('mon-year');
+  const stepEl = document.getElementById('mon-step');
+  const y = +yearEl.value;
+  stepEl.value = String(Math.max(1, Math.min(12, (y-2025)+1)));
+}
+function tieYearStepFromStepMonthly(){
+  const tie = document.getElementById('mon-tie').checked;
+  if (!tie) return;
+  const yearEl = document.getElementById('mon-year');
+  const stepEl = document.getElementById('mon-step');
   const s = Math.max(1, Math.min(12, +stepEl.value));
   yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
 }
@@ -647,6 +721,27 @@ function renderVO(res, params){
     </div>`;
   out.innerHTML = statsHTML;
 }
+function renderMonthly(res, params){
+  const out = document.getElementById('mon-out');
+  const statsHTML = `
+    <div class="simple">
+      <div class="block"><div class="label">Hourly Rate</div><div class="value">${money(res.rate)}</div></div>
+      <div class="block"><div class="label">Credits</div><div class="value">${res.credits.toFixed(2)}</div></div>
+      <div class="block"><div class="label">Gross</div><div class="value">${money(res.gross)}</div></div>
+      <div class="block"><div class="label">Net</div><div class="value">${money(res.net)}</div></div>
+      <div class="block"><div class="label">Income Tax</div><div class="value">${money(res.tax)}</div></div>
+      <div class="block"><div class="label">CPP/QPP</div><div class="value">${money(res.cpp)}</div></div>
+      <div class="block"><div class="label">EI</div><div class="value">${money(res.ei)}</div></div>
+      <div class="block"><div class="label">Pension</div><div class="value">${money(res.pension)}</div></div>
+      <div class="block"><div class="label">Health</div><div class="value">${money(res.health)}</div></div>
+      <div class="block"><div class="label">ESOP</div><div class="value">${money(res.esop)}</div></div>
+      <div class="block"><div class="label">ESOP match (after tax)</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
+      <div class="block"><div class="label">Union Dues</div><div class="value">${money(res.union)}</div></div>
+      <div class="block"><div class="label">Marginal FED</div><div class="value">${(100*res.fed_m).toFixed(1)}%</div></div>
+      <div class="block"><div class="label">Marginal PROV</div><div class="value">${(100*res.prov_m).toFixed(1)}%</div></div>
+    </div>`;
+  out.innerHTML = statsHTML;
+}
 
 // --- Actions ---
 function calcAnnual(){
@@ -689,30 +784,102 @@ function calcVO(){
     console.error(err);
   }
 }
+function calcMonthly(){
+  try{
+    const params = {
+      seat: document.getElementById('mon-seat').value,
+      ac: document.getElementById('mon-ac').value,
+      year: +document.getElementById('mon-year').value,
+      stepInput: +document.getElementById('mon-step').value,
+      tieOn: document.getElementById('mon-tie').checked,
+      xlrOn: document.getElementById('mon-xlr').checked,
+      province: document.getElementById('mon-prov').value,
+      credits: +document.getElementById('mon-hrs').value,
+      esopPct: +document.getElementById('mon-esop').value
+    };
+    const res = computeMonthly(params);
+    renderMonthly(res, params);
+  } catch(err){
+    document.getElementById('mon-out').innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
 
 // --- Init ---
+function autoSelectDefaults() {
+  try {
+    const now = new Date();
+    // Determine pay year: dates on/after Oct 1 use the current year, else previous year.
+    const rollover = new Date(now.getFullYear(), SWITCH.m - 1, SWITCH.d);
+    let payYear = now.getFullYear();
+    if (now < rollover) {
+      payYear = now.getFullYear() - 1;
+    }
+    // Determine current step: first eligible progression date is one year after hire.
+    const hireDate = DOH;
+    const threshold = new Date(hireDate.getFullYear() + 1, hireDate.getMonth(), hireDate.getDate());
+    let step = 1;
+    let y = threshold.getFullYear();
+    while (true) {
+      const stepDate = new Date(y, PROGRESSION.m - 1, PROGRESSION.d);
+      if (stepDate >= threshold && stepDate <= now) {
+        step++;
+        y++;
+      } else {
+        break;
+      }
+    }
+    if (step > 12) step = 12;
+    // Apply to dropdowns; include Monthly tab
+    const ids = ['year','step','ot-year','ot-step','mon-year','mon-step'];
+    const vals = [payYear, step, payYear, step, payYear, step];
+    ids.forEach((id, idx) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      for (let i = 0; i < el.options.length; i++) {
+        if (String(el.options[i].value) === String(vals[idx])) {
+          el.selectedIndex = i;
+          el.dispatchEvent(new Event('change'));
+          break;
+        }
+      }
+    });
+  } catch (e) {
+    console.error('autoSelectDefaults error:', e);
+  }
+}
+
 function init(){
   // Tabs
   document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('annual'); });
+  document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('monthly'); });
   document.getElementById('tabbtn-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('vo'); });
   // Dropdown behaviors
   document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
   document.getElementById('ot-seat')?.addEventListener('change', ()=>onSeatChange(true));
+  document.getElementById('mon-seat')?.addEventListener('change', ()=>onSeatChangeMonthly());
   document.getElementById('year')?.addEventListener('change', ()=>tieYearStepFromYear(false));
   document.getElementById('ot-year')?.addEventListener('change', ()=>tieYearStepFromYear(true));
+  document.getElementById('mon-year')?.addEventListener('change', ()=>tieYearStepFromYearMonthly());
   document.getElementById('step')?.addEventListener('change', ()=>tieYearStepFromStep(false));
   document.getElementById('ot-step')?.addEventListener('change', ()=>tieYearStepFromStep(true));
-  // ESOP slider label
+  document.getElementById('mon-step')?.addEventListener('change', ()=>tieYearStepFromStepMonthly());
+  // ESOP slider labels
   const esopEl=document.getElementById('esop'); const esopPct=document.getElementById('esopPct');
   if (esopEl && esopPct){ esopEl.addEventListener('input', ()=>{ esopPct.textContent = esopEl.value+'%'; }); }
+  const monEsopEl=document.getElementById('mon-esop'); const monEsopPct=document.getElementById('mon-esopPct');
+  if (monEsopEl && monEsopPct){ monEsopEl.addEventListener('input', ()=>{ monEsopPct.textContent = monEsopEl.value+'%'; }); }
   // Buttons
   document.getElementById('calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnual(); });
   document.getElementById('ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVO(); });
+  document.getElementById('mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthly(); });
   // Defaults
   onSeatChange(false);
   onSeatChange(true);
+  onSeatChangeMonthly();
   tieYearStepFromYear(false);
   tieYearStepFromYear(true);
+  tieYearStepFromYearMonthly();
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does
