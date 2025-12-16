@@ -672,12 +672,12 @@ if ('serviceWorker' in navigator) {
 }
 // ===== Auto-select current Year & Step on app load =====
 
-// CONFIG — only change these if your dates ever change
-const HIRE_DATE = new Date(2024, 7, 7); // Aug 7 2024 (month is 0-based)
-const YEAR_ROLLOVER_MONTH = 8; // September (0-based)
+// CONFIG
+const HIRE_DATE = new Date(2024, 7, 7); // Aug 7 2024
+const YEAR_ROLLOVER_MONTH = 8; // September
 const YEAR_ROLLOVER_DAY = 30;
 const STEP_ROLLOVER_MONTH = 10; // November
-const STEP_ROLLOVER_DAY = 5;
+const STEP_ROLLOVER_DAY = 10;
 
 function getCurrentPayYear(today) {
   const rollover = new Date(
@@ -692,18 +692,18 @@ function getCurrentStep(today) {
   if (today < HIRE_DATE) return 1;
 
   let step = 1;
-  let checkDate = new Date(HIRE_DATE);
+  let yearCursor = HIRE_DATE.getFullYear();
 
   while (true) {
     const nextStepDate = new Date(
-      checkDate.getFullYear(),
+      yearCursor,
       STEP_ROLLOVER_MONTH,
       STEP_ROLLOVER_DAY
     );
 
     if (today >= nextStepDate) {
       step++;
-      checkDate = new Date(nextStepDate);
+      yearCursor++;
     } else {
       break;
     }
@@ -732,10 +732,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const step = getCurrentStep(today);
 
   // ANNUAL TAB
-  setDropdownValue("annualYear", year);
-  setDropdownValue("annualStep", step);
+  setDropdownValue("yearSelectAnnual", year);
+  setDropdownValue("stepSelectAnnual", step);
 
   // VO TAB
-  setDropdownValue("voYear", year);
-  setDropdownValue("voStep", step);
+  setDropdownValue("yearSelectVO", year);
+  setDropdownValue("stepSelectVO", step);
 });
