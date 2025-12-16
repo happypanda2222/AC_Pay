@@ -677,7 +677,7 @@ const HIRE_DATE = new Date(2024, 7, 7); // Aug 7 2024
 const YEAR_ROLLOVER_MONTH = 8; // September
 const YEAR_ROLLOVER_DAY = 30;
 const STEP_ROLLOVER_MONTH = 10; // November
-const STEP_ROLLOVER_DAY = 10;
+const STEP_ROLLOVER_DAY = 5;
 
 function getCurrentPayYear(today) {
   const rollover = new Date(
