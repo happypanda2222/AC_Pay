@@ -689,22 +689,20 @@ if ('serviceWorker' in navigator) {
   }
 
   function getCurrentStep(d) {
-    if (d < HIRE_DATE) return 1;
+  if (d < HIRE_DATE) return 1;
 
-    let stepNum = 1;
-    let y = HIRE_DATE.getFullYear();
+  const hireYear = HIRE_DATE.getFullYear();
+  let step = 1;
 
-    while (true) {
-      const nextStep = new Date(y, STEP_ROLLOVER_MONTH, STEP_ROLLOVER_DAY);
-      if (d >= nextStep) {
-        stepNum++;
-        y++;
-      } else {
-        break;
-      }
+  for (let y = hireYear; y <= d.getFullYear(); y++) {
+    const nov10 = new Date(y, STEP_ROLLOVER_MONTH, STEP_ROLLOVER_DAY);
+    if (nov10 > HIRE_DATE && d >= nov10) {
+      step++;
     }
-    return stepNum;
   }
+
+  return step;
+}
 
   function setDropdownValue(id, value) {
     const el = document.getElementById(id);
