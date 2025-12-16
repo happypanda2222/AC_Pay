@@ -17,7 +17,7 @@
 
 // --- Constants & Config ---
 const DOH = new Date('2024-08-07T00:00:00Z');
-const PROGRESSION = {m:11, d:10};
+const PROGRESSION = {m:11, d:5};
 const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
@@ -270,13 +270,13 @@ function rateFor(seat, ac, year, step, xlr){
 function yearSegments(year, stepJan1){
   const jan1=new Date(Date.UTC(year,0,1));
   const sep30=new Date(Date.UTC(year, SWITCH.m-1, SWITCH.d));
-  const nov10=new Date(Date.UTC(year, PROGRESSION.m-1, PROGRESSION.d));
+  const nov5=new Date(Date.UTC(year, PROGRESSION.m-1, PROGRESSION.d));
   const dec31=new Date(Date.UTC(year,11,31));
   const prev=year-1;
   return [
     {start:jan1, end:new Date(sep30.getTime()-86400000), payYear:prev, step:stepJan1},
     {start:sep30, end:new Date(nov10.getTime()-86400000), payYear:year, step:stepJan1},
-    {start:nov10, end:dec31, payYear:year, step:clampStep(stepJan1+1)}
+    {start:nov5, end:dec31, payYear:year, step:clampStep(stepJan1+1)}
   ];
 }
 function daysInclusive(a,b){ return Math.round((b-a)/86400000)+1; }
@@ -677,7 +677,7 @@ const HIRE_DATE = new Date(2024, 7, 7); // Aug 7 2024 (month is 0-based)
 const YEAR_ROLLOVER_MONTH = 8; // September (0-based)
 const YEAR_ROLLOVER_DAY = 30;
 const STEP_ROLLOVER_MONTH = 10; // November
-const STEP_ROLLOVER_DAY = 10;
+const STEP_ROLLOVER_DAY = 5;
 
 function getCurrentPayYear(today) {
   const rollover = new Date(
