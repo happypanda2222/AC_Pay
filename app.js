@@ -670,3 +670,72 @@ if ('serviceWorker' in navigator) {
       .catch(() => { /* no-op */ });
   });
 }
+// ===== Auto-select current Year & Step on app load =====
+
+// CONFIG — only change these if your dates ever change
+const HIRE_DATE = new Date(2024, 7, 7); // Aug 7 2024 (month is 0-based)
+const YEAR_ROLLOVER_MONTH = 8; // September (0-based)
+const YEAR_ROLLOVER_DAY = 30;
+const STEP_ROLLOVER_MONTH = 10; // November
+const STEP_ROLLOVER_DAY = 10;
+
+function getCurrentPayYear(today) {
+  const rollover = new Date(
+    today.getFullYear(),
+    YEAR_ROLLOVER_MONTH,
+    YEAR_ROLLOVER_DAY
+  );
+  return today > rollover ? today.getFullYear() : today.getFullYear() - 1;
+}
+
+function getCurrentStep(today) {
+  if (today < HIRE_DATE) return 1;
+
+  let step = 1;
+  let checkDate = new Date(HIRE_DATE);
+
+  while (true) {
+    const nextStepDate = new Date(
+      checkDate.getFullYear(),
+      STEP_ROLLOVER_MONTH,
+      STEP_ROLLOVER_DAY
+    );
+
+    if (today >= nextStepDate) {
+      step++;
+      checkDate = new Date(nextStepDate);
+    } else {
+      break;
+    }
+  }
+
+  return step;
+}
+
+function setDropdownValue(selectId, value) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+
+  for (let i = 0; i < el.options.length; i++) {
+    if (String(el.options[i].value) === String(value)) {
+      el.selectedIndex = i;
+      el.dispatchEvent(new Event("change"));
+      break;
+    }
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const today = new Date();
+
+  const year = getCurrentPayYear(today);
+  const step = getCurrentStep(today);
+
+  // ANNUAL TAB
+  setDropdownValue("annualYear", year);
+  setDropdownValue("annualStep", step);
+
+  // VO TAB
+  setDropdownValue("voYear", year);
+  setDropdownValue("voStep", step);
+});
