@@ -237,6 +237,58 @@ const EI = {mie:65700, rate:0.0164, rate_qc:0.0131, max_prem:1077.48, max_prem_q
 
 // --- Helpers ---
 function clampStep(s){ s=+s; if (s<1) return 1; if (s>12) return 12; return s; }
+
+/*
+ * Automatically select the current pay year and step on initial page load.  The
+ * pay year changes after September 30 each year.  The pay step increases on
+ * November 10, but only after the pilot has completed at least one full
+ * year of service (hire date: Aug 7 2024).  Each subsequent Nov 10 after
+ * that threshold advances the step.  If the resulting step exceeds 12,
+ * it is clamped to 12.  This function updates both the Annual and VO
+ * dropdowns and fires change events so downstream logic reacts accordingly.
+ */
+function autoSelectDefaults() {
+  try {
+    const now = new Date();
+    // Determine pay year: dates on/after Oct 1 use the current year, else previous year.
+    const rollover = new Date(now.getFullYear(), SWITCH.m - 1, SWITCH.d);
+    let payYear = now.getFullYear();
+    if (now < rollover) {
+      payYear = now.getFullYear() - 1;
+    }
+    // Determine current step: first eligible progression date is one year after hire.
+    const hireDate = DOH;
+    const threshold = new Date(hireDate.getFullYear() + 1, hireDate.getMonth(), hireDate.getDate());
+    let step = 1;
+    let y = threshold.getFullYear();
+    while (true) {
+      const stepDate = new Date(y, PROGRESSION.m - 1, PROGRESSION.d);
+      if (stepDate >= threshold && stepDate <= now) {
+        step++;
+        y++;
+      } else {
+        break;
+      }
+    }
+    if (step > 12) step = 12;
+    // Apply to dropdowns
+    const ids = ['year','step','ot-year','ot-step'];
+    const vals = [payYear, step, payYear, step];
+    ids.forEach((id, idx) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      for (let i = 0; i < el.options.length; i++) {
+        if (String(el.options[i].value) === String(vals[idx])) {
+          el.selectedIndex = i;
+          el.dispatchEvent(new Event('change'));
+          break;
+        }
+      }
+    });
+  } catch (e) {
+    console.error('autoSelectDefaults error:', e);
+  }
+}
 function federalBPA2025(income){
   const b=FED; let addl=0;
   if (income<=b.bpa_addl_start) addl=b.bpa_additional;
@@ -661,6 +713,11 @@ function init(){
   onSeatChange(true);
   tieYearStepFromYear(false);
   tieYearStepFromYear(true);
+  // After initializing defaults and tie logic, automatically select the
+  // current pay year and step.  This runs once on page load and does not
+  // lock the controls.  If tie checkboxes remain unchecked, this does
+  // nothing beyond setting defaults.
+  autoSelectDefaults();
 }
 if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', init); } else { init(); }
 // PWA: register the service worker
