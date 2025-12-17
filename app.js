@@ -565,63 +565,31 @@ function computeAnnual(params){
     union_dues: +(union.annual/12).toFixed(2)
   };
 
-  // --- Advance & Second Pay split ---
+  
+  // --- Advance & Second Pay split (FIXED: standalone paycheques) ---
   let payAdvance = 0, secondPay = 0;
-  try {
-    const monthlyGross = monthly.gross;
-    let advAmt = Math.max(0, +params.adv || 0);
-    if (advAmt > monthlyGross) advAmt = monthlyGross;
-    // Determine marginal rates based on pre‑RRSP taxable income (approximation)
-    const fed_m = marginalRate(taxable_pre, fedData.brackets);
-    const prov_m = marginalRate(taxable_pre, p.brackets);
-    const taxRate = fed_m + prov_m;
-    // Contributions for pay advance based on advAmt (proportional to avgMonthlyHours)
-    let cppAdv = 0, eiAdv = 0;
-    if (!params.maxcpp) {
-      // Estimate hours proportion to compute CPP/EI; advHours is proportion of avgMonthlyHours
-      const advHours = (+params.avgMonthlyHours) * (advAmt / monthlyGross || 0);
-      const dedAdv = computeCPP_EI_Daily({
-        year,
-        seat,
-        ac,
-        stepJan1,
-        xlrOn: !!params.xlrOn,
-        avgMonthlyHours: advHours,
-        province
-      });
-      cppAdv = dedAdv.cpp_total / 12;
-      eiAdv  = dedAdv.ei / 12;
-    }
-    // Tax on pay advance
-    const taxAdv = advAmt * taxRate;
-    payAdvance = advAmt - taxAdv - cppAdv - eiAdv;
-    // Second pay uses remaining gross and applies full deductions based on monthly gross
-    const secondGross = monthlyGross - advAmt;
-    // Full monthly CPP/EI contributions based on the entire monthly gross.  For the second pay we
-    // subtract any CPP/EI amounts already withheld on the advance to avoid double‑deducting.
-    let cppMonthAll = params.maxcpp ? 0 : (cpp_total_full/12);
-    let eiMonthAll  = params.maxcpp ? 0 : (eiPrem_full/12);
-    const cppSecond = Math.max(0, cppMonthAll - cppAdv);
-    const eiSecond  = Math.max(0, eiMonthAll - eiAdv);
-    // Tax on second pay (based solely on the remaining gross)
-    const taxSecond = secondGross * taxRate;
-    // Pension, health, union dues and ESOP (these are all based on the full monthly gross and are
-    // withheld entirely from the second pay).  ESOP match is intentionally excluded from the
-    // second pay and will instead be reflected in the overall net.
-    const pensionMonth = monthly.pension;
-    const healthMonth = monthly.health;
-    const unionMonth = monthly.union_dues;
-    const esopMonth = monthly.esop;
-    // Compute second pay after all deductions; do not include the ESOP match here.
-    secondPay = secondGross - taxSecond - cppSecond - eiSecond - pensionMonth - healthMonth - unionMonth - esopMonth;
-  } catch(e) {
-    console.error('Advance split error:', e);
-    payAdvance = 0;
-    secondPay = monthly.net;
-  }
+  const monthlyGross = monthly.gross;
+  let advAmt = Math.max(0, +params.adv || 0);
+  if (advAmt > monthlyGross) advAmt = monthlyGross;
 
-  // Tax return: difference between tax before RRSP contributions and tax after RRSP contributions.
-  // Since income_tax equals income_tax_pre, use the stored post‑RRSP tax to compute the refund.
+  const pensionRate = pensionRateOnDate(new Date());
+  const advPension = advAmt * pensionRate;
+  const advTax = computeChequeTax({ gross: advAmt, pension: advPension, year, province });
+  const advDed = params.maxcpp ? {cpp:0, ei:0} :
+    computeChequeCPP_EI({ year, seat, ac, step: stepJan1, xlrOn: !!params.xlrOn, gross: advAmt, province });
+
+  payAdvance = advAmt - advPension - advTax - advDed.cpp - advDed.ei;
+
+  const secondGross = monthlyGross - advAmt;
+  const secPension = secondGross * pensionRate;
+  const secTax = computeChequeTax({ gross: secondGross, pension: secPension, year, province });
+  const secDed = params.maxcpp ? {cpp:0, ei:0} :
+    computeChequeCPP_EI({ year, seat, ac, step: stepJan1, xlrOn: !!params.xlrOn, gross: secondGross, province });
+
+  const esopMonth = monthly.esop;
+  secondPay = secondGross - secPension - secTax - secDed.cpp - secDed.ei - esopMonth;
+
+
   const tax_return = +(income_tax - income_tax_rrsp).toFixed(2);
 
   return {
@@ -642,6 +610,45 @@ function computeAnnual(params){
     second_pay:+secondPay.toFixed(2),
     tax_return
   };
+}
+
+
+// === Standalone paycheque helpers (FIXED LOGIC) ===
+function computeChequeTax({ gross, pension, year, province }) {
+  const fedData = (year <= 2025 ? FED : FED_2026);
+  const provMap = (year <= 2025 ? PROV : PROV_2026);
+  const p = provMap[province];
+  if (!p) throw new Error('Unsupported province '+province);
+
+  const taxable = Math.max(0, gross - pension);
+  const annualized = taxable * 12;
+
+  const fedGross = taxFromBrackets(annualized, fedData.brackets);
+  const provGross = taxFromBrackets(annualized, p.brackets);
+
+  const fedLow = fedData.brackets[0][1];
+  const provLow = p.brackets[0][1];
+
+  const fedTax = Math.max(0, fedGross - fedLow * federalBPA(year, annualized));
+  const provTax = Math.max(0, provGross - provLow * p.bpa);
+
+  return (fedTax + provTax) / 12;
+}
+
+function computeChequeCPP_EI({ year, seat, ac, step, xlrOn, gross, province }) {
+  // Convert cheque gross to equivalent monthly hours, then compute CPP/EI on that cheque only
+  const rate = rateFor(seat, ac, year, step, !!xlrOn);
+  const hours = rate > 0 ? gross / rate : 0;
+  const ded = computeCPP_EI_Daily({
+    year,
+    seat,
+    ac,
+    stepJan1: step,
+    xlrOn: !!xlrOn,
+    avgMonthlyHours: hours,
+    province
+  });
+  return { cpp: ded.cpp_total / 12, ei: ded.ei / 12 };
 }
 
 // --- VO computation ---
@@ -719,42 +726,28 @@ function computeMonthly(params){
   // deductions (including ESOP contributions) plus the employer match and per diem.
   const net = gross - tax - cpp_month - ei_month - health - union_month - pension - esop + esop_match_after_tax + tafb_net;
 
-  // --- Advance & Second Pay split ---
+  
+  // --- Advance & Second Pay split (FIXED: standalone paycheques) ---
   let payAdvance = 0, secondPay = 0;
-  try {
-    let advAmt = Math.max(0, +params.adv || 0);
-    if (advAmt > gross) advAmt = gross;
-    // Pay advance contributions
-    let cppAdv = 0, eiAdv = 0;
-    if (!params.maxcpp && gross > 0) {
-      const advHours = (credits + voCredits) * (advAmt / gross);
-      const dedAdv = computeCPP_EI_Daily({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: advHours, province });
-      cppAdv = dedAdv.cpp_total / 12;
-      eiAdv  = dedAdv.ei / 12;
-    }
-    // Tax on pay advance
-    const taxRate = fed_m + prov_m;
-    const taxAdv = advAmt * taxRate;
-    payAdvance = advAmt - taxAdv - cppAdv - eiAdv;
-    // Tax and deductions on second pay
-    const secondGross = gross - advAmt;
-    const taxSecond = secondGross * taxRate;
-    // Compute CPP/EI remaining for the second pay by subtracting any amounts already
-    // withheld on the advance.  This prevents double‑deduction when an advance is taken.
-    const cppSecond = Math.max(0, cpp_month - cppAdv);
-    const eiSecond  = Math.max(0, ei_month - eiAdv);
-    const pensionSecond = pension;
-    const healthSecond = health;
-    const unionSecond = union_month;
-    const esopSecond = esop;
-    // Compute second pay after all deductions.  ESOP match is excluded here, but TAFB
-    // (per‑diem) is added back after tax and deductions.
-    secondPay = secondGross - taxSecond - cppSecond - eiSecond - pensionSecond - healthSecond - unionSecond - esopSecond + tafb_net;
-  } catch(e) {
-    console.error('Monthly advance split error:', e);
-    payAdvance = 0;
-    secondPay = net;
-  }
+  let advAmt = Math.max(0, +params.adv || 0);
+  if (advAmt > gross) advAmt = gross;
+
+  const pensionRate = pensionRateOnDate(new Date());
+  const advPension = advAmt * pensionRate;
+  const advTax = computeChequeTax({ gross: advAmt, pension: advPension, year, province });
+  const advDed = params.maxcpp ? {cpp:0, ei:0} :
+    computeChequeCPP_EI({ year, seat, ac, step, xlrOn: !!params.xlrOn, gross: advAmt, province });
+
+  payAdvance = advAmt - advPension - advTax - advDed.cpp - advDed.ei;
+
+  const secondGross = gross - advAmt;
+  const secPension = secondGross * pensionRate;
+  const secTax = computeChequeTax({ gross: secondGross, pension: secPension, year, province });
+  const secDed = params.maxcpp ? {cpp:0, ei:0} :
+    computeChequeCPP_EI({ year, seat, ac, step, xlrOn: !!params.xlrOn, gross: secondGross, province });
+
+  secondPay = secondGross - secPension - secTax - secDed.cpp - secDed.ei - esop + tafb_net;
+
 
   return { rate, credits, voCredits, regHours, overtime, gross, net, tax, cpp: cpp_month, ei: ei_month, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, tafb_net, step_used: step, pay_advance: payAdvance, second_pay: secondPay };
 }
