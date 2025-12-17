@@ -39,9 +39,13 @@
       font-size:11px;
       font-weight:700;
       border:1px solid rgba(255,255,255,0.15);
-      cursor:help;
+      cursor:default;
       line-height:1;
+      flex-shrink:0;
     }
+    .calc-info{display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;color:var(--muted)}
+    .calc-info-title{font-weight:700;font-size:13px;color:var(--txt);margin-bottom:2px}
+    .calc-info-desc{font-size:13px;line-height:1.4}
     .card{background:var(--card);border-radius:14px;padding:12px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);}
     label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
     select,input[type=number]{width:100%;padding:12px;border-radius:10px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt)}
@@ -113,18 +117,25 @@
     <div class="tabs">
       <!-- Tab buttons: Monthly inserted between Annual and VO -->
       <button class="tabbtn active" data-tab="annual" id="tabbtn-annual">
-        Annual <span class="info-icon" title="Annual projection based on average monthly credit hours, selected seat/aircraft/year, and full annual deductions." aria-label="Annual calculation info">i</span>
+        Annual
       </button>
       <button class="tabbtn" data-tab="monthly" id="tabbtn-monthly">
-        Monthly <span class="info-icon" title="Single-month view using entered credits, VO credits, and TAFB to show gross pay, deductions, and split pay amounts." aria-label="Monthly calculation info">i</span>
+        Monthly
       </button>
       <button class="tabbtn" data-tab="vo" id="tabbtn-vo">
-        VO <span class="info-icon" title="VO calculator doubles credit hours, applies the hourly rate, and estimates net using marginal federal and provincial rates." aria-label="VO calculation info">i</span>
+        VO
       </button>
     </div>
 
     <!-- Annual Tab -->
     <div class="card" id="tab-annual">
+      <div class="calc-info">
+        <span class="info-icon" aria-hidden="true">i</span>
+        <div>
+          <div class="calc-info-title">Annual calculation</div>
+          <div class="calc-info-desc">Projects yearly gross from your average monthly credit hours, applies full annual deductions, and shows how a selected advance splits the monthly total.</div>
+        </div>
+      </div>
       <div class="row-4">
         <div>
           <label>Seat</label>
@@ -212,6 +223,13 @@
       including gross, net, tax, CPP/QPP, EI, pension, ESOP contributions and union dues.
     -->
     <div class="card hidden" id="tab-monthly">
+      <div class="calc-info">
+        <span class="info-icon" aria-hidden="true">i</span>
+        <div>
+          <div class="calc-info-title">Monthly calculation</div>
+          <div class="calc-info-desc">Uses entered credits, VO credits, and TAFB to show a single month’s gross, deductions, and a pay advance/second pay split. Tax, CPP, and EI are shared proportionally between the pays; CPP/EI are dropped only when the Maxed CPP/EI toggle is on.</div>
+        </div>
+      </div>
       <div class="row-4">
         <div>
           <label>Seat</label>
@@ -298,6 +316,13 @@
 
     <!-- VO Tab -->
     <div class="card hidden" id="tab-vo">
+      <div class="calc-info">
+        <span class="info-icon" aria-hidden="true">i</span>
+        <div>
+          <div class="calc-info-title">VO calculation</div>
+          <div class="calc-info-desc">Doubles VO credit hours, applies the hourly rate, and estimates net pay using marginal federal and provincial rates for a quick overtime snapshot.</div>
+        </div>
+      </div>
       <div class="row-4">
         <div>
           <label>Seat</label>
