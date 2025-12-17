@@ -481,8 +481,7 @@ function computeAnnual(params){
   const taxable_pre = Math.max(0, gross - pension);
 
   // Precise CPP/QPP & EI using daily caps.  These represent the full year contributions
-  // if the CPP/EI cap has not yet been reached.  We will conditionally deduct these
-  // amounts from net based on the Maxed CPP/EI checkbox.
+  // if the CPP/EI cap has not yet been reached.
   const ded = computeCPP_EI_Daily({
     year,
     seat,
@@ -494,9 +493,8 @@ function computeAnnual(params){
   });
   const cpp_total_full = ded.cpp_total;
   const eiPrem_full    = ded.ei;
-  // Determine amounts to deduct.  If maxcpp is enabled, no CPP/EI are deducted from monthly amounts.
-  const cpp_total_deduct = params.maxcpp ? 0 : cpp_total_full;
-  const eiPrem_deduct   = params.maxcpp ? 0 : eiPrem_full;
+  const cpp_total_deduct = cpp_total_full;
+  const eiPrem_deduct   = eiPrem_full;
 
   // Determine appropriate tax data sets based on year
   const fedData = (year <= 2025 ? FED : FED_2026);
@@ -566,28 +564,26 @@ function computeAnnual(params){
   };
 
   
-  // --- Advance & Second Pay split (FIXED: standalone paycheques) ---
+  // --- Advance & Second Pay split (proportional deductions) ---
   let payAdvance = 0, secondPay = 0;
   const monthlyGross = monthly.gross;
   let advAmt = Math.max(0, +params.adv || 0);
   if (advAmt > monthlyGross) advAmt = monthlyGross;
 
-  const pensionRate = pensionRateOnDate(new Date());
-  const advPension = advAmt * pensionRate;
-  const advTax = computeChequeTax({ gross: advAmt, pension: advPension, year, province });
-  const advDed = params.maxcpp ? {cpp:0, ei:0} :
-    computeChequeCPP_EI({ year, seat, ac, step: stepJan1, xlrOn: !!params.xlrOn, gross: advAmt, province });
+  const advRatio = monthlyGross > 0 ? advAmt / monthlyGross : 0;
+  const advTax = +(monthly.income_tax * advRatio).toFixed(2);
+  const advCpp = params.maxcpp ? 0 : +(monthly.cpp * advRatio).toFixed(2);
+  const advEi = params.maxcpp ? 0 : +(monthly.ei * advRatio).toFixed(2);
 
-  payAdvance = advAmt - advPension - advTax - advDed.cpp - advDed.ei;
+  payAdvance = advAmt - advTax - advCpp - advEi;
 
   const secondGross = monthlyGross - advAmt;
-  const secPension = secondGross * pensionRate;
-  const secTax = computeChequeTax({ gross: secondGross, pension: secPension, year, province });
-  const secDed = params.maxcpp ? {cpp:0, ei:0} :
-    computeChequeCPP_EI({ year, seat, ac, step: stepJan1, xlrOn: !!params.xlrOn, gross: secondGross, province });
+  const secTax = +(monthly.income_tax - advTax).toFixed(2);
+  const secCpp = params.maxcpp ? 0 : +(monthly.cpp - advCpp).toFixed(2);
+  const secEi = params.maxcpp ? 0 : +(monthly.ei - advEi).toFixed(2);
 
   const esopMonth = monthly.esop;
-  secondPay = secondGross - secPension - secTax - secDed.cpp - secDed.ei - esopMonth;
+  secondPay = secondGross - secTax - secCpp - secEi - monthly.health - monthly.pension - esopMonth;
 
 
   const tax_return = +(income_tax - income_tax_rrsp).toFixed(2);
@@ -723,25 +719,23 @@ function computeMonthly(params){
   const net = gross - tax - cpp_month - ei_month - health - union_month - pension - esop + esop_match_after_tax + tafb_net;
 
   
-  // --- Advance & Second Pay split (FIXED: standalone paycheques) ---
+  // --- Advance & Second Pay split (proportional deductions) ---
   let payAdvance = 0, secondPay = 0;
   let advAmt = Math.max(0, +params.adv || 0);
   if (advAmt > gross) advAmt = gross;
 
-  // Pay advance should only withhold tax (and CPP/EI if not maxed).  Pension is
-  // taken entirely on the second pay.
-  const advTax = computeChequeTax({ gross: advAmt, pension: 0, year, province });
-  const advDed = params.maxcpp ? {cpp:0, ei:0} :
-    computeChequeCPP_EI({ year, seat, ac, step, xlrOn: !!params.xlrOn, gross: advAmt, province });
+  const advRatio = gross > 0 ? advAmt / gross : 0;
+  const advTax = +(tax * advRatio).toFixed(2);
+  const advCpp = params.maxcpp ? 0 : +(cpp_month * advRatio).toFixed(2);
+  const advEi = params.maxcpp ? 0 : +(ei_month * advRatio).toFixed(2);
 
-  payAdvance = advAmt - advTax - advDed.cpp - advDed.ei;
+  payAdvance = advAmt - advTax - advCpp - advEi;
 
   const secondGross = gross - advAmt;
-  const secPension = gross * pensionRate;
-  const secTax = computeChequeTax({ gross: secondGross, pension: secPension, year, province });
-  const secDed = params.maxcpp ? {cpp:0, ei:0} :
-    computeChequeCPP_EI({ year, seat, ac, step, xlrOn: !!params.xlrOn, gross: secondGross, province });
-  secondPay = secondGross - secTax - secDed.cpp - secDed.ei - health - union_month - secPension - esop + tafb_net;
+  const secTax = +(tax - advTax).toFixed(2);
+  const secCpp = params.maxcpp ? 0 : +(cpp_month - advCpp).toFixed(2);
+  const secEi = params.maxcpp ? 0 : +(ei_month - advEi).toFixed(2);
+  secondPay = secondGross - secTax - secCpp - secEi - health - union_month - pension - esop + tafb_net;
 
 
   return { rate, credits, voCredits, regHours, overtime, gross, net, tax, cpp: cpp_month, ei: ei_month, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, tafb_net, step_used: step, pay_advance: payAdvance, second_pay: secondPay };
