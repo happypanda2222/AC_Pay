@@ -545,9 +545,9 @@ function computeAnnual(params){
 
   // Totals
   const annual_health = HEALTH_MO*12;
-  // Annual net: subtract tax, full CPP/QPP & EI contributions, health, union dues and add employer ESOP match.
+  // Annual net: subtract tax, full CPP/QPP & EI contributions, health, union dues, and employee ESOP (ESOP is after-tax).
   // Annual net does not depend on the Maxed CPP/EI toggle – always use full contributions.
-  const net = gross - income_tax - cpp_total_full - eiPrem_full - annual_health - union.annual + esop_match_net;
+  const net = gross - income_tax - cpp_total_full - eiPrem_full - annual_health - union.annual - esop;
 
   // Monthly results: do not adjust net for RRSP contributions; use pre‑RRSP taxable tax and net for monthly snapshot
   const monthly = {
