@@ -1,0 +1,9 @@
+{
+  "name": "ac-pay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static AC Pay calculator PWA.",
+  "scripts": {
+    "test": "echo \"No automated tests; static site.\" && exit 0"
+  }
+}
