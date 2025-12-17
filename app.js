@@ -29,6 +29,26 @@
 
 'use strict';
 
+// --- Version badge synced with sw.js CACHE version ---
+async function updateVersionBadgeFromSW() {
+  const badge = document.getElementById('version');
+  if (!badge) return;
+  try {
+    const resp = await fetch('./sw.js', { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const text = await resp.text();
+    const match = text.match(/const\s+CACHE\s*=\s*'([^']+)'/);
+    if (match && match[1]) {
+      const version = match[1];
+      badge.textContent = version;
+      badge.setAttribute('title', `App version ${version}`);
+      badge.setAttribute('aria-label', `App version ${version}`);
+    }
+  } catch (err) {
+    console.error('Version badge update failed', err);
+  }
+}
+
 // --- Lock zoom: block pinch & double-tap zoom (best-effort for iOS PWAs) ---
 (function preventZoom(){
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
@@ -1014,6 +1034,7 @@ function autoSelectDefaults() {
 }
 
 function init(){
+  updateVersionBadgeFromSW();
   // Tabs
   document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('annual'); });
   document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('monthly'); });

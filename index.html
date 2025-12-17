@@ -108,9 +108,25 @@
     .audit thead th:nth-child(7) {
       text-align: right;
     }
+    .version-badge{
+      position:fixed;
+      top:calc(10px + env(safe-area-inset-top));
+      right:calc(12px + env(safe-area-inset-right));
+      background:#0f1218;
+      border:1px solid #2a2f3b;
+      border-radius:12px;
+      padding:8px 10px;
+      color:var(--muted);
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.2px;
+      box-shadow:0 6px 20px rgba(0,0,0,.35);
+      z-index:10;
+    }
   </style>
 </head>
 <body>
+  <div id="version" class="version-badge" aria-label="App version"></div>
   <div class="wrap">
     <h1>AC Pay Calculator</h1>
 
