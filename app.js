@@ -590,7 +590,7 @@ function computeAnnual(params){
   let advAmt = Math.max(0, +params.adv || 0);
   if (advAmt > monthlyGross) advAmt = monthlyGross;
 
-  const advTax = advAmt > 0 ? computeChequeTax({ gross: advAmt, pension: 0, year, province }) : 0;
+  const advTax = advAmt > 0 ? computeChequeTax({ gross: advAmt, pension: 0, year, province, chequesPerYear: 12 }) : 0;
   const advCppEi = params.maxcpp || advAmt === 0 ? { cpp: 0, ei: 0 } : computeChequeCPP_EI({ year, seat, ac, step: stepJan1, xlrOn: !!params.xlrOn, gross: advAmt, province });
   const advCpp = advCppEi.cpp;
   const advEi = advCppEi.ei;
@@ -631,14 +631,14 @@ function computeAnnual(params){
 
 
 // === Standalone paycheque helpers (FIXED LOGIC) ===
-function computeChequeTax({ gross, pension, year, province }) {
+function computeChequeTax({ gross, pension, year, province, chequesPerYear = 12 }) {
   const fedData = (year <= 2025 ? FED : FED_2026);
   const provMap = (year <= 2025 ? PROV : PROV_2026);
   const p = provMap[province];
   if (!p) throw new Error('Unsupported province '+province);
 
   const taxable = Math.max(0, gross - pension);
-  const annualized = taxable * 12;
+  const annualized = taxable * chequesPerYear;
 
   const fedGross = taxFromBrackets(annualized, fedData.brackets);
   const provGross = taxFromBrackets(annualized, p.brackets);
@@ -649,7 +649,7 @@ function computeChequeTax({ gross, pension, year, province }) {
   const fedTax = Math.max(0, fedGross - fedLow * federalBPA(year, annualized));
   const provTax = Math.max(0, provGross - provLow * p.bpa);
 
-  return (fedTax + provTax) / 12;
+  return (fedTax + provTax) / chequesPerYear;
 }
 
 function computeChequeCPP_EI({ year, seat, ac, step, xlrOn, gross, province }) {
@@ -745,7 +745,7 @@ function computeMonthly(params){
   let advAmt = Math.max(0, +params.adv || 0);
   if (advAmt > gross) advAmt = gross;
 
-  const advTax = advAmt > 0 ? computeChequeTax({ gross: advAmt, pension: 0, year, province }) : 0;
+  const advTax = advAmt > 0 ? computeChequeTax({ gross: advAmt, pension: 0, year, province, chequesPerYear: 12 }) : 0;
   const advCppEi = params.maxcpp || advAmt === 0 ? { cpp: 0, ei: 0 } : computeChequeCPP_EI({ year, seat, ac, step, xlrOn: !!params.xlrOn, gross: advAmt, province });
   const advCpp = advCppEi.cpp;
   const advEi = advCppEi.ei;
