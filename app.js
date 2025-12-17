@@ -17,8 +17,8 @@
  *     the two pays was close to the monthly net computed for the period.  This
  *     check has been removed because it was interfering with the UI.
  *   - A Maxed CPP/EI checkbox that, when checked, removes CPP/QPP and EI
- *     deductions from both pay advance and second pay calculations as
- *     well as from the monthly net.  Annual net, however, always uses the
+ *     deductions from both pay advance and second pay calculations while
+ *     leaving the monthly net unchanged.  Annual net always uses the
  *     full CPP/QPP and EI contributions regardless of this flag.
  *   - RRSP contributions are no longer deducted from net pay.  Instead
  *     they are used solely to compute a Tax Return value equal to the
@@ -699,12 +699,13 @@ function computeMonthly(params){
   const taxableAnnualApprox = Math.max(0, annualGrossApprox - annualPensionApprox);
   const fed_m = marginalRate(taxableAnnualApprox, fedData.brackets);
   const prov_m = marginalRate(taxableAnnualApprox, p.brackets);
-  // Monthly tax approximated using marginal rates
-  const tax = gross * (fed_m + prov_m);
+  // Compute monthly income tax using the standalone cheque calculator so that
+  // the result aligns with the two‑pay split below.
+  const tax = computeChequeTax({ gross, pension: gross * pensionRate, year, province });
   // Approximate CPP/QPP & EI contributions by annualizing and dividing by 12; include VO credits
   const ded = computeCPP_EI_Daily({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits + voCredits, province });
-  let cpp_month = ded.cpp_total / 12;
-  let ei_month  = ded.ei / 12;
+  const cpp_month = ded.cpp_total / 12;
+  const ei_month  = ded.ei / 12;
   // Union dues: use average monthly from annual computation (include VO credits)
   const union = computeUnionDuesMonthly({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits + voCredits });
   const union_month = union.avgMonthly;
@@ -716,11 +717,6 @@ function computeMonthly(params){
   // TAFB: per diem hours times $5.427/hr (paid after tax)
   const tafbHours = Math.max(0, +params.tafb || 0);
   const tafb_net = tafbHours * 5.427;
-  // Adjust CPP/EI if maxed
-  if (params.maxcpp) {
-    cpp_month = 0;
-    ei_month = 0;
-  }
   // Monthly net (before pay split) subtracts ESOP contributions, pension, health and union dues and
   // adds the employer ESOP match and TAFB.  This represents the money remaining after all
   // deductions (including ESOP contributions) plus the employer match and per diem.
@@ -732,20 +728,20 @@ function computeMonthly(params){
   let advAmt = Math.max(0, +params.adv || 0);
   if (advAmt > gross) advAmt = gross;
 
-  const advPension = advAmt * pensionRate;
-  const advTax = computeChequeTax({ gross: advAmt, pension: advPension, year, province });
+  // Pay advance should only withhold tax (and CPP/EI if not maxed).  Pension is
+  // taken entirely on the second pay.
+  const advTax = computeChequeTax({ gross: advAmt, pension: 0, year, province });
   const advDed = params.maxcpp ? {cpp:0, ei:0} :
     computeChequeCPP_EI({ year, seat, ac, step, xlrOn: !!params.xlrOn, gross: advAmt, province });
 
-  payAdvance = advAmt - advPension - advTax - advDed.cpp - advDed.ei;
+  payAdvance = advAmt - advTax - advDed.cpp - advDed.ei;
 
   const secondGross = gross - advAmt;
-  const secPension = secondGross * pensionRate;
+  const secPension = gross * pensionRate;
   const secTax = computeChequeTax({ gross: secondGross, pension: secPension, year, province });
   const secDed = params.maxcpp ? {cpp:0, ei:0} :
     computeChequeCPP_EI({ year, seat, ac, step, xlrOn: !!params.xlrOn, gross: secondGross, province });
-
-  secondPay = secondGross - secPension - secTax - secDed.cpp - secDed.ei - esop + tafb_net;
+  secondPay = secondGross - secTax - secDed.cpp - secDed.ei - health - union_month - secPension - esop + tafb_net;
 
 
   return { rate, credits, voCredits, regHours, overtime, gross, net, tax, cpp: cpp_month, ei: ei_month, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, tafb_net, step_used: step, pay_advance: payAdvance, second_pay: secondPay };
