@@ -732,7 +732,6 @@ function computeMonthly(params){
   let advAmt = Math.max(0, +params.adv || 0);
   if (advAmt > gross) advAmt = gross;
 
-  const pensionRate = pensionRateOnDate(new Date());
   const advPension = advAmt * pensionRate;
   const advTax = computeChequeTax({ gross: advAmt, pension: advPension, year, province });
   const advDed = params.maxcpp ? {cpp:0, ei:0} :
