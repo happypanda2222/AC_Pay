@@ -39,13 +39,39 @@
       font-size:11px;
       font-weight:700;
       border:1px solid rgba(255,255,255,0.15);
-      cursor:default;
+      cursor:help;
       line-height:1;
       flex-shrink:0;
     }
-    .calc-info{display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;color:var(--muted)}
-    .calc-info-title{font-weight:700;font-size:13px;color:var(--txt);margin-bottom:2px}
-    .calc-info-desc{font-size:13px;line-height:1.4}
+    .info-hover{position:relative;display:inline-flex;align-items:center;justify-content:center;}
+    .info-hover .tooltip{
+      position:absolute;
+      left:50%;
+      bottom:125%;
+      transform:translate(-50%,0);
+      background:#1c2231;
+      border:1px solid #2a2f3b;
+      color:var(--txt);
+      padding:8px 10px;
+      border-radius:12px;
+      font-size:12px;
+      line-height:1.4;
+      min-width:220px;
+      max-width:280px;
+      box-shadow:0 10px 28px rgba(0,0,0,.35);
+      opacity:0;
+      visibility:hidden;
+      transition:opacity .15s ease, transform .15s ease;
+      pointer-events:none;
+      z-index:5;
+    }
+    .info-hover:hover .tooltip,
+    .info-hover:focus-visible .tooltip,
+    .info-hover:focus-within .tooltip{
+      opacity:1;
+      visibility:visible;
+      transform:translate(-50%,-4px);
+    }
     .card{background:var(--card);border-radius:14px;padding:12px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);}
     label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
     select,input[type=number]{width:100%;padding:12px;border-radius:10px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt)}
@@ -65,7 +91,7 @@
     .audit td.num{text-align:right}
     .simple{margin-top:12px}
     .simple .block{margin-bottom:16px}
-    .simple .label{font-size:13px;color:var(--muted);margin-bottom:4px}
+    .simple .label{font-size:13px;color:var(--muted);margin-bottom:4px;display:flex;align-items:center;gap:6px}
     .simple .value{font-size:22px;font-weight:800;letter-spacing:.2px}
     .hidden{display:none}
     @keyframes tapPulse {
@@ -145,13 +171,6 @@
 
     <!-- Annual Tab -->
     <div class="card" id="tab-annual">
-      <div class="calc-info">
-        <span class="info-icon" aria-hidden="true">i</span>
-        <div>
-          <div class="calc-info-title">Annual calculation</div>
-          <div class="calc-info-desc">Projects yearly gross from your average monthly credit hours, applies full annual deductions, and shows how a selected advance splits the monthly total.</div>
-        </div>
-      </div>
       <div class="row-4">
         <div>
           <label>Seat</label>
@@ -239,13 +258,6 @@
       including gross, net, tax, CPP/QPP, EI, pension, ESOP contributions and union dues.
     -->
     <div class="card hidden" id="tab-monthly">
-      <div class="calc-info">
-        <span class="info-icon" aria-hidden="true">i</span>
-        <div>
-          <div class="calc-info-title">Monthly calculation</div>
-          <div class="calc-info-desc">Uses entered credits, VO credits, and TAFB to show a single month’s gross, deductions, and a pay advance/second pay split. Tax, CPP, and EI are shared proportionally between the pays; CPP/EI are dropped only when the Maxed CPP/EI toggle is on.</div>
-        </div>
-      </div>
       <div class="row-4">
         <div>
           <label>Seat</label>
@@ -332,13 +344,6 @@
 
     <!-- VO Tab -->
     <div class="card hidden" id="tab-vo">
-      <div class="calc-info">
-        <span class="info-icon" aria-hidden="true">i</span>
-        <div>
-          <div class="calc-info-title">VO calculation</div>
-          <div class="calc-info-desc">Doubles VO credit hours, applies the hourly rate, and estimates net pay using marginal federal and provincial rates for a quick overtime snapshot.</div>
-        </div>
-      </div>
       <div class="row-4">
         <div>
           <label>Seat</label>

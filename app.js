@@ -837,23 +837,78 @@ function tieYearStepFromStepMonthly(){
 }
 
 // --- Renderers ---
+const INFO_COPY = {
+  annual: {
+    annualGross: 'Hourly rate (seat/aircraft/year/step) multiplied by average monthly credit hours for each month, with step progression when enabled.',
+    annualNet: 'Annual gross minus tax, CPP/QPP, EI, pension, union dues, health premiums and ESOP contributions, plus the after-tax employer ESOP match.',
+    monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours.',
+    monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match.',
+    payAdvance: 'Requested advance amount minus proportional tax, CPP/QPP and EI withholdings.',
+    secondPay: 'Remainder of gross after the advance minus remaining tax/CPP/QPP/EI and fixed deductions, plus the ESOP match.',
+    taxReturn: 'Tax savings created by RRSP contributions (difference between tax before and after RRSP).',
+    incomeTax: 'Total annual federal and provincial income tax after pension and RRSP offsets.',
+    cpp: 'Annual CPP/QPP contributions on employment income up to the yearly maximum.',
+    ei: 'Annual EI premiums based on insurable earnings up to the yearly maximum.',
+    pension: 'Employee pension contributions using the current pension rate applied to gross pay.',
+    esopContribution: 'Employee ESOP contributions at the selected percentage of gross, capped at $30,000 annually.',
+    esopMatch: 'Employer ESOP match (30% of your contribution) shown after estimated tax on the match.'
+  },
+  monthly: {
+    hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
+    credits: 'Entered monthly credit hours paid at regular rate up to 85 hours.',
+    voCredits: 'VO credit hours that are always paid at double time.',
+    gross: 'Monthly gross combining regular hours at the hourly rate, overtime beyond 85 hours at double time and VO credits at double time.',
+    net: 'Monthly take-home after tax, CPP/QPP, EI, health, union dues, pension and ESOP, plus the ESOP match and TAFB.',
+    payAdvance: 'Requested advance minus proportional tax/CPP/QPP/EI withholding.',
+    secondPay: 'Remaining gross after the advance minus remaining tax/CPP/QPP/EI and fixed deductions, plus TAFB and the ESOP match.',
+    incomeTax: 'Income tax on the month using the cheque calculator with pension deductions applied.',
+    cpp: 'Estimated monthly CPP/QPP contributions toward the annual maximum.',
+    ei: 'Estimated monthly EI premiums toward the annual maximum.',
+    pension: 'Employee pension contributions for the month at the current pension rate.',
+    health: 'Fixed monthly health deduction.',
+    esop: 'Employee ESOP deduction for the month at the selected percentage of gross (capped to the monthly portion of $30,000).',
+    esopMatch: 'Employer ESOP match for the month (30% of your contribution) reduced by estimated tax on the match.',
+    union: 'Estimated monthly union dues based on seat, aircraft, year and hours.',
+    tafb: 'Per diem hours paid at $5.427/hr added after tax.',
+    marginalFed: 'Marginal federal tax rate based on annualized taxable income (gross minus pension).',
+    marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
+  },
+  vo: {
+    hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
+    hours: 'Entered VO credits converted to paid hours (credits × 2 at double time).',
+    gross: 'VO pay hours multiplied by the hourly rate.',
+    net: 'Gross VO pay reduced by the combined marginal federal and provincial rates.',
+    marginalFed: 'Marginal federal tax rate based on the VO gross amount.',
+    marginalProv: 'Marginal provincial/territorial tax rate based on the VO gross amount.'
+  }
+};
+
+function infoBubble(text){
+  const safe = String(text || '').replace(/"/g, '&quot;');
+  return `<span class="info-hover" aria-label="${safe}"><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">${safe}</span></span>`;
+}
+
+function labelWithInfo(title, desc){
+  return `${title} ${infoBubble(desc)}`;
+}
+
 function renderAnnual(res, params){
   const out = document.getElementById('out');
   const simpleHTML = `
     <div class="simple">
-      <div class="block"><div class="label">Annual Gross</div><div class="value">${money(res.gross)}</div></div>
-      <div class="block"><div class="label">Annual Net</div><div class="value">${money(res.net)}</div></div>
-      <div class="block"><div class="label">Monthly Gross</div><div class="value">${money(res.monthly.gross)}</div></div>
-      <div class="block"><div class="label">Monthly Net</div><div class="value">${money(res.monthly.net)}</div></div>
-      <div class="block" style="margin-left:16px"><div class="label">Pay Advance</div><div class="value">${money(res.pay_advance)}</div></div>
-      <div class="block" style="margin-left:16px"><div class="label">Second Pay</div><div class="value">${money(res.second_pay)}</div></div>
-      <div class="block"><div class="label">Tax Return</div><div class="value">${money(res.tax_return)}</div></div>
-      <div class="block"><div class="label">Income Tax</div><div class="value">${money(res.tax)}</div></div>
-      <div class="block"><div class="label">CPP/QPP</div><div class="value">${money(res.cpp)}</div></div>
-      <div class="block"><div class="label">EI</div><div class="value">${money(res.ei)}</div></div>
-      <div class="block"><div class="label">Pension</div><div class="value">${money(res.pension)}</div></div>
-      <div class="block"><div class="label">ESOP Contributions</div><div class="value">${money(res.esop)}</div></div>
-      <div class="block"><div class="label">ESOP match (after tax)</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Annual Gross', INFO_COPY.annual.annualGross)}</div><div class="value">${money(res.gross)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Annual Net', INFO_COPY.annual.annualNet)}</div><div class="value">${money(res.net)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Monthly Gross', INFO_COPY.annual.monthlyGross)}</div><div class="value">${money(res.monthly.gross)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Monthly Net', INFO_COPY.annual.monthlyNet)}</div><div class="value">${money(res.monthly.net)}</div></div>
+      <div class="block" style="margin-left:16px"><div class="label">${labelWithInfo('Pay Advance', INFO_COPY.annual.payAdvance)}</div><div class="value">${money(res.pay_advance)}</div></div>
+      <div class="block" style="margin-left:16px"><div class="label">${labelWithInfo('Second Pay', INFO_COPY.annual.secondPay)}</div><div class="value">${money(res.second_pay)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Tax Return', INFO_COPY.annual.taxReturn)}</div><div class="value">${money(res.tax_return)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Income Tax', INFO_COPY.annual.incomeTax)}</div><div class="value">${money(res.tax)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('CPP/QPP', INFO_COPY.annual.cpp)}</div><div class="value">${money(res.cpp)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('EI', INFO_COPY.annual.ei)}</div><div class="value">${money(res.ei)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Pension', INFO_COPY.annual.pension)}</div><div class="value">${money(res.pension)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('ESOP Contributions', INFO_COPY.annual.esopContribution)}</div><div class="value">${money(res.esop)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('ESOP match (after tax)', INFO_COPY.annual.esopMatch)}</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
     </div>`;
   const auditRows = res.audit.map(seg=>{
     const fmt = d => d.toISOString().slice(0,10);
@@ -885,12 +940,12 @@ function renderVO(res, params){
   const out = document.getElementById('ot-out');
   const statsHTML = `
     <div class="simple">
-      <div class="block"><div class="label">Hourly Rate</div><div class="value">${money(res.rate)}</div></div>
-      <div class="block"><div class="label">Hours (Credit×2)</div><div class="value">${res.hours.toFixed(2)}</div></div>
-      <div class="block"><div class="label">Gross</div><div class="value">${money(res.gross)}</div></div>
-      <div class="block"><div class="label">Net</div><div class="value">${money(res.net)}</div></div>
-      <div class="block"><div class="label">Marginal FED</div><div class="value">${(100*res.fed_m).toFixed(1)}%</div></div>
-      <div class="block"><div class="label">Marginal PROV</div><div class="value">${(100*res.prov_m).toFixed(1)}%</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Hourly Rate', INFO_COPY.vo.hourlyRate)}</div><div class="value">${money(res.rate)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Hours (Credit×2)', INFO_COPY.vo.hours)}</div><div class="value">${res.hours.toFixed(2)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Gross', INFO_COPY.vo.gross)}</div><div class="value">${money(res.gross)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Net', INFO_COPY.vo.net)}</div><div class="value">${money(res.net)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Marginal FED', INFO_COPY.vo.marginalFed)}</div><div class="value">${(100*res.fed_m).toFixed(1)}%</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Marginal PROV', INFO_COPY.vo.marginalProv)}</div><div class="value">${(100*res.prov_m).toFixed(1)}%</div></div>
     </div>`;
   out.innerHTML = statsHTML;
 }
@@ -898,24 +953,24 @@ function renderMonthly(res, params){
   const out = document.getElementById('mon-out');
   const statsHTML = `
     <div class="simple">
-      <div class="block"><div class="label">Hourly Rate</div><div class="value">${money(res.rate)}</div></div>
-      <div class="block"><div class="label">Credits</div><div class="value">${res.credits.toFixed(2)}</div></div>
-      <div class="block"><div class="label">VO Credits</div><div class="value">${res.voCredits.toFixed(2)}</div></div>
-      <div class="block"><div class="label">Gross</div><div class="value">${money(res.gross)}</div></div>
-      <div class="block"><div class="label">Net</div><div class="value">${money(res.net)}</div></div>
-      <div class="block" style="margin-left:16px"><div class="label">Pay Advance</div><div class="value">${money(res.pay_advance)}</div></div>
-      <div class="block" style="margin-left:16px"><div class="label">Second Pay</div><div class="value">${money(res.second_pay)}</div></div>
-      <div class="block"><div class="label">Income Tax</div><div class="value">${money(res.tax)}</div></div>
-      <div class="block"><div class="label">CPP/QPP</div><div class="value">${money(res.cpp)}</div></div>
-      <div class="block"><div class="label">EI</div><div class="value">${money(res.ei)}</div></div>
-      <div class="block"><div class="label">Pension</div><div class="value">${money(res.pension)}</div></div>
-      <div class="block"><div class="label">Health</div><div class="value">${money(res.health)}</div></div>
-      <div class="block"><div class="label">ESOP</div><div class="value">${money(res.esop)}</div></div>
-      <div class="block"><div class="label">ESOP match (after tax)</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
-      <div class="block"><div class="label">Union Dues</div><div class="value">${money(res.union)}</div></div>
-      <div class="block"><div class="label">TAFB (after tax)</div><div class="value">${money(res.tafb_net)}</div></div>
-      <div class="block"><div class="label">Marginal FED</div><div class="value">${(100*res.fed_m).toFixed(1)}%</div></div>
-      <div class="block"><div class="label">Marginal PROV</div><div class="value">${(100*res.prov_m).toFixed(1)}%</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Hourly Rate', INFO_COPY.monthly.hourlyRate)}</div><div class="value">${money(res.rate)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Credits', INFO_COPY.monthly.credits)}</div><div class="value">${res.credits.toFixed(2)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('VO Credits', INFO_COPY.monthly.voCredits)}</div><div class="value">${res.voCredits.toFixed(2)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Gross', INFO_COPY.monthly.gross)}</div><div class="value">${money(res.gross)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Net', INFO_COPY.monthly.net)}</div><div class="value">${money(res.net)}</div></div>
+      <div class="block" style="margin-left:16px"><div class="label">${labelWithInfo('Pay Advance', INFO_COPY.monthly.payAdvance)}</div><div class="value">${money(res.pay_advance)}</div></div>
+      <div class="block" style="margin-left:16px"><div class="label">${labelWithInfo('Second Pay', INFO_COPY.monthly.secondPay)}</div><div class="value">${money(res.second_pay)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Income Tax', INFO_COPY.monthly.incomeTax)}</div><div class="value">${money(res.tax)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('CPP/QPP', INFO_COPY.monthly.cpp)}</div><div class="value">${money(res.cpp)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('EI', INFO_COPY.monthly.ei)}</div><div class="value">${money(res.ei)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Pension', INFO_COPY.monthly.pension)}</div><div class="value">${money(res.pension)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Health', INFO_COPY.monthly.health)}</div><div class="value">${money(res.health)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('ESOP', INFO_COPY.monthly.esop)}</div><div class="value">${money(res.esop)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('ESOP match (after tax)', INFO_COPY.monthly.esopMatch)}</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Union Dues', INFO_COPY.monthly.union)}</div><div class="value">${money(res.union)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('TAFB (after tax)', INFO_COPY.monthly.tafb)}</div><div class="value">${money(res.tafb_net)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Marginal FED', INFO_COPY.monthly.marginalFed)}</div><div class="value">${(100*res.fed_m).toFixed(1)}%</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Marginal PROV', INFO_COPY.monthly.marginalProv)}</div><div class="value">${(100*res.prov_m).toFixed(1)}%</div></div>
     </div>`;
   out.innerHTML = statsHTML;
 }
