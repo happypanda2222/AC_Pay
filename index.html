@@ -25,8 +25,23 @@
 }
     h1{font-size:22px;margin:8px 0 14px 0}
     .tabs{display:flex;gap:8px;margin:0 0 10px 0}
-    .tabbtn{flex:1;background:#0f1218;border:1px solid #2a2f3b;color:#c9d2de;padding:12px 10px;border-radius:10px;font-weight:600;cursor:pointer}
+    .tabbtn{flex:1;background:#0f1218;border:1px solid #2a2f3b;color:#c9d2de;padding:12px 10px;border-radius:10px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
     .tabbtn.active{background:var(--acc);color:white;border-color:transparent}
+    .info-icon{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:16px;
+      height:16px;
+      border-radius:50%;
+      background:rgba(255,255,255,0.08);
+      color:inherit;
+      font-size:11px;
+      font-weight:700;
+      border:1px solid rgba(255,255,255,0.15);
+      cursor:help;
+      line-height:1;
+    }
     .card{background:var(--card);border-radius:14px;padding:12px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);}
     label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
     select,input[type=number]{width:100%;padding:12px;border-radius:10px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt)}
@@ -97,9 +112,15 @@
 
     <div class="tabs">
       <!-- Tab buttons: Monthly inserted between Annual and VO -->
-      <button class="tabbtn active" data-tab="annual" id="tabbtn-annual">Annual</button>
-      <button class="tabbtn" data-tab="monthly" id="tabbtn-monthly">Monthly</button>
-      <button class="tabbtn" data-tab="vo" id="tabbtn-vo">VO</button>
+      <button class="tabbtn active" data-tab="annual" id="tabbtn-annual">
+        Annual <span class="info-icon" title="Annual projection based on average monthly credit hours, selected seat/aircraft/year, and full annual deductions." aria-label="Annual calculation info">i</span>
+      </button>
+      <button class="tabbtn" data-tab="monthly" id="tabbtn-monthly">
+        Monthly <span class="info-icon" title="Single-month view using entered credits, VO credits, and TAFB to show gross pay, deductions, and split pay amounts." aria-label="Monthly calculation info">i</span>
+      </button>
+      <button class="tabbtn" data-tab="vo" id="tabbtn-vo">
+        VO <span class="info-icon" title="VO calculator doubles credit hours, applies the hourly rate, and estimates net using marginal federal and provincial rates." aria-label="VO calculation info">i</span>
+      </button>
     </div>
 
     <!-- Annual Tab -->
