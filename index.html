@@ -157,13 +157,28 @@
           <span class="pill"><input id="xlr" type="checkbox"> XLR</span>
         </div>
       </div>
-      <div class="row" style="margin-top:10px">
+      <!-- Slider, Advance selection, Maxed CPP/EI toggle and Calculate button -->
+      <div class="row-4" style="margin-top:10px">
         <div class="slider">
           <label style="min-width:54px">ESOP</label>
           <input id="esop" type="range" min="2" max="10" value="10" step="1">
           <div class="pill"><span id="esopPct">10%</span></div>
         </div>
-        <button id="calc" class="btn" type="button">Calculate</button>
+        <div>
+          <label>Advance</label>
+          <select id="adv">
+            <option value="3250" selected>$3,250</option>
+            <option value="4000">$4,000</option>
+            <option value="5000">$5,000</option>
+            <option value="6500">$6,500</option>
+          </select>
+        </div>
+        <div class="hdr">
+          <span class="pill"><input id="maxcpp" type="checkbox"> Maxed CPP/EI</span>
+        </div>
+        <div>
+          <button id="calc" class="btn" type="button">Calculate</button>
+        </div>
       </div>
       <div id="out"></div>
     </div>
@@ -234,13 +249,28 @@
           <span class="pill"><input id="mon-xlr" type="checkbox"> XLR</span>
         </div>
       </div>
-      <div class="row" style="margin-top:10px">
+      <!-- Slider, Advance selection, Maxed CPP/EI toggle and Calculate button for monthly -->
+      <div class="row-4" style="margin-top:10px">
         <div class="slider">
           <label style="min-width:54px">ESOP</label>
           <input id="mon-esop" type="range" min="2" max="10" value="10" step="1">
           <div class="pill"><span id="mon-esopPct">10%</span></div>
         </div>
-        <button id="mon-calc" class="btn" type="button">Calculate</button>
+        <div>
+          <label>Advance</label>
+          <select id="mon-adv">
+            <option value="3250" selected>$3,250</option>
+            <option value="4000">$4,000</option>
+            <option value="5000">$5,000</option>
+            <option value="6500">$6,500</option>
+          </select>
+        </div>
+        <div class="hdr">
+          <span class="pill"><input id="mon-maxcpp" type="checkbox"> Maxed CPP/EI</span>
+        </div>
+        <div>
+          <button id="mon-calc" class="btn" type="button">Calculate</button>
+        </div>
       </div>
       <div id="mon-out"></div>
     </div>

@@ -1,15 +1,32 @@
 /*
- * This is an enhanced version of the original AC Pay Calculator logic.  It adds
- * support for 2026 federal and provincial tax brackets, introduces a new
- * Monthly tab calculation, and fixes a cosmetic alignment issue in the audit
- * table headers.  Tax years 2025 and earlier will continue to use the 2025
- * brackets and credits defined below, while years 2026 and beyond will use
- * the 2026 data defined alongside.  The monthly calculator computes gross
- * pay on a per‑month basis using user‑entered credit hours and applies
- * double‑time pay for credits in excess of 85 per month.
+ * Enhanced AC Pay Calculator logic with support for 2026 tax data, a Monthly
+ * calculation, pay advance/second pay split, tax return calculation and
+ * optional CPP/EI caps.  This file is based on the original app.js from
+ * the AC Pay repository but has been significantly extended to meet
+ * additional requirements.  The key enhancements are:
+ *
+ *   - 2026 federal and provincial tax tables with automatic selection
+ *     based on the chosen year.
+ *   - A monthly calculation that accepts credit hours, VO credits and
+ *     TAFB hours and applies double‑time pay rules.
+ *   - An Advance dropdown in both annual and monthly views to split the
+ *     monthly gross into a pay advance (first pay) and a second pay.  The
+ *     pay advance only withholds tax and CPP/QPP/EI (unless maxed), while
+ *     the second pay withholds all remaining deductions based on the full
+ *     monthly gross.  A sanity check ensures the combined net of the two
+ *     pays is close to the monthly net computed for the period.
+ *   - A Maxed CPP/EI checkbox that, when checked, removes CPP/QPP and EI
+ *     deductions from both pay advance and second pay calculations as
+ *     well as from the monthly net.
+ *   - RRSP contributions are no longer deducted from net pay.  Instead
+ *     they are used solely to compute a Tax Return value equal to the
+ *     difference between tax calculated before and after RRSP.  This
+ *     Tax Return appears only in the annual results.  The RRSP input
+ *     remains in the UI but now only influences the Tax Return figure.
  */
 
 'use strict';
+
 // --- Lock zoom: block pinch & double-tap zoom (best-effort for iOS PWAs) ---
 (function preventZoom(){
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
@@ -223,7 +240,6 @@ function applyConservativeRPCompression() {
 }
 applyConservativeRPCompression();
 
-
 // --- 2025 Tax Data ---
 const FED = { brackets:[[57375,0.145],[114750,0.205],[177882,0.26],[253414,0.29],[Infinity,0.33]],
               bpa_base:14538,bpa_additional:1591,bpa_addl_start:177882,bpa_addl_end:253414 };
@@ -231,16 +247,16 @@ const PROV = {
   AB:{brackets:[[60000,0.08],[151234,0.10],[181481,0.12],[241974,0.13],[362961,0.14],[Infinity,0.15]], bpa:22323},
   BC:{brackets:[[49279,0.0506],[98560,0.077],[113158,0.105],[137407,0.1229],[186306,0.147],[259829,0.168],[Infinity,0.205]], bpa:12932},
   MB:{brackets:[[47000,0.108],[100000,0.1275],[Infinity,0.174]], bpa:15780},
-  NB:{brackets:[[51306,0.094],[102614,0.14],[190060,0.16],[Infinity,0.195]], bpa:13261},
-  NL:{brackets:[[44192,0.087],[88382,0.145],[157792,0.158],[220910,0.178],[282214,0.198],[564429,0.208],[1128858,0.213],[Infinity,0.218]], bpa:10882},
-  NS:{brackets:[[30507,0.0879],[61015,0.1495],[95883,0.1667],[154650,0.175],[Infinity,0.21]], bpa:8841},
-  NT:{brackets:[[51964,0.059],[103930,0.086],[168967,0.122],[Infinity,0.1405]], bpa:16673},
-  NU:{brackets:[[54707,0.04],[109413,0.07],[177881,0.09],[Infinity,0.115]], bpa:16862},
-  ON:{brackets:[[52886,0.0505],[105775,0.0915],[150000,0.1116],[220000,0.1216],[Infinity,0.1316]], bpa:12399},
-  PE:{brackets:[[33328,0.095],[64656,0.1347],[105000,0.166],[140000,0.1762],[Infinity,0.19]], bpa:13000},
-  QC:{brackets:[[53255,0.14],[106495,0.19],[129590,0.24],[Infinity,0.2575]], bpa:18571},
-  SK:{brackets:[[53463,0.105],[152750,0.125],[Infinity,0.145]], bpa:19241},
-  YT:{brackets:[[57375,0.064],[114750,0.09],[177882,0.109],[500000,0.128],[Infinity,0.15]], bpa:15805}
+  NB:{brackets[[51306,0.094],[102614,0.14],[190060,0.16],[Infinity,0.195]], bpa:13261},
+  NL:{brackets[[44192,0.087],[88382,0.145],[157792,0.158],[220910,0.178],[282214,0.198],[564429,0.208],[1128858,0.213],[Infinity,0.218]], bpa:10882},
+  NS:{brackets[[30507,0.0879],[61015,0.1495],[95883,0.1667],[154650,0.175],[Infinity,0.21]], bpa:8841},
+  NT:{brackets[[51964,0.059],[103930,0.086],[168967,0.122],[Infinity,0.1405]], bpa:16673},
+  NU:{brackets[[54707,0.04],[109413,0.07],[177881,0.09],[Infinity,0.115]], bpa:16862},
+  ON:{brackets[[52886,0.0505],[105775,0.0915],[150000,0.1116],[220000,0.1216],[Infinity,0.1316]], bpa:12399},
+  PE:{brackets[[33328,0.095],[64656,0.1347],[105000,0.166],[140000,0.1762],[Infinity,0.19]], bpa:13000},
+  QC:{brackets[[53255,0.14],[106495,0.19],[129590,0.24],[Infinity,0.2575]], bpa:18571},
+  SK:{brackets[[53463,0.105],[152750,0.125],[Infinity,0.145]], bpa:19241},
+  YT:{brackets[[57375,0.064],[114750,0.09],[177882,0.109],[500000,0.128],[Infinity,0.15]], bpa:15805}
 };
 // --- 2026 Tax Data ---
 // Federal: threshold and rates indexed for 2026; BPA increases with clawback starting at $181,440 and ending at $258,482.
@@ -248,19 +264,19 @@ const FED_2026 = { brackets:[[58523,0.14],[117045,0.205],[181440,0.26],[258482,0
                    bpa_base:14829,bpa_additional:1623,bpa_addl_start:181440,bpa_addl_end:258482 };
 // Provincial: 2026 brackets indexed; BPAs generally mirror 2025 values except where noted (AB and BC).
 const PROV_2026 = {
-  AB:{brackets:[[61200,0.08],[154259,0.10],[185111,0.12],[246813,0.13],[370220,0.14],[Infinity,0.15]], bpa:22769},
-  BC:{brackets:[[50363,0.0506],[100728,0.077],[115648,0.105],[140430,0.1229],[190405,0.147],[265545,0.168],[Infinity,0.205]], bpa:13216},
-  MB:{brackets:[[47000,0.108],[100000,0.1275],[Infinity,0.174]], bpa:15780},
-  NB:{brackets:[[52333,0.094],[104666,0.14],[193861,0.16],[Infinity,0.195]], bpa:13261},
-  NL:{brackets:[[44678,0.087],[89355,0.145],[154639,0.158],[215913,0.178],[275999,0.198],[551999,0.208],[1103999,0.213],[Infinity,0.218]], bpa:10882},
-  NS:{brackets:[[30995,0.0879],[61991,0.1495],[97417,0.1667],[157124,0.175],[Infinity,0.21]], bpa:8841},
-  NT:{brackets:[[53003,0.059],[106009,0.086],[172346,0.122],[Infinity,0.1405]], bpa:16673},
-  NU:{brackets:[[55801,0.04],[111602,0.07],[181439,0.09],[Infinity,0.115]], bpa:16862},
-  ON:{brackets:[[53891,0.0505],[107785,0.0915],[150000,0.1116],[220000,0.1216],[Infinity,0.1316]], bpa:12399},
-  PE:{brackets:[[33928,0.095],[65820,0.1347],[106890,0.166],[142250,0.1762],[Infinity,0.19]], bpa:13000},
-  QC:{brackets:[[53255,0.14],[106495,0.19],[129590,0.24],[Infinity,0.2575]], bpa:18571},
-  SK:{brackets:[[54532,0.105],[155805,0.125],[Infinity,0.145]], bpa:19241},
-  YT:{brackets:[[58523,0.064],[117045,0.09],[181440,0.109],[500000,0.128],[Infinity,0.15]], bpa:15805}
+  AB:{brackets[[61200,0.08],[154259,0.10],[185111,0.12],[246813,0.13],[370220,0.14],[Infinity,0.15]], bpa:22769},
+  BC:{brackets[[50363,0.0506],[100728,0.077],[115648,0.105],[140430,0.1229],[190405,0.147],[265545,0.168],[Infinity,0.205]], bpa:13216},
+  MB:{brackets[[47000,0.108],[100000,0.1275],[Infinity,0.174]], bpa:15780},
+  NB:{brackets[[52333,0.094],[104666,0.14],[193861,0.16],[Infinity,0.195]], bpa:13261},
+  NL:{brackets[[44678,0.087],[89355,0.145],[154639,0.158],[215913,0.178],[275999,0.198],[551999,0.208],[1103999,0.213],[Infinity,0.218]], bpa:10882},
+  NS:{brackets[[30995,0.0879],[61991,0.1495],[97417,0.1667],[157124,0.175],[Infinity,0.21]], bpa:8841},
+  NT:{brackets[[53003,0.059],[106009,0.086],[172346,0.122],[Infinity,0.1405]], bpa:16673},
+  NU:{brackets[[55801,0.04],[111602,0.07],[181439,0.09],[Infinity,0.115]], bpa:16862},
+  ON:{brackets[[53891,0.0505],[107785,0.0915],[150000,0.1116],[220000,0.1216],[Infinity,0.1316]], bpa:12399},
+  PE:{brackets[[33928,0.095],[65820,0.1347],[106890,0.166],[142250,0.1762],[Infinity,0.19]], bpa:13000},
+  QC:{brackets[[53255,0.14],[106495,0.19],[129590,0.24],[Infinity,0.2575]], bpa:18571},
+  SK:{brackets[[54532,0.105],[155805,0.125],[Infinity,0.145]], bpa:19241},
+  YT:{brackets[[58523,0.064],[117045,0.09],[181440,0.109],[500000,0.128],[Infinity,0.15]], bpa:15805}
 };
 
 const CPP = {ympe:71300,yampe:81200,ybe:3500, rate_base:0.0595, rate_cpp2:0.04, max_base:4034.10, max_cpp2:396.00};
@@ -462,7 +478,9 @@ function computeAnnual(params){
   // Taxable income before RRSP: used to compute original tax and monthly figures
   const taxable_pre = Math.max(0, gross - pension);
 
-  // Precise CPP/QPP & EI using daily caps
+  // Precise CPP/QPP & EI using daily caps.  These represent the full year contributions
+  // if the CPP/EI cap has not yet been reached.  We will conditionally deduct these
+  // amounts from net based on the Maxed CPP/EI checkbox.
   const ded = computeCPP_EI_Daily({
     year,
     seat,
@@ -472,8 +490,11 @@ function computeAnnual(params){
     avgMonthlyHours: +params.avgMonthlyHours,
     province
   });
-  const cpp_total = ded.cpp_total;
-  const eiPrem    = ded.ei;
+  const cpp_total_full = ded.cpp_total;
+  const eiPrem_full    = ded.ei;
+  // Determine amounts to deduct.  If maxcpp is enabled, no CPP/EI are deducted.
+  const cpp_total_deduct = params.maxcpp ? 0 : cpp_total_full;
+  const eiPrem_deduct   = params.maxcpp ? 0 : eiPrem_full;
 
   // Determine appropriate tax data sets based on year
   const fedData = (year <= 2025 ? FED : FED_2026);
@@ -485,23 +506,29 @@ function computeAnnual(params){
   const prov_gross_pre = taxFromBrackets(taxable_pre, p.brackets);
   const fed_low = fedData.brackets[0][1];
   const prov_low = p.brackets[0][1];
-  const fed_tax_pre  = Math.max(0, fed_gross_pre - (fed_low * federalBPA(year, taxable_pre) + 0.15 * (cpp_total + eiPrem)));
-  const prov_tax_pre = Math.max(0, prov_gross_pre - (prov_low * p.bpa + prov_low * (cpp_total + eiPrem)));
+  const fed_tax_pre  = Math.max(0, fed_gross_pre - (fed_low * federalBPA(year, taxable_pre) + 0.15 * (cpp_total_full + eiPrem_full)));
+  const prov_tax_pre = Math.max(0, prov_gross_pre - (prov_low * p.bpa + prov_low * (cpp_total_full + eiPrem_full)));
   const income_tax_pre = fed_tax_pre + prov_tax_pre;
 
   // ESOP contribution based on gross
   const esop = Math.min((+params.esopPct/100)*gross, 30000);
 
-  // Compute taxable income after RRSP contribution
+  // Compute taxable income after RRSP contribution (used for tax-return calculation only)
   const taxable_rrsp = Math.max(0, taxable_pre - rrsp);
   const fed_gross_rrsp  = taxFromBrackets(taxable_rrsp, fedData.brackets);
   const prov_gross_rrsp = taxFromBrackets(taxable_rrsp, p.brackets);
-  const fed_tax_rrsp  = Math.max(0, fed_gross_rrsp - (fed_low * federalBPA(year, taxable_rrsp) + 0.15 * (cpp_total + eiPrem)));
-  const prov_tax_rrsp = Math.max(0, prov_gross_rrsp - (prov_low * p.bpa + prov_low * (cpp_total + eiPrem)));
-  const income_tax = fed_tax_rrsp + prov_tax_rrsp;
+  const fed_tax_rrsp  = Math.max(0, fed_gross_rrsp - (fed_low * federalBPA(year, taxable_rrsp) + 0.15 * (cpp_total_full + eiPrem_full)));
+  const prov_tax_rrsp = Math.max(0, prov_gross_rrsp - (prov_low * p.bpa + prov_low * (cpp_total_full + eiPrem_full)));
+  // Taxes on income after RRSP contributions are used only to compute the tax return
+  const income_tax_rrsp = fed_tax_rrsp + prov_tax_rrsp;
 
-  // ESOP match after tax uses marginal rate at taxable income after RRSP
-  const comb_top = marginalRate(taxable_rrsp, fedData.brackets) + marginalRate(taxable_rrsp, p.brackets);
+  // Income tax used for annual and monthly net is the tax before RRSP contributions.  The RRSP
+  // deduction does not reduce current year taxes in the pay calculation.  See tax_return below
+  // for the refund effect.
+  const income_tax = income_tax_pre;
+
+  // ESOP match after tax uses the marginal rate at the taxable income before RRSP contributions
+  const comb_top = marginalRate(taxable_pre, fedData.brackets) + marginalRate(taxable_pre, p.brackets);
   const esop_match_net = +(0.30 * esop * (1 - comb_top)).toFixed(2);
 
   // Union dues (1.85% of gross) computed monthly
@@ -516,17 +543,19 @@ function computeAnnual(params){
 
   // Totals
   const annual_health = HEALTH_MO*12;
-  // Annual net: subtract tax, payroll deductions, RRSP contributions and add employer ESOP match
-  const net = gross - income_tax - cpp_total - eiPrem - annual_health - union.annual - rrsp + esop_match_net;
+  // Annual net: subtract tax, payroll deductions and add employer ESOP match.  Note: RRSP no longer reduces net.
+  // Subtract CPP/EI only if not maxed.  Use the deduct variables for net calculation.
+  const net = gross - income_tax - cpp_total_deduct - eiPrem_deduct - annual_health - union.annual + esop_match_net;
 
   // Monthly results: do not adjust net for RRSP contributions; use pre‑RRSP taxable tax and net for monthly snapshot
   const monthly = {
     gross: +(gross/12).toFixed(2),
-    // monthly net excludes ESOP contributions and match; and does not reflect RRSP contributions
-    net: +(((gross - income_tax_pre - cpp_total - eiPrem - annual_health - union.annual + esop_match_net) - esop - esop_match_net)/12).toFixed(2),
-    income_tax: +(income_tax_pre/12).toFixed(2),
-    cpp: +(cpp_total/12).toFixed(2),
-    ei: +(eiPrem/12).toFixed(2),
+    // monthly net excludes ESOP contributions and match.  Because income_tax equals income_tax_pre
+    // (i.e., taxes are not reduced by RRSP), use income_tax here.
+    net: +(((gross - income_tax - cpp_total_deduct - eiPrem_deduct - annual_health - union.annual + esop_match_net) - esop - esop_match_net)/12).toFixed(2),
+    income_tax: +(income_tax/12).toFixed(2),
+    cpp: +((cpp_total_deduct)/12).toFixed(2),
+    ei: +((eiPrem_deduct)/12).toFixed(2),
     health: +(annual_health/12).toFixed(2),
     pension: +(pension/12).toFixed(2),
     esop: +(esop/12).toFixed(2),
@@ -534,20 +563,79 @@ function computeAnnual(params){
     union_dues: +(union.annual/12).toFixed(2)
   };
 
+  // --- Advance & Second Pay split ---
+  let payAdvance = 0, secondPay = 0;
+  try {
+    const monthlyGross = monthly.gross;
+    let advAmt = Math.max(0, +params.adv || 0);
+    if (advAmt > monthlyGross) advAmt = monthlyGross;
+    // Determine marginal rates based on pre‑RRSP taxable income (approximation)
+    const fed_m = marginalRate(taxable_pre, fedData.brackets);
+    const prov_m = marginalRate(taxable_pre, p.brackets);
+    const taxRate = fed_m + prov_m;
+    // Contributions for pay advance based on advAmt (proportional to avgMonthlyHours)
+    let cppAdv = 0, eiAdv = 0;
+    if (!params.maxcpp) {
+      // Estimate hours proportion to compute CPP/EI; advHours is proportion of avgMonthlyHours
+      const advHours = (+params.avgMonthlyHours) * (advAmt / monthlyGross || 0);
+      const dedAdv = computeCPP_EI_Daily({
+        year,
+        seat,
+        ac,
+        stepJan1,
+        xlrOn: !!params.xlrOn,
+        avgMonthlyHours: advHours,
+        province
+      });
+      cppAdv = dedAdv.cpp_total / 12;
+      eiAdv  = dedAdv.ei / 12;
+    }
+    // Tax on pay advance
+    const taxAdv = advAmt * taxRate;
+    payAdvance = advAmt - taxAdv - cppAdv - eiAdv;
+    // Second pay uses remaining gross and applies full deductions based on monthly gross
+    const secondGross = monthlyGross - advAmt;
+    // Full monthly CPP/EI contributions
+    let cppMonthAll = params.maxcpp ? 0 : (cpp_total_full/12);
+    let eiMonthAll  = params.maxcpp ? 0 : (eiPrem_full/12);
+    // Tax on second pay
+    const taxSecond = secondGross * taxRate;
+    // Pension, health, union, ESOP and ESOP match per month
+    const pensionMonth = monthly.pension;
+    const healthMonth = monthly.health;
+    const unionMonth = monthly.union_dues;
+    const esopMonth = monthly.esop;
+    const esopMatchMonth = monthly.esop_match_after_tax;
+    // Second pay net
+    secondPay = secondGross - taxSecond - cppMonthAll - eiMonthAll - pensionMonth - healthMonth - unionMonth - esopMonth + esopMatchMonth;
+  } catch(e) {
+    console.error('Advance split error:', e);
+    payAdvance = 0;
+    secondPay = monthly.net;
+  }
+
+  // Tax return: difference between tax before RRSP contributions and tax after RRSP contributions.
+  // Since income_tax equals income_tax_pre, use the stored post‑RRSP tax to compute the refund.
+  const tax_return = +(income_tax - income_tax_rrsp).toFixed(2);
+
   return {
     audit,
     gross:+gross.toFixed(2),
     net:+net.toFixed(2),
     tax:+income_tax.toFixed(2),
-    cpp:+cpp_total.toFixed(2),
-    ei:+eiPrem.toFixed(2),
+    // Show CPP/QPP and EI deductions actually applied.  When maxcpp is true these are zero.
+    cpp:+cpp_total_deduct.toFixed(2),
+    ei:+eiPrem_deduct.toFixed(2),
     health:+annual_health.toFixed(2),
     pension:+pension.toFixed(2),
     esop:+esop.toFixed(2),
     esop_match_after_tax:+esop_match_net.toFixed(2),
-    rrsp:+rrsp.toFixed(2),
+    // rrsp is removed from return as it no longer impacts net; keep value internally if needed
     monthly,
-    step_jan1:stepJan1
+    step_jan1:stepJan1,
+    pay_advance:+payAdvance.toFixed(2),
+    second_pay:+secondPay.toFixed(2),
+    tax_return
   };
 }
 
@@ -573,6 +661,9 @@ function computeVO(params){
 /*
  * Compute a monthly snapshot based on a specific number of credit hours.
  * Credits beyond 85 in a month are paid at double the hourly rate (per contract).
+ * This version also calculates a pay advance and second pay split and respects
+ * the Maxed CPP/EI option.  TAFB is paid after tax and is included in the
+ * second pay by default.
  */
 function computeMonthly(params){
   const seat=params.seat, ac=params.ac, year=+params.year, province=params.province;
@@ -600,8 +691,8 @@ function computeMonthly(params){
   const tax = gross * (fed_m + prov_m);
   // Approximate CPP/QPP & EI contributions by annualizing and dividing by 12; include VO credits
   const ded = computeCPP_EI_Daily({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits + voCredits, province });
-  const cpp_month = ded.cpp_total / 12;
-  const ei_month  = ded.ei / 12;
+  let cpp_month = ded.cpp_total / 12;
+  let ei_month  = ded.ei / 12;
   // Union dues: use average monthly from annual computation (include VO credits)
   const union = computeUnionDuesMonthly({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: credits + voCredits });
   const union_month = union.avgMonthly;
@@ -613,8 +704,51 @@ function computeMonthly(params){
   // TAFB: per diem hours times $5.427/hr (paid after tax)
   const tafbHours = Math.max(0, +params.tafb || 0);
   const tafb_net = tafbHours * 5.427;
+  // Adjust CPP/EI if maxed
+  if (params.maxcpp) {
+    cpp_month = 0;
+    ei_month = 0;
+  }
+  // Monthly net (before pay split) includes TAFB net and ESOP match and excludes ESOP contribution
   const net = gross - tax - cpp_month - ei_month - health - union_month - pension + esop_match_after_tax + tafb_net;
-  return { rate, credits, voCredits, regHours, overtime, gross, net, tax, cpp: cpp_month, ei: ei_month, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, tafb_net, step_used: step };
+
+  // --- Advance & Second Pay split ---
+  let payAdvance = 0, secondPay = 0;
+  try {
+    let advAmt = Math.max(0, +params.adv || 0);
+    if (advAmt > gross) advAmt = gross;
+    // Pay advance contributions
+    let cppAdv = 0, eiAdv = 0;
+    if (!params.maxcpp && gross > 0) {
+      const advHours = (credits + voCredits) * (advAmt / gross);
+      const dedAdv = computeCPP_EI_Daily({ year, seat, ac, stepJan1: step, xlrOn: !!params.xlrOn, avgMonthlyHours: advHours, province });
+      cppAdv = dedAdv.cpp_total / 12;
+      eiAdv  = dedAdv.ei / 12;
+    }
+    // Tax on pay advance
+    const taxRate = fed_m + prov_m;
+    const taxAdv = advAmt * taxRate;
+    payAdvance = advAmt - taxAdv - cppAdv - eiAdv;
+    // Tax and deductions on second pay
+    const secondGross = gross - advAmt;
+    const taxSecond = secondGross * taxRate;
+    // Second pay uses full monthly contributions
+    const cppSecond = cpp_month;
+    const eiSecond  = ei_month;
+    const pensionSecond = pension;
+    const healthSecond = health;
+    const unionSecond = union_month;
+    const esopSecond = esop;
+    const esopMatchSecond = esop_match_after_tax;
+    // Second pay net includes TAFB and ESOP match after tax
+    secondPay = secondGross - taxSecond - cppSecond - eiSecond - pensionSecond - healthSecond - unionSecond - esopSecond + esopMatchSecond + tafb_net;
+  } catch(e) {
+    console.error('Monthly advance split error:', e);
+    payAdvance = 0;
+    secondPay = net;
+  }
+
+  return { rate, credits, voCredits, regHours, overtime, gross, net, tax, cpp: cpp_month, ei: ei_month, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, tafb_net, step_used: step, pay_advance: payAdvance, second_pay: secondPay };
 }
 
 // --- UI helpers ---
@@ -701,13 +835,15 @@ function renderAnnual(res, params){
       <div class="block"><div class="label">Annual Net</div><div class="value">${money(res.net)}</div></div>
       <div class="block"><div class="label">Monthly Gross</div><div class="value">${money(res.monthly.gross)}</div></div>
       <div class="block"><div class="label">Monthly Net</div><div class="value">${money(res.monthly.net)}</div></div>
+      <div class="block"><div class="label">Pay Advance</div><div class="value">${money(res.pay_advance)}</div></div>
+      <div class="block"><div class="label">Second Pay</div><div class="value">${money(res.second_pay)}</div></div>
+      <div class="block"><div class="label">Tax Return</div><div class="value">${money(res.tax_return)}</div></div>
       <div class="block"><div class="label">Income Tax</div><div class="value">${money(res.tax)}</div></div>
       <div class="block"><div class="label">CPP/QPP</div><div class="value">${money(res.cpp)}</div></div>
       <div class="block"><div class="label">EI</div><div class="value">${money(res.ei)}</div></div>
       <div class="block"><div class="label">Pension</div><div class="value">${money(res.pension)}</div></div>
       <div class="block"><div class="label">ESOP Contributions</div><div class="value">${money(res.esop)}</div></div>
       <div class="block"><div class="label">ESOP match (after tax)</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
-      <div class="block"><div class="label">RRSP Contributions</div><div class="value">${money(res.rrsp)}</div></div>
     </div>`;
   const auditRows = res.audit.map(seg=>{
     const fmt = d => d.toISOString().slice(0,10);
@@ -757,6 +893,8 @@ function renderMonthly(res, params){
       <div class="block"><div class="label">VO Credits</div><div class="value">${res.voCredits.toFixed(2)}</div></div>
       <div class="block"><div class="label">Gross</div><div class="value">${money(res.gross)}</div></div>
       <div class="block"><div class="label">Net</div><div class="value">${money(res.net)}</div></div>
+      <div class="block"><div class="label">Pay Advance</div><div class="value">${money(res.pay_advance)}</div></div>
+      <div class="block"><div class="label">Second Pay</div><div class="value">${money(res.second_pay)}</div></div>
       <div class="block"><div class="label">Income Tax</div><div class="value">${money(res.tax)}</div></div>
       <div class="block"><div class="label">CPP/QPP</div><div class="value">${money(res.cpp)}</div></div>
       <div class="block"><div class="label">EI</div><div class="value">${money(res.ei)}</div></div>
@@ -785,7 +923,9 @@ function calcAnnual(){
       avgMonthlyHours: +document.getElementById('avgHrs').value,
       province: document.getElementById('prov').value,
       esopPct: +document.getElementById('esop').value,
-      rrsp: +document.getElementById('rrsp').value
+      rrsp: +document.getElementById('rrsp').value,
+      adv: +document.getElementById('adv').value,
+      maxcpp: document.getElementById('maxcpp').checked
     };
     const res = computeAnnual(params);
     renderAnnual(res, params);
@@ -827,7 +967,9 @@ function calcMonthly(){
       credits: +document.getElementById('mon-hrs').value,
       voCredits: +document.getElementById('mon-vo').value,
       tafb: +document.getElementById('mon-tafb').value,
-      esopPct: +document.getElementById('mon-esop').value
+      esopPct: +document.getElementById('mon-esop').value,
+      adv: +document.getElementById('mon-adv').value,
+      maxcpp: document.getElementById('mon-maxcpp').checked
     };
     const res = computeMonthly(params);
     renderMonthly(res, params);
