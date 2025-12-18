@@ -71,12 +71,28 @@ const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/mast
 const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 let airportLookupPromise = null;
 const IATA_FALLBACK_MAP = {
-  YYZ:'CYYZ', YUL:'CYUL', YVR:'CYVR', YYC:'CYYC', YEG:'CYEG', YOW:'CYOW', YQB:'CYQB', YHZ:'CYHZ',
-  YXE:'CYXE', YQR:'CYQR', YWG:'CYWG', YSJ:'CYSJ', YXX:'CYXX', YHM:'CYHM', YYJ:'CYYJ', YQT:'CYQT',
-  JFK:'KJFK', LGA:'KLGA', EWR:'KEWR', LAX:'KLAX', SFO:'KSFO', SEA:'KSEA', BOS:'KBOS', ORD:'KORD',
-  DEN:'KDEN', DFW:'KDFW', MIA:'KMIA', FLL:'KFLL', IAH:'KIAH', IAD:'KIAD', DCA:'KDCA', ATL:'KATL',
-  DTW:'KDTW', MSP:'KMSP', PHX:'KPHX', LAS:'KLAS', SAN:'KSAN', SNA:'KSNA', PDX:'KPDX', HNL:'PHNL',
-  CDG:'LFPG', LHR:'EGLL', FRA:'EDDF', AMS:'EHAM', NRT:'RJAA'
+  ABJ:'DIAP', ADD:'HAAB', AKL:'NZAA', AMS:'EHAM', ANU:'TAPA', ATL:'KATL', AUA:'TNCA', AUH:'OMAA', AZS:'MDCY',
+  BAH:'OBBI', BCN:'LEBL', BDA:'TXKF', BDL:'KBDL', BGI:'TBPB', BJM:'HBBA', BKK:'VTBS', BNA:'KBNA', BOG:'SKBO',
+  BOS:'KBOS', BRU:'EBBR', BWI:'KBWI', CCC:'MUCC', CDG:'LFPG', CKY:'GUCY', CLE:'KCLE', CLT:'KCLT', CMH:'KCMH',
+  COO:'DBBB', CPH:'EKCH', CUN:'MMUN', CVG:'KCVG', CZM:'MMCZ', DCA:'KDCA', DEL:'VIDP', DEN:'KDEN', DFW:'KDFW',
+  DKR:'GOOY', DLA:'FKKD', DOH:'OTHH', DTW:'KDTW', DUB:'EIDW', EBB:'HUEN', EWR:'KEWR', EZE:'SAEZ', FCO:'LIRF',
+  FDF:'TFFF', FIH:'FZAA', FLL:'KFLL', FRA:'EDDF', GCM:'MWCR', GDN:'EPGD', GGT:'MYEF', GND:'TGPY', GRU:'SBGR',
+  GUA:'MGGT', GVA:'LSGG', HAV:'MUHA', HKG:'VHHH', HND:'RJTT', HNL:'PHNL', HOG:'MUHG', IAD:'KIAD', IAH:'KIAH',
+  ICN:'RKSI', IND:'KIND', IST:'LTFM', JED:'OEJN', JFK:'KJFK', KGL:'HRYR', KIN:'MKJP', LAD:'FNLU', LAS:'KLAS',
+  LAX:'KLAX', LCA:'LCLK', LGA:'KLGA', LHR:'EGLL', LIM:'SPIM', LIR:'MRLB', MBJ:'MKJS', MCI:'KMCI', MCO:'KMCO',
+  MDT:'KMDT', MEX:'MMMX', MIA:'KMIA', MKE:'KMKE', MSP:'KMSP', MSY:'KMSY', MUC:'EDDM', NAP:'LIRN', NAS:'MYNN',
+  NBO:'HKJK', NRT:'RJAA', OGG:'PHOG', ORD:'KORD', OSL:'ENGM', OUA:'DFFD', PAP:'MTPP', PDX:'KPDX', PEK:'ZBAA',
+  PHL:'KPHL', PHX:'KPHX', PIT:'KPIT', PLS:'MBPV', POP:'MDPP', PTP:'TFFR', PUJ:'MDPC', PVG:'ZSPD', PVR:'MMPR',
+  RDU:'KRDU', ROC:'KROC', RSW:'KRSW', SAN:'KSAN', SCL:'SCEL', SEA:'KSEA', SFO:'KSFO', SJD:'MMSD', SJO:'MROC',
+  SNU:'MUSC', SOF:'LBSF', STL:'KSTL', SYD:'YSSY', SYR:'KSYR', TLV:'LLBG', TPA:'KTPA', TRD:'ENVA', UVF:'TLPL',
+  VIE:'LOWW', VLC:'LEVC', VNO:'EYVI', VRA:'MUVR', WAW:'EPWA', YAM:'CYAM', YBC:'CYBC', YBG:'CYBG', YBL:'CYBL',
+  YCD:'CYCD', YCG:'CYCG', YDF:'CYDF', YEG:'CYEG', YFC:'CYFC', YGK:'CYGK', YGP:'CYGP', YGR:'CYGR', YHZ:'CYHZ',
+  YKA:'CYKA', YLW:'CYLW', YMM:'CYMM', YOW:'CYOW', YPR:'CYPR', YQB:'CYQB', YQF:'CYQF', YQG:'CYQG', YQL:'CYQL',
+  YQM:'CYQM', YQQ:'CYQQ', YQR:'CYQR', YQT:'CYQT', YQU:'CYQU', YQX:'CYQX', YQY:'CYQY', YQZ:'CYQZ', YSB:'CYSB',
+  YSJ:'CYSJ', YTS:'CYTS', YTZ:'CYTZ', YUL:'CYUL', YUY:'CYUY', YVO:'CYVO', YVR:'CYVR', YWG:'CYWG', YWK:'CYWK',
+  YWL:'CYWL', YXC:'CYXC', YXE:'CYXE', YXH:'CYXH', YXJ:'CYXJ', YXS:'CYXS', YXT:'CYXT', YXU:'CYXU', YXY:'CYXY',
+  YYB:'CYYB', YYC:'CYYC', YYD:'CYYD', YYF:'CYYF', YYG:'CYYG', YYJ:'CYYJ', YYR:'CYYR', YYT:'CYYT', YYY:'CYYY',
+  YYZ:'CYYZ', YZF:'CYZF', YZP:'CYZP', YZR:'CYZR', YZV:'CYZV', ZBF:'CZBF', ZRH:'LSZH', ZSA:'MYSM'
 };
 
 // --- Pay tables 2023–2026 (from contract) ---
@@ -966,6 +982,92 @@ async function fetchJsonWithCorsFallback(url, cache='no-store'){
     return attempt(`${CORS_PROXY}${encodeURIComponent(url)}`, 'proxy');
   }
 }
+async function fetchTextWithCorsFallback(url, cache='no-store'){
+  const attempt = async (target) => {
+    const resp = await fetch(target, { cache, mode:'cors' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.text();
+  };
+  try {
+    return await attempt(url);
+  } catch(err){
+    console.warn(`Direct text fetch failed for ${url}; retrying via proxy`, err);
+    if (url.startsWith(CORS_PROXY)) throw err;
+    return attempt(`${CORS_PROXY}${encodeURIComponent(url)}`);
+  }
+}
+function approximateUtcFromDayHour(day, hour=0, minute=0){
+  const now = new Date();
+  let year = now.getUTCFullYear();
+  let month = now.getUTCMonth();
+  const today = now.getUTCDate();
+  if (day - today > 20) month -= 1;
+  if (today - day > 20) month += 1;
+  const dt = new Date(Date.UTC(year, month, day, hour, minute));
+  return dt.getTime();
+}
+function parseMetarText(raw, icao){
+  if (!raw) return null;
+  const lines = raw.trim().split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return null;
+  const rawLine = lines[lines.length - 1].trim();
+  const timeMatch = rawLine.match(/\b(\d{2})(\d{2})(\d{2})Z\b/);
+  let reportMs = Date.now();
+  if (timeMatch){
+    const [, dd, hh, mm] = timeMatch;
+    reportMs = approximateUtcFromDayHour(Number(dd), Number(hh), Number(mm));
+  }
+  const tokens = rawLine.split(/\s+/);
+  const visToken = tokens.find(t => /SM$/.test(t));
+  const vvToken = tokens.find(t => /^VV\d{3}/.test(t));
+  const clouds = tokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}/.test(t)).map(t => ({
+    cover: t.slice(0,3),
+    base: Number(t.slice(3)) * 100
+  }));
+  const visib = visToken ? parseVisibilityToSM(visToken) : null;
+  const vertVis = vvToken ? Number(vvToken.slice(2)) * 100 : null;
+  return {
+    icaoId: icao,
+    name: `${icao} (text feed)`,
+    reportTime: new Date(reportMs).toISOString(),
+    obsTime: Math.floor(reportMs / 1000),
+    wxString: rawLine,
+    visib,
+    vertVis,
+    clouds,
+    rawOb: rawLine
+  };
+}
+function parseTafText(raw, icao){
+  if (!raw) return null;
+  const lines = raw.trim().split(/\r?\n/).filter(Boolean);
+  const tafLine = lines.find(l => l.trim().startsWith('TAF')) || lines.find(l => l.includes(icao)) || '';
+  const rawTAF = lines.join(' ').replace(/\s+/g,' ').trim();
+  if (!rawTAF) return null;
+  const validMatch = rawTAF.match(/\b(\d{4})\/(\d{4})\b/);
+  let fromMs = null, toMs = null;
+  if (validMatch){
+    const [, from, to] = validMatch;
+    fromMs = approximateUtcFromDayHour(Number(from.slice(0,2)), Number(from.slice(2)));
+    toMs = approximateUtcFromDayHour(Number(to.slice(0,2)), Number(to.slice(2)));
+  }
+  const visMatch = rawTAF.match(/\s([PM]?\d+(?:\/\d+)?SM)\b/);
+  const cloudTokens = rawTAF.match(/(VV\d{3}|FEW\d{3}|SCT\d{3}|BKN\d{3}|OVC\d{3})/g) || [];
+  const clouds = cloudTokens.map(t => ({ cover:t.slice(0,3), base:Number(t.slice(3)) * 100 }));
+  const fcsts = (fromMs && toMs) ? [{
+    timeFrom: Math.floor(fromMs / 1000),
+    timeTo: Math.floor(toMs / 1000),
+    visib: visMatch ? parseVisibilityToSM(visMatch[1]) : null,
+    clouds,
+    wxString: tafLine || rawTAF
+  }] : [];
+  return {
+    icaoId: icao,
+    name: `${icao} (text feed)`,
+    rawTAF,
+    fcsts
+  };
+}
 async function loadAirportLookup(){
   if (airportLookupPromise) return airportLookupPromise;
   airportLookupPromise = fetchJsonWithCorsFallback(IATA_LOOKUP_URL, 'force-cache')
@@ -1081,9 +1183,24 @@ async function fetchWeatherForAirport(icao){
       return [];
     })
   ]);
-  const metar = Array.isArray(metarJson) ? metarJson[0] : null;
-  const taf = Array.isArray(tafJson) ? tafJson[0] : null;
-  const name = metar?.name || taf?.name || icao;
+  let metar = Array.isArray(metarJson) ? metarJson[0] : null;
+  let taf = Array.isArray(tafJson) ? tafJson[0] : null;
+  let name = metar?.name || taf?.name || icao;
+  if (!metar || !taf){
+    const [metarTxt, tafTxt] = await Promise.all([
+      metar ? Promise.resolve(null) : fetchTextWithCorsFallback(`https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`, 'no-store').catch(err => {
+        console.warn(`METAR text fallback failed for ${icao}`, err);
+        return null;
+      }),
+      taf ? Promise.resolve(null) : fetchTextWithCorsFallback(`https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`, 'no-store').catch(err => {
+        console.warn(`TAF text fallback failed for ${icao}`, err);
+        return null;
+      })
+    ]);
+    if (!metar && metarTxt) metar = parseMetarText(metarTxt, icao);
+    if (!taf && tafTxt) taf = parseTafText(tafTxt, icao);
+    if (!name && (metar?.name || taf?.name)) name = metar?.name || taf?.name;
+  }
   if (!metar && !taf) throw new Error(`No METAR/TAF found for ${icao}. Check the airport code or try again later.`);
   return { icao, name, metar, taf };
 }
