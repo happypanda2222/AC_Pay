@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://aviationweather.gov https://raw.githubusercontent.com;">
   <meta name="theme-color" content="#0a84ff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -184,6 +184,24 @@
     .pill-success{background:#10272b;color:#6dd3ff;border:1px solid #1f3a40;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px}
     .two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     @media(max-width:620px){.two-col{grid-template-columns:1fr}}
+    /* Weather tab styling */
+    .weather-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:12px}
+    @media(max-width:960px){.weather-grid{grid-template-columns:1fr}}
+    .weather-card{background:var(--card);border:1px solid #1f2633;border-radius:14px;padding:12px;box-shadow:0 8px 26px rgba(0,0,0,.3)}
+    .status-badge{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:12px;font-weight:800;font-size:12px;letter-spacing:.2px;text-transform:uppercase;border:1px solid transparent}
+    .status-lifr{background:#2b1530;border-color:#7e22ce;color:#f3e8ff}
+    .status-ifr{background:#351418;border-color:#ef4444;color:#ffe4e6}
+    .status-mvfr{background:#2f260f;border-color:#eab308;color:#fef9c3}
+    .status-vfr{background:#0f2c1a;border-color:#22c55e;color:#d1fae5}
+    .status-unk{background:#1f2937;border-color:#4b5563;color:#e5e7eb}
+    .ils-badge{display:inline-flex;align-items:center;gap:6px;background:#0f1218;border:1px solid #2a2f3b;color:var(--txt);padding:6px 10px;border-radius:10px;font-weight:700}
+    .muted-note{color:var(--muted);font-size:13px;margin-top:8px}
+    .wx-meta{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--muted);margin-top:6px}
+    .wx-metric{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px}
+    .wx-box{background:#0f1218;border:1px solid #2a2f3b;border-radius:10px;padding:8px 10px}
+    .wx-box .label{font-size:12px;color:var(--muted);margin-bottom:4px}
+    .wx-box .value{font-size:16px;font-weight:800}
+    .wx-error{color:#fca5a5;background:#2f1616;border:1px solid #7f1d1d;padding:10px;border-radius:12px}
   </style>
 </head>
 <body data-ui="modern">
@@ -214,6 +232,7 @@
           <button class="tabbtn active" data-tab="modern-annual" id="tabbtn-modern-annual">Annual</button>
           <button class="tabbtn" data-tab="modern-monthly" id="tabbtn-modern-monthly">Monthly</button>
           <button class="tabbtn" data-tab="modern-vo" id="tabbtn-modern-vo">VO</button>
+          <button class="tabbtn" data-tab="modern-weather" id="tabbtn-modern-weather">Weather</button>
         </div>
         <div id="modern-annual" class="modern-tab">
           <div class="modern-grid">
@@ -431,6 +450,41 @@
             </div>
           </div>
         </div>
+
+        <div id="modern-weather" class="modern-tab hidden">
+          <div class="weather-grid">
+            <div class="modern-panel">
+              <h3>Weather brief (live METAR/TAF)</h3>
+              <div class="stacked-fields">
+                <div>
+                  <label>Departure airport (IATA/ICAO)</label>
+                  <input id="modern-wx-dep" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
+                </div>
+                <div>
+                  <label>Arrival airport (IATA/ICAO)</label>
+                  <input id="modern-wx-arr" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., LAX or KLAX">
+                </div>
+                <div class="two-col">
+                  <div>
+                    <label>Departure in (hrs)</label>
+                    <input id="modern-wx-dep-hrs" type="number" min="0" max="48" step="0.5" value="2">
+                  </div>
+                  <div>
+                    <label>Arrival in (hrs)</label>
+                    <input id="modern-wx-arr-hrs" type="number" min="0" max="72" step="0.5" value="6">
+                  </div>
+                </div>
+              </div>
+              <div class="modern-cta"><button id="modern-wx-run" class="btn-primary" type="button">Analyze weather</button></div>
+              <div class="muted-note">Color codes: purple = LIFR, red = IFR, yellow = MVFR, green = VFR. ILS guidance is based on forecast ceiling/visibility.</div>
+            </div>
+            <div class="modern-panel">
+              <h3>Field condition outlook</h3>
+              <div id="modern-wx-out"></div>
+              <details class="drawer" id="modern-wx-raw"><summary>Show METAR/TAF inputs</summary><div id="modern-wx-raw-body"></div></details>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -445,6 +499,9 @@
       </button>
       <button class="tabbtn" data-tab="vo" id="tabbtn-vo">
         VO
+      </button>
+      <button class="tabbtn" data-tab="weather" id="tabbtn-weather">
+        Weather
       </button>
     </div>
 
@@ -667,6 +724,34 @@
         <button id="ot-calc" class="btn" type="button">Calculate VO</button>
       </div>
       <div id="ot-out"></div>
+    </div>
+
+    <!-- Weather Tab -->
+    <div class="card hidden" id="tab-weather">
+      <div class="row-4">
+        <div>
+          <label>Departure airport (IATA/ICAO)</label>
+          <input id="wx-dep" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
+        </div>
+        <div>
+          <label>Arrival airport (IATA/ICAO)</label>
+          <input id="wx-arr" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., LHR or EGLL">
+        </div>
+        <div>
+          <label>Departure in (hrs)</label>
+          <input id="wx-dep-hrs" type="number" min="0" max="48" step="0.5" value="2">
+        </div>
+        <div>
+          <label>Arrival in (hrs)</label>
+          <input id="wx-arr-hrs" type="number" min="0" max="72" step="0.5" value="6">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="wx-run" class="btn" type="button">Analyze weather</button>
+      </div>
+      <div class="muted-note">Live METAR/TAF decoding with VFR/MVFR/IFR/LIFR colour coding and ILS category guidance.</div>
+      <div id="wx-out"></div>
+      <details class="drawer" id="wx-raw"><summary>Show METAR/TAF inputs</summary><div id="wx-raw-body"></div></details>
     </div>
 
     </div> <!-- /legacy-ui -->

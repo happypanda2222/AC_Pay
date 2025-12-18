@@ -66,6 +66,9 @@ const PROGRESSION = {m:11, d:5};
 const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
+const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
+const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
+let airportLookupPromise = null;
 
 // --- Pay tables 2023–2026 (from contract) ---
 const PAY_TABLES = {
@@ -766,26 +769,28 @@ function updateAircraftOptions(seatValue, selectEl){
 }
 
 function setActiveTab(which){
-  const btnA=document.getElementById('tabbtn-annual');
-  const btnM=document.getElementById('tabbtn-monthly');
-  const btnV=document.getElementById('tabbtn-vo');
-  const tabA=document.getElementById('tab-annual');
-  const tabM=document.getElementById('tab-monthly');
-  const tabV=document.getElementById('tab-vo');
-  if (which==='annual'){
-    btnA.classList.add('active'); btnM.classList.remove('active'); btnV.classList.remove('active');
-    tabA.classList.remove('hidden'); tabM.classList.add('hidden'); tabV.classList.add('hidden');
-  } else if (which==='monthly') {
-    btnM.classList.add('active'); btnA.classList.remove('active'); btnV.classList.remove('active');
-    tabM.classList.remove('hidden'); tabA.classList.add('hidden'); tabV.classList.add('hidden');
-  } else {
-    btnV.classList.add('active'); btnA.classList.remove('active'); btnM.classList.remove('active');
-    tabV.classList.remove('hidden'); tabA.classList.add('hidden'); tabM.classList.add('hidden');
-  }
+  const tabs = [
+    { btn: 'tabbtn-annual', pane: 'tab-annual', id: 'annual' },
+    { btn: 'tabbtn-monthly', pane: 'tab-monthly', id: 'monthly' },
+    { btn: 'tabbtn-vo', pane: 'tab-vo', id: 'vo' },
+    { btn: 'tabbtn-weather', pane: 'tab-weather', id: 'weather' }
+  ];
+  tabs.forEach(({ btn, pane, id }) => {
+    const b = document.getElementById(btn);
+    const p = document.getElementById(pane);
+    if (!b || !p) return;
+    if (which === id){
+      b.classList.add('active');
+      p.classList.remove('hidden');
+    } else {
+      b.classList.remove('active');
+      p.classList.add('hidden');
+    }
+  });
 }
 
 function setModernTab(which){
-  const tabs = ['modern-annual','modern-monthly','modern-vo'];
+  const tabs = ['modern-annual','modern-monthly','modern-vo','modern-weather'];
   tabs.forEach(id => {
     const btn = document.getElementById(`tabbtn-${id}`);
     const pane = document.getElementById(id);
@@ -931,6 +936,235 @@ function switchUIMode(mode){
     if (modern) modern.classList.remove('hidden');
     if (legacy) legacy.classList.add('hidden');
     setModernTab('modern-annual');
+  }
+}
+
+// --- Weather helpers (METAR/TAF decoding) ---
+function escapeHtml(str=''){
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+async function loadAirportLookup(){
+  if (airportLookupPromise) return airportLookupPromise;
+  airportLookupPromise = fetch(IATA_LOOKUP_URL, { cache: 'force-cache' })
+    .then(resp => { if (!resp.ok) throw new Error('Unable to load airport directory'); return resp.json(); })
+    .then(list => {
+      const map = {};
+      (list || []).forEach(entry => {
+        const ia = entry?.iata_code, ic = entry?.icao_code;
+        if (ia && ic) map[String(ia).toUpperCase()] = String(ic).toUpperCase();
+      });
+      return map;
+    }).catch(err => { airportLookupPromise = null; throw err; });
+  return airportLookupPromise;
+}
+async function resolveAirportCode(input){
+  const code = String(input || '').trim().toUpperCase();
+  if (!code) throw new Error('Enter an airport code.');
+  if (code.length === 4) return code;
+  if (code.length === 3){
+    const lookup = await loadAirportLookup();
+    if (lookup[code]) return lookup[code];
+    throw new Error(`Unable to map ${code} to an ICAO station.`);
+  }
+  throw new Error('Use a 3-letter IATA or 4-letter ICAO code.');
+}
+function parseVisibilityToSM(raw){
+  if (raw === null || raw === undefined) return null;
+  let s = String(raw).trim().toUpperCase();
+  if (!s) return null;
+  s = s.replace(/SM/g,'').replace(/^P/,'').replace('+','').trim();
+  const frac = s.match(/^(\d+)\s+(\d+)\/(\d+)$/) || s.match(/^(\d+)\/(\d+)$/);
+  let num = null;
+  if (frac){
+    const whole = frac[3] ? Number(frac[1]) : 0;
+    const top = Number(frac[frac.length === 4 ? 2 : 1]);
+    const bot = Number(frac[frac.length === 4 ? 3 : 2]);
+    if (bot > 0) num = whole + (top / bot);
+  }
+  if (num === null){
+    const parsed = parseFloat(s);
+    if (!Number.isNaN(parsed)) num = parsed;
+  }
+  if (num === null) return null;
+  if (num > 50) return +(num / 1609.34).toFixed(2); // assume meters/visibility 9999 etc
+  return +num.toFixed(2);
+}
+function formatVisSm(v){
+  if (v === null || v === undefined || Number.isNaN(v)) return 'Not reported';
+  if (v >= 10) return `${v.toFixed(1)} SM`;
+  if (v >= 1) return `${v.toFixed(1)} SM`;
+  return `${v.toFixed(2)} SM`;
+}
+function extractCeilingFt(clouds, vertVis){
+  let ceil = null;
+  if (Array.isArray(clouds)){
+    clouds.forEach(c => {
+      const cover = String(c?.cover || '').toUpperCase();
+      if (['BKN','OVC','VV'].includes(cover)){
+        const base = Number(c.base);
+        if (!Number.isNaN(base)){
+          if (ceil === null || base < ceil) ceil = base;
+        }
+      }
+    });
+  }
+  if (ceil === null && vertVis !== undefined && vertVis !== null){
+    const vv = Number(vertVis);
+    if (!Number.isNaN(vv)) ceil = vv;
+  }
+  return ceil;
+}
+function classifyFlightRules(ceilingFt, visSm){
+  const ceil = (ceilingFt === null || ceilingFt === undefined) ? Infinity : ceilingFt;
+  const vis = (visSm === null || visSm === undefined) ? Infinity : visSm;
+  if (ceilingFt === null && visSm === null) return { code:'UNK', label:'Unknown', className:'status-unk' };
+  if (ceil < 500 || vis < 1) return { code:'LIFR', label:'LIFR', className:'status-lifr' };
+  if (ceil < 1000 || vis < 3) return { code:'IFR', label:'IFR', className:'status-ifr' };
+  if (ceil < 3000 || vis < 5) return { code:'MVFR', label:'MVFR', className:'status-mvfr' };
+  return { code:'VFR', label:'VFR', className:'status-vfr' };
+}
+function ilsCategory(ceilingFt, visSm){
+  const ceil = (ceilingFt === null || ceilingFt === undefined) ? Infinity : ceilingFt;
+  const vis = (visSm === null || visSm === undefined) ? Infinity : visSm;
+  if (ceil < 100 || vis < 0.3) return { cat:'CAT III', reason:'Ceiling/vis below CAT II mins' };
+  if (ceil < 200 || vis < 0.5) return { cat:'CAT II', reason:'Ceiling or visibility below CAT I mins' };
+  if (ceil < 1000 || vis < 3) return { cat:'CAT I', reason:'IFR conditions expected' };
+  return { cat:'CAT I / Visual', reason:'VMC; CAT I sufficient' };
+}
+function tafSegmentForTime(fcsts, targetMs){
+  if (!Array.isArray(fcsts) || !fcsts.length) return null;
+  const exact = fcsts.find(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
+  if (exact) return exact;
+  const future = fcsts.find(f => f.timeFrom * 1000 > targetMs);
+  return future || fcsts[fcsts.length - 1];
+}
+function formatZulu(ms){
+  const d = new Date(ms);
+  return d.toISOString().slice(0,16).replace('T',' ') + 'Z';
+}
+async function fetchWeatherForAirport(icao){
+  const [metarRes, tafRes] = await Promise.all([
+    fetch(`${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`, { cache:'no-store' }),
+    fetch(`${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`, { cache:'no-store' })
+  ]);
+  const metarJson = metarRes.ok ? await metarRes.json() : [];
+  const tafJson = tafRes.ok ? await tafRes.json() : [];
+  const metar = Array.isArray(metarJson) ? metarJson[0] : null;
+  const taf = Array.isArray(tafJson) ? tafJson[0] : null;
+  const name = metar?.name || taf?.name || icao;
+  if (!metar && !taf) throw new Error(`No METAR/TAF found for ${icao}`);
+  return { icao, name, metar, taf };
+}
+function metarTimeMs(metar){
+  if (!metar) return null;
+  if (metar.reportTime) return Date.parse(metar.reportTime);
+  if (metar.obsTime) return Number(metar.obsTime) * 1000;
+  return null;
+}
+function summarizeWeatherWindow(airportData, targetMs, label){
+  const tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
+  const metarMs = metarTimeMs(airportData.metar);
+  const metarIsCurrent = metarMs ? Math.abs(targetMs - metarMs) <= 90 * 60000 : false;
+  const useMetar = metarIsCurrent && (!tafSeg || targetMs <= metarMs + 45 * 60000);
+  const segment = useMetar ? airportData.metar : (tafSeg || airportData.metar);
+  const source = useMetar ? 'METAR' : (tafSeg ? 'TAF' : 'METAR');
+  const ceiling = extractCeilingFt(segment?.clouds, segment?.vertVis);
+  const vis = parseVisibilityToSM(segment?.visib);
+  const rules = classifyFlightRules(ceiling, vis);
+  const ils = ilsCategory(ceiling, vis);
+  const wx = segment?.wxString || (Array.isArray(segment?.weather) ? segment.weather.join(' ') : '') || 'None reported';
+  const windowText = source === 'TAF' && tafSeg
+    ? `${formatZulu(tafSeg.timeFrom * 1000)} → ${formatZulu(tafSeg.timeTo * 1000)}`
+    : (metarMs ? `Obs ${formatZulu(metarMs)}` : 'Timing unavailable');
+  const reasonBits = [];
+  if (ceiling !== null) reasonBits.push(`Ceiling ${ceiling} ft`);
+  if (vis !== null) reasonBits.push(`Vis ${formatVisSm(vis)}`);
+  if (wx && wx !== 'None reported') reasonBits.push(wx);
+  return {
+    label,
+    icao: airportData.icao,
+    name: airportData.name || airportData.icao,
+    targetMs,
+    targetText: formatZulu(targetMs),
+    source,
+    windowText,
+    ceiling,
+    visibility: vis,
+    rules,
+    ils,
+    wx,
+    summary: reasonBits.join(' · ') || 'No significant weather decoded'
+  };
+}
+function renderWeatherResults(outEl, rawEl, assessments, rawSources){
+  if (!outEl) return;
+  if (!assessments || !assessments.length){
+    outEl.innerHTML = '<div class="wx-error">No weather data available.</div>';
+    if (rawEl) rawEl.innerHTML = '';
+    return;
+  }
+  const cards = assessments.map(a => {
+    const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined) ? `${a.ceiling} ft` : 'Not reported';
+    const visTxt = formatVisSm(a.visibility);
+    return `<div class="weather-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">${escapeHtml(a.label)}</div>
+          <div style="font-weight:800;font-size:18px">${escapeHtml(a.name)} (${escapeHtml(a.icao)})</div>
+          <div class="wx-meta"><span>${escapeHtml(a.targetText)}</span><span>${escapeHtml(a.source)} · ${escapeHtml(a.windowText)}</span></div>
+        </div>
+        <span class="status-badge ${a.rules.className}">${escapeHtml(a.rules.label)}</span>
+      </div>
+      <div class="wx-metric">
+        <div class="wx-box"><div class="label">Ceiling</div><div class="value">${escapeHtml(ceilTxt)}</div></div>
+        <div class="wx-box"><div class="label">Visibility</div><div class="value">${escapeHtml(visTxt)}</div></div>
+        <div class="wx-box"><div class="label">ILS guidance</div><div class="value"><span class="ils-badge">${escapeHtml(a.ils.cat)}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(a.ils.reason)}</div></div></div>
+        <div class="wx-box"><div class="label">Drivers</div><div class="value" style="font-size:14px;line-height:1.4">${escapeHtml(a.summary)}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+  outEl.innerHTML = cards;
+  if (rawEl){
+    const rawHtml = (rawSources || []).map(src => `
+      <div class="wx-box">
+        <div class="label">${escapeHtml(src.name || src.icao)} (${escapeHtml(src.icao)})</div>
+        <div class="value" style="font-size:13px;line-height:1.4">METAR: ${escapeHtml(src.metar?.rawOb || 'N/A')}</div>
+        <div class="value" style="font-size:13px;line-height:1.4">TAF: ${escapeHtml(src.taf?.rawTAF || 'N/A')}</div>
+      </div>
+    `).join('');
+    rawEl.innerHTML = rawHtml;
+  }
+}
+async function runWeatherWorkflow({ depId, arrId, depHrsId, arrHrsId, outId, rawId }){
+  const outEl = document.getElementById(outId);
+  const rawEl = document.getElementById(rawId);
+  const rawDetails = rawEl?.closest('details');
+  if (outEl) outEl.innerHTML = '<div class="muted-note">Fetching METAR/TAF and decoding…</div>';
+  if (rawEl) rawEl.innerHTML = '';
+  if (rawDetails) rawDetails.open = false;
+  try {
+    const depCode = document.getElementById(depId)?.value || '';
+    const arrCode = document.getElementById(arrId)?.value || '';
+    const depHrs = parseFloat(document.getElementById(depHrsId)?.value || '0');
+    const arrHrs = parseFloat(document.getElementById(arrHrsId)?.value || '0');
+    if (!Number.isFinite(depHrs) || depHrs < 0) throw new Error('Departure time must be zero or greater.');
+    if (!Number.isFinite(arrHrs) || arrHrs < 0) throw new Error('Arrival time must be zero or greater.');
+    const [depIcao, arrIcao] = await Promise.all([resolveAirportCode(depCode), resolveAirportCode(arrCode)]);
+    const uniqueIcao = Array.from(new Set([depIcao, arrIcao]));
+    const weatherMap = {};
+    for (const icao of uniqueIcao){
+      weatherMap[icao] = await fetchWeatherForAirport(icao);
+    }
+    const now = Date.now();
+    const assessments = [
+      summarizeWeatherWindow(weatherMap[depIcao], now + depHrs * 3600000, 'Departure field'),
+      summarizeWeatherWindow(weatherMap[arrIcao], now + arrHrs * 3600000, 'Arrival field')
+    ];
+    renderWeatherResults(outEl, rawEl, assessments, uniqueIcao.map(c => weatherMap[c]));
+  } catch(err){
+    console.error(err);
+    if (outEl) outEl.innerHTML = `<div class="wx-error">${escapeHtml(err.message || 'Weather lookup failed')}</div>`;
+    if (rawEl) rawEl.innerHTML = '';
   }
 }
 
@@ -1366,9 +1600,11 @@ function init(){
   document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('annual'); });
   document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('monthly'); });
   document.getElementById('tabbtn-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('vo'); });
+  document.getElementById('tabbtn-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('weather'); });
   document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-annual'); });
   document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-monthly'); });
   document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-vo'); });
+  document.getElementById('tabbtn-modern-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-weather'); });
   document.getElementById('ui-mode')?.addEventListener('change', (e)=>{ const v=e.target.value==='legacy'?'legacy':'modern'; switchUIMode(v); });
   // Dropdown behaviors
   document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
@@ -1405,6 +1641,8 @@ function init(){
   document.getElementById('modern-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
   document.getElementById('modern-ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
   document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
+  document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body' }); });
+  document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
   // Defaults
   onSeatChange(false);
   onSeatChange(true);
@@ -1423,6 +1661,11 @@ function init(){
   // lock the controls.  If tie checkboxes remain unchecked, this does
   // nothing beyond setting defaults.
   autoSelectDefaults();
+  // Sensible placeholders for weather tab
+  const depWx = document.getElementById('wx-dep'); if (depWx && !depWx.value) depWx.value = 'YYZ';
+  const arrWx = document.getElementById('wx-arr'); if (arrWx && !arrWx.value) arrWx.value = 'YVR';
+  const depWxM = document.getElementById('modern-wx-dep'); if (depWxM && !depWxM.value) depWxM.value = 'YYZ';
+  const arrWxM = document.getElementById('modern-wx-arr'); if (arrWxM && !arrWxM.value) arrWxM.value = 'YVR';
   setModernTab('modern-annual');
 }
 if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', init); } else { init(); }
