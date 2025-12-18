@@ -1,7 +1,7 @@
 /*
  * Enhanced AC Pay Calculator logic with support for 2026 tax data, a Monthly
- * calculation, pay advance/second pay split, tax return calculation and
- * optional CPP/EI caps.  This file is based on the original app.js from
+ * calculation with pay advance/second pay split, tax return calculation and
+ * optional CPP/EI caps in the monthly view.  This file is based on the original app.js from
  * the AC Pay repository but has been significantly extended to meet
  * additional requirements.  The key enhancements are:
  *
@@ -9,17 +9,12 @@
  *     based on the chosen year.
  *   - A monthly calculation that accepts credit hours, VO credits and
  *     TAFB hours and applies double‑time pay rules.
- *   - An Advance dropdown in both annual and monthly views to split the
- *     monthly gross into a pay advance (first pay) and a second pay.  The
- *     pay advance only withholds tax and CPP/QPP/EI (unless maxed), while
- *     the second pay withholds all remaining deductions based on the full
- *     monthly gross.  A sanity check previously ensured the combined net of
- *     the two pays was close to the monthly net computed for the period.  This
- *     check has been removed because it was interfering with the UI.
- *   - A Maxed CPP/EI checkbox that, when checked, removes CPP/QPP and EI
- *     deductions from both pay advance and second pay calculations while
- *     leaving the monthly net unchanged.  Annual net always uses the
- *     full CPP/QPP and EI contributions regardless of this flag.
+ *   - A pay advance/second pay split in the monthly view to separate tax
+ *     and CPP/QPP/EI withholding across two cheques.
+ *   - A Maxed CPP/EI checkbox for the monthly view that removes CPP/QPP and
+ *     EI deductions from both pay advance and second pay calculations while
+ *     leaving the monthly net unchanged.  Annual results always use the
+ *     full CPP/QPP and EI contributions.
  *   - RRSP contributions are no longer deducted from net pay.  Instead
  *     they are used solely to compute a Tax Return value equal to the
  *     difference between tax calculated before and after RRSP.  This
@@ -584,37 +579,24 @@ function computeAnnual(params){
   };
 
   
-  // --- Advance & Second Pay split (cheque-based deductions) ---
-  let payAdvance = 0, secondPay = 0;
+  // Annual tax return: compare annual liability to estimated withholdings on a single
+  // monthly paycheque (without an advance/second split) and add RRSP-related tax savings.
   const monthlyGross = monthly.gross;
-  let advAmt = Math.max(0, +params.adv || 0);
-  if (advAmt > monthlyGross) advAmt = monthlyGross;
-
-  const advTax = advAmt > 0 ? computeChequeTax({ gross: advAmt, pension: 0, year, province, chequesPerYear: 12 }) : 0;
-  const advCppEi = params.maxcpp || advAmt === 0 ? { cpp: 0, ei: 0 } : computeChequeCPP_EI({ year, seat, ac, step: stepJan1, xlrOn: !!params.xlrOn, gross: advAmt, province });
-  const advCpp = advCppEi.cpp;
-  const advEi = advCppEi.ei;
-
-  payAdvance = advAmt - advTax - advCpp - advEi;
-
-  const secondGross = monthlyGross - advAmt;
-  const secTax = secondGross > 0 ? computeChequeTax({ gross: secondGross, pension: monthly.pension, year, province }) : 0;
-  const secCppEi = params.maxcpp || secondGross === 0 ? { cpp: 0, ei: 0 } : computeChequeCPP_EI({ year, seat, ac, step: stepJan1, xlrOn: !!params.xlrOn, gross: secondGross, province });
-  const secCpp = secCppEi.cpp;
-  const secEi = secCppEi.ei;
-
-  const esopMonth = monthly.esop;
-  secondPay = secondGross - secTax - secCpp - secEi - monthly.health - monthly.pension - esopMonth;
-
-  const paySplitAnnualTax = (advTax + secTax) * 12;
-  const tax_return = +((income_tax - paySplitAnnualTax) + (income_tax - income_tax_rrsp)).toFixed(2);
+  const paychequeTax = computeChequeTax({
+    gross: monthlyGross,
+    pension: monthly.pension,
+    year,
+    province
+  });
+  const annualizedWithholdingTax = paychequeTax * 12;
+  const tax_return = +((income_tax - annualizedWithholdingTax) + (income_tax - income_tax_rrsp)).toFixed(2);
 
   return {
     audit,
     gross:+gross.toFixed(2),
     net:+net.toFixed(2),
     tax:+income_tax.toFixed(2),
-    // Show CPP/QPP and EI deductions actually applied.  When maxcpp is true these are zero for monthly but full for annual net
+    // Show CPP/QPP and EI deductions actually applied.
     cpp:+cpp_total_deduct.toFixed(2),
     ei:+eiPrem_deduct.toFixed(2),
     health:+annual_health.toFixed(2),
@@ -623,8 +605,6 @@ function computeAnnual(params){
     esop_match_after_tax:+esop_match_net.toFixed(2),
     monthly,
     step_jan1:stepJan1,
-    pay_advance:+payAdvance.toFixed(2),
-    second_pay:+secondPay.toFixed(2),
     tax_return
   };
 }
@@ -850,10 +830,8 @@ const INFO_COPY = {
     annualGross: 'Hourly rate (seat/aircraft/year/step) multiplied by average monthly credit hours for each month, with step progression when enabled.',
     annualNet: 'Annual gross minus tax, CPP/QPP, EI, pension, union dues, health premiums and ESOP contributions, plus the after-tax employer ESOP match.',
     monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours.',
-    monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match.',
-    payAdvance: 'Requested advance amount minus tax/CPP/QPP/EI withheld on that cheque alone (annualized over 12 similar paycheques).',
-    secondPay: 'Remainder of gross after the advance minus tax/CPP/QPP/EI calculated on the second cheque and fixed deductions (no ESOP match added).',
-    taxReturn: 'Difference between annual tax owed and annualized cheque withholdings, plus RRSP tax savings.',
+    monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match (no cheque split).',
+    taxReturn: 'Difference between annual tax owed and estimated withholdings on a single monthly paycheque, plus RRSP tax savings.',
     incomeTax: 'Total annual federal and provincial income tax after pension and RRSP offsets.',
     cpp: 'Annual CPP/QPP contributions on employment income up to the yearly maximum.',
     ei: 'Annual EI premiums based on insurable earnings up to the yearly maximum.',
@@ -908,8 +886,6 @@ function renderAnnual(res, params){
       <div class="block"><div class="label">${labelWithInfo('Annual Net', INFO_COPY.annual.annualNet)}</div><div class="value">${money(res.net)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('Monthly Gross', INFO_COPY.annual.monthlyGross)}</div><div class="value">${money(res.monthly.gross)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('Monthly Net', INFO_COPY.annual.monthlyNet)}</div><div class="value">${money(res.monthly.net)}</div></div>
-      <div class="block" style="margin-left:16px"><div class="label">${labelWithInfo('Pay Advance', INFO_COPY.annual.payAdvance)}</div><div class="value">${money(res.pay_advance)}</div></div>
-      <div class="block" style="margin-left:16px"><div class="label">${labelWithInfo('Second Pay', INFO_COPY.annual.secondPay)}</div><div class="value">${money(res.second_pay)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('Tax Return', INFO_COPY.annual.taxReturn)}</div><div class="value">${money(res.tax_return)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('Income Tax', INFO_COPY.annual.incomeTax)}</div><div class="value">${money(res.tax)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('CPP/QPP', INFO_COPY.annual.cpp)}</div><div class="value">${money(res.cpp)}</div></div>
@@ -996,9 +972,7 @@ function calcAnnual(){
       avgMonthlyHours: +document.getElementById('avgHrs').value,
       province: document.getElementById('prov').value,
       esopPct: +document.getElementById('esop').value,
-      rrsp: +document.getElementById('rrsp').value,
-      adv: +document.getElementById('adv').value,
-      maxcpp: document.getElementById('maxcpp').checked
+      rrsp: +document.getElementById('rrsp').value
     };
     const res = computeAnnual(params);
     renderAnnual(res, params);
