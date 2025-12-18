@@ -1256,13 +1256,24 @@ function filterActiveNotams(notams, targetMs){
   });
 }
 function buildNotamConsensus(decodes){
-  const signatures = decodes.map(d => JSON.stringify((d.notams || []).map(n => n.text).sort()));
+  const pools = (decodes || []).map(d => (d?.notams || []).filter(n => n && n.text));
+  const signatures = pools.map(list => JSON.stringify(list.map(n => n.text).sort()));
   const vote = majorityVote(signatures, s => s);
-  const icons = signatures.map((s, idx) => vote && vote.indexes.includes(idx));
-  if (!vote) throw new Error('NOTAM decoders disagree.');
-  const winnerIdx = vote.indexes[0];
-  const notams = decodes[winnerIdx]?.notams || [];
-  return { notams, icons };
+  if (vote){
+    const winnerIdx = vote.indexes[0];
+    const notams = pools[winnerIdx] || [];
+    const icons = signatures.map((s, idx) => vote.indexes.includes(idx));
+    return { notams, icons };
+  }
+  const candidates = pools
+    .map((list, idx) => ({ list, idx }))
+    .filter(entry => entry.list.length);
+  if (!candidates.length){
+    return { notams: [], icons: pools.map(() => false) };
+  }
+  const winner = candidates.reduce((best, entry) => entry.list.length > best.list.length ? entry : best, candidates[0]);
+  const icons = pools.map((_, idx) => idx === winner.idx);
+  return { notams: winner.list, icons };
 }
 async function loadAirportLookup(){
   if (airportLookupPromise) return airportLookupPromise;
