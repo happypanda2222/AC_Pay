@@ -67,10 +67,19 @@ const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
+const METAR_JSON_ENDPOINTS = [
+  (icao) => `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`,
+  (icao) => `https://aviationweather.gov/cgi-bin/data/metar.php?format=json&ids=${icao}`
+];
+const TAF_JSON_ENDPOINTS = [
+  (icao) => `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`,
+  (icao) => `https://aviationweather.gov/cgi-bin/data/taf.php?format=json&ids=${icao}`
+];
 const METAR_TEXT_FALLBACKS = [
   (icao) => `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`,
   (icao) => `https://metar.vatsim.net/${icao}`
 ];
+const TAF_TEXT_FALLBACK = (icao) => `https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`;
 const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
 const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 let airportLookupPromise = null;
@@ -1186,36 +1195,53 @@ function formatZulu(ms){
   const d = new Date(ms);
   return d.toISOString().slice(0,16).replace('T',' ') + 'Z';
 }
-async function fetchWeatherForAirport(icao){
-  const metarUrl = `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`;
-  const tafUrl = `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`;
-  const [metarJson, tafJson] = await Promise.all([
-    fetchJsonWithCorsFallback(metarUrl, 'no-store').catch(err => {
-      console.warn(`METAR fetch failed for ${icao}`, err);
-      return [];
-    }),
-    fetchJsonWithCorsFallback(tafUrl, 'no-store').catch(err => {
-      console.warn(`TAF fetch failed for ${icao}`, err);
-      return [];
-    })
-  ]);
-  let metar = Array.isArray(metarJson) ? metarJson[0] : null;
-  let taf = Array.isArray(tafJson) ? tafJson[0] : null;
-  let name = metar?.name || taf?.name || icao;
-  if (!metar || !taf){
-    const [metarParsed, tafTxt] = await Promise.all([
-      metar ? Promise.resolve(null) : fetchMetarTextWithFallbacks(icao),
-      taf ? Promise.resolve(null) : fetchTextWithCorsFallback(`https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`, 'no-store').catch(err => {
-        console.warn(`TAF text fallback failed for ${icao}`, err);
-        return null;
-      })
-    ]);
-    if (!metar && metarParsed) metar = metarParsed;
-    if (!taf && tafTxt) taf = parseTafText(tafTxt, icao);
-    if (!name && (metar?.name || taf?.name)) name = metar?.name || taf?.name;
+function pickFirstWeatherRecord(payload, arrayKeys){
+  if (!payload) return null;
+  if (Array.isArray(payload)) return payload[0] || null;
+  if (typeof payload === 'object'){
+    for (const key of arrayKeys){
+      const list = payload[key];
+      if (Array.isArray(list) && list.length) return list[0];
+    }
+    if (Array.isArray(payload.features) && payload.features.length){
+      const feature = payload.features[0];
+      return feature?.properties || feature;
+    }
   }
-  if (!metar && !taf) throw new Error(`No METAR/TAF found for ${icao}. Check the airport code or try again later.`);
-  return { icao, name, metar, taf };
+  return null;
+}
+async function fetchJsonWeatherRecord(builders, icao, label, keys){
+  for (const buildUrl of builders){
+    const url = buildUrl(icao);
+    try {
+      const payload = await fetchJsonWithCorsFallback(url, 'no-store');
+      const record = pickFirstWeatherRecord(payload, keys);
+      if (record) return record;
+    } catch(err){
+      console.warn(`${label} fetch failed for ${icao} at ${url}`, err);
+    }
+  }
+  return null;
+}
+async function fetchWeatherForAirport(icao){
+  const [metarJson, tafJson] = await Promise.all([
+    fetchJsonWeatherRecord(METAR_JSON_ENDPOINTS, icao, 'METAR', ['metars', 'data', 'results'])
+      .catch(() => null),
+    fetchJsonWeatherRecord(TAF_JSON_ENDPOINTS, icao, 'TAF', ['tafs', 'data', 'results'])
+      .catch(() => null)
+  ]);
+  const metarFromText = metarJson ? null : await fetchMetarTextWithFallbacks(icao);
+  const tafTxt = tafJson ? null : await fetchTextWithCorsFallback(TAF_TEXT_FALLBACK(icao), 'no-store')
+    .then(txt => parseTafText(txt, icao))
+    .catch(err => {
+      console.warn(`TAF text fallback failed for ${icao}`, err);
+      return null;
+    });
+  const finalMetar = metarJson || metarFromText;
+  const finalTaf = tafJson || tafTxt;
+  let name = finalMetar?.name || finalTaf?.name || icao;
+  if (!finalMetar && !finalTaf) throw new Error(`No METAR/TAF found for ${icao}. Check the airport code or try again later.`);
+  return { icao, name, metar: finalMetar, taf: finalTaf };
 }
 function metarTimeMs(metar){
   if (!metar) return null;
