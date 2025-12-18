@@ -806,12 +806,34 @@ function updateAircraftOptions(seatValue, selectEl){
   }
 }
 
-function setActiveTab(which){
+let currentLegacySubTab = 'annual';
+let currentModernSubTab = 'modern-annual';
+
+function setLegacyPrimaryTab(which){
+  const payBtn = document.getElementById('tabbtn-pay');
+  const weatherBtn = document.getElementById('tabbtn-weather');
+  const payPane = document.getElementById('legacy-pay');
+  const weatherPane = document.getElementById('tab-weather');
+  if (which === 'weather'){
+    payBtn?.classList.remove('active');
+    weatherBtn?.classList.add('active');
+    payPane?.classList.add('hidden');
+    weatherPane?.classList.remove('hidden');
+  } else {
+    payBtn?.classList.add('active');
+    weatherBtn?.classList.remove('active');
+    payPane?.classList.remove('hidden');
+    weatherPane?.classList.add('hidden');
+    setLegacySubTab(currentLegacySubTab);
+  }
+}
+
+function setLegacySubTab(which){
+  currentLegacySubTab = which;
   const tabs = [
     { btn: 'tabbtn-annual', pane: 'tab-annual', id: 'annual' },
     { btn: 'tabbtn-monthly', pane: 'tab-monthly', id: 'monthly' },
-    { btn: 'tabbtn-vo', pane: 'tab-vo', id: 'vo' },
-    { btn: 'tabbtn-weather', pane: 'tab-weather', id: 'weather' }
+    { btn: 'tabbtn-vo', pane: 'tab-vo', id: 'vo' }
   ];
   tabs.forEach(({ btn, pane, id }) => {
     const b = document.getElementById(btn);
@@ -827,8 +849,28 @@ function setActiveTab(which){
   });
 }
 
-function setModernTab(which){
-  const tabs = ['modern-annual','modern-monthly','modern-vo','modern-weather'];
+function setModernPrimaryTab(which){
+  const payBtn = document.getElementById('tabbtn-modern-pay');
+  const weatherBtn = document.getElementById('tabbtn-modern-weather');
+  const payPane = document.getElementById('modern-pay');
+  const weatherPane = document.getElementById('modern-weather');
+  if (which === 'modern-weather'){
+    payBtn?.classList.remove('active');
+    weatherBtn?.classList.add('active');
+    payPane?.classList.add('hidden');
+    weatherPane?.classList.remove('hidden');
+  } else {
+    payBtn?.classList.add('active');
+    weatherBtn?.classList.remove('active');
+    payPane?.classList.remove('hidden');
+    weatherPane?.classList.add('hidden');
+    setModernSubTab(currentModernSubTab);
+  }
+}
+
+function setModernSubTab(which){
+  currentModernSubTab = which;
+  const tabs = ['modern-annual','modern-monthly','modern-vo'];
   tabs.forEach(id => {
     const btn = document.getElementById(`tabbtn-${id}`);
     const pane = document.getElementById(id);
@@ -968,12 +1010,12 @@ function switchUIMode(mode){
     document.body.dataset.ui = 'legacy';
     if (modern) modern.classList.add('hidden');
     if (legacy) legacy.classList.remove('hidden');
-    setActiveTab('annual');
+    setLegacyPrimaryTab('pay');
   } else {
     document.body.dataset.ui = 'modern';
     if (modern) modern.classList.remove('hidden');
     if (legacy) legacy.classList.add('hidden');
-    setModernTab('modern-annual');
+    setModernPrimaryTab('modern-pay');
   }
 }
 
@@ -1461,8 +1503,8 @@ function renderMonthlyModern(res){
   if (!out) return;
   const metricHTML = `
     <div class="metric-grid">
-      <div class="metric-card"><div class="metric-label">${labelWithInfo('Net (after split)', INFO_COPY.monthly.net)}</div><div class="metric-value">${money(res.net)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Gross', INFO_COPY.monthly.gross)}</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Net', INFO_COPY.monthly.net)}</div><div class="metric-value">${money(res.net)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Pay advance', INFO_COPY.monthly.payAdvance)}</div><div class="metric-value">${money(res.pay_advance)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Second pay', INFO_COPY.monthly.secondPay)}</div><div class="metric-value">${money(res.second_pay)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Hourly rate', INFO_COPY.monthly.hourlyRate)}</div><div class="metric-value">${money(res.rate)}</div></div>
@@ -1488,8 +1530,6 @@ function renderMonthlyModern(res){
   const split = `
     <details class="drawer"><summary>Paycheque split details</summary>
       <div class="metric-grid">
-        <div class="metric-card"><div class="metric-label">${labelWithInfo('Advance net', INFO_COPY.monthly.payAdvance)}</div><div class="metric-value">${money(res.pay_advance)}</div></div>
-        <div class="metric-card"><div class="metric-label">${labelWithInfo('Second pay net', INFO_COPY.monthly.secondPay)}</div><div class="metric-value">${money(res.second_pay)}</div></div>
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Credits', INFO_COPY.monthly.credits)}</div><div class="metric-value">${res.credits.toFixed(2)}</div></div>
         <div class="metric-card"><div class="metric-label">${labelWithInfo('VO credits', INFO_COPY.monthly.voCredits)}</div><div class="metric-value">${res.voCredits.toFixed(2)}</div></div>
       </div>
@@ -1785,14 +1825,16 @@ function init(){
   updateVersionBadgeFromSW();
   switchUIMode('modern');
   // Tabs
-  document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('annual'); });
-  document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('monthly'); });
-  document.getElementById('tabbtn-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('vo'); });
-  document.getElementById('tabbtn-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('weather'); });
-  document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-annual'); });
-  document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-monthly'); });
-  document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-vo'); });
-  document.getElementById('tabbtn-modern-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-weather'); });
+  document.getElementById('tabbtn-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('pay'); });
+  document.getElementById('tabbtn-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('weather'); });
+  document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('annual'); });
+  document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('monthly'); });
+  document.getElementById('tabbtn-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('vo'); });
+  document.getElementById('tabbtn-modern-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-pay'); });
+  document.getElementById('tabbtn-modern-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-weather'); });
+  document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
+  document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
+  document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
   document.getElementById('ui-mode')?.addEventListener('change', (e)=>{ const v=e.target.value==='legacy'?'legacy':'modern'; switchUIMode(v); });
   // Dropdown behaviors
   document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
@@ -1831,6 +1873,11 @@ function init(){
   document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
   document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body' }); });
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
+  // Tab defaults
+  setLegacyPrimaryTab('pay');
+  setLegacySubTab('annual');
+  setModernPrimaryTab('modern-pay');
+  setModernSubTab('modern-annual');
   // Defaults
   onSeatChange(false);
   onSeatChange(true);
@@ -1854,7 +1901,6 @@ function init(){
   const arrWx = document.getElementById('wx-arr'); if (arrWx && !arrWx.value) arrWx.value = 'YVR';
   const depWxM = document.getElementById('modern-wx-dep'); if (depWxM && !depWxM.value) depWxM.value = 'YYZ';
   const arrWxM = document.getElementById('modern-wx-arr'); if (arrWxM && !arrWxM.value) arrWxM.value = 'YVR';
-  setModernTab('modern-annual');
 }
 if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', init); } else { init(); }
 // PWA: register the service worker
