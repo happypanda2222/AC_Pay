@@ -1,5 +1,5 @@
 // sw.js
-const CACHE = 'acpay-v40'; // ⬅️ bump this (v2, v3, ...) whenever you change assets
+const CACHE = 'acpay-v41'; // ⬅️ bump this (v2, v3, ...) whenever you change assets
 const ASSETS = [
   './',
   './index.html',
@@ -27,10 +27,16 @@ self.addEventListener('activate', event => {
 
 // Cache-first for static assets; offline fallback for navigations
 self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+  const sameOrigin = url.origin === self.location.origin;
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request).catch(() => caches.match('./index.html'))
     );
+    return;
+  }
+  if (!sameOrigin) {
+    event.respondWith(fetch(event.request));
     return;
   }
   event.respondWith(

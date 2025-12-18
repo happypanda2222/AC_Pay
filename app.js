@@ -67,6 +67,10 @@ const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
+const METAR_TEXT_FALLBACKS = [
+  (icao) => `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`,
+  (icao) => `https://metar.vatsim.net/${icao}`
+];
 const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
 const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 let airportLookupPromise = null;
@@ -996,6 +1000,18 @@ async function fetchTextWithCorsFallback(url, cache='no-store'){
     return attempt(`${CORS_PROXY}${encodeURIComponent(url)}`);
   }
 }
+async function fetchMetarTextWithFallbacks(icao){
+  for (const buildUrl of METAR_TEXT_FALLBACKS){
+    const url = buildUrl(icao);
+    try {
+      const txt = await fetchTextWithCorsFallback(url, 'no-store');
+      if (txt) return parseMetarText(txt, icao);
+    } catch(err){
+      console.warn(`METAR text fallback failed for ${icao} at ${url}`, err);
+    }
+  }
+  return null;
+}
 function approximateUtcFromDayHour(day, hour=0, minute=0){
   const now = new Date();
   let year = now.getUTCFullYear();
@@ -1187,17 +1203,14 @@ async function fetchWeatherForAirport(icao){
   let taf = Array.isArray(tafJson) ? tafJson[0] : null;
   let name = metar?.name || taf?.name || icao;
   if (!metar || !taf){
-    const [metarTxt, tafTxt] = await Promise.all([
-      metar ? Promise.resolve(null) : fetchTextWithCorsFallback(`https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`, 'no-store').catch(err => {
-        console.warn(`METAR text fallback failed for ${icao}`, err);
-        return null;
-      }),
+    const [metarParsed, tafTxt] = await Promise.all([
+      metar ? Promise.resolve(null) : fetchMetarTextWithFallbacks(icao),
       taf ? Promise.resolve(null) : fetchTextWithCorsFallback(`https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`, 'no-store').catch(err => {
         console.warn(`TAF text fallback failed for ${icao}`, err);
         return null;
       })
     ]);
-    if (!metar && metarTxt) metar = parseMetarText(metarTxt, icao);
+    if (!metar && metarParsed) metar = metarParsed;
     if (!taf && tafTxt) taf = parseTafText(tafTxt, icao);
     if (!name && (metar?.name || taf?.name)) name = metar?.name || taf?.name;
   }
