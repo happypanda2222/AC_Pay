@@ -1207,7 +1207,7 @@ function tafConsensusForTime(decodes, targetMs){
     return { seg, key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}` };
   });
   const anySegments = segments.some(Boolean);
-  if (!anySegments) return { segment: null, icons: decodes.map(() => false) };
+  if (!anySegments) return { segment: null, icons: decodes.map(d => Boolean(d?.taf)) };
   const vote = majorityVote(segments, s => s?.key);
   const icons = vote
     ? segments.map((s, idx) => vote.indexes.includes(idx))
@@ -1321,9 +1321,24 @@ function normalizeCloudBaseFt(base){
 }
 function formatVisSm(v){
   if (v === null || v === undefined || Number.isNaN(v)) return 'Not reported';
+  const toFraction = (val) => {
+    const rounded = Math.round(val * 16) / 16;
+    if (Math.abs(rounded - val) > 0.02) return null;
+    const whole = Math.floor(rounded);
+    const remainder = +(rounded - whole).toFixed(4);
+    const numerator = Math.round(remainder * 16);
+    const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+    if (numerator === 0) return `${whole}`;
+    const divisor = gcd(numerator, 16);
+    const num = numerator / divisor;
+    const den = 16 / divisor;
+    const frac = `${num}/${den}`;
+    return whole ? `${whole} ${frac}` : frac;
+  };
   if (v >= 10) return `${v.toFixed(1)} SM`;
-  if (v >= 1) return `${v.toFixed(1)} SM`;
-  return `${v.toFixed(2)} SM`;
+  const frac = toFraction(v);
+  if (frac) return `${frac} SM`;
+  return v >= 1 ? `${v.toFixed(1)} SM` : `${v.toFixed(2)} SM`;
 }
 function extractCeilingFt(clouds, vertVis){
   let ceil = null;
@@ -1554,6 +1569,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl){
       <div class="wx-box">
         <div class="label">${escapeHtml(src.name || src.icao)} (${escapeHtml(src.icao)})</div>
         <div class="value" style="font-size:13px;line-height:1.4">METAR: ${escapeHtml(src.metar?.rawOb || 'N/A')}</div>
+        <div class="value" aria-hidden="true" style="height:8px"></div>
         <div class="value" style="font-size:13px;line-height:1.4">TAF: ${escapeHtml(src.taf?.rawTAF || 'N/A')}</div>
       </div>
     `).join('');
