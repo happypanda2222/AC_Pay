@@ -23,7 +23,11 @@
   padding-top: calc(12px + constant(safe-area-inset-top)); /* legacy iOS */
   padding-top: calc(12px + env(safe-area-inset-top));      /* modern iOS */
 }
-    h1{font-size:22px;margin:8px 0 14px 0}
+    h1{font-size:22px;margin:0}
+    .topbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:10px;margin-bottom:16px}
+    .ui-switcher{display:flex;flex-direction:column;gap:4px;min-width:180px}
+    .ui-switcher label{font-size:12px;color:var(--muted);font-weight:700;letter-spacing:.3px;text-transform:uppercase}
+    .ui-switcher select{padding:10px 12px;border-radius:12px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt);font-weight:600}
     .tabs{display:flex;gap:8px;margin:0 0 10px 0}
     .tabbtn{flex:1;background:#0f1218;border:1px solid #2a2f3b;color:#c9d2de;padding:12px 10px;border-radius:10px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
     .tabbtn.active{background:var(--acc);color:white;border-color:transparent}
@@ -149,13 +153,289 @@
       box-shadow:0 6px 20px rgba(0,0,0,.35);
       z-index:10;
     }
+
+    /* Modern UI styling */
+    body[data-ui="modern"]{--bg:#05070c;--card:#0f121d;--acc:#6dd3ff;--muted:#9fb1c5;--txt:#f7f9fc;}
+    .modern-hero{background:linear-gradient(135deg,#0a84ff 0%,#6dd3ff 40%,#1c1f2b 100%);border-radius:16px;padding:18px 18px;margin-bottom:14px;color:#0c1022;box-shadow:0 12px 40px rgba(0,0,0,.35);display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .modern-hero h2{margin:0;font-size:20px;color:#0c1022}
+    .modern-hero p{margin:4px 0 0 0;color:#0c1022;font-weight:600}
+    .badge-pill{background:rgba(0,0,0,0.12);color:#0c1022;border-radius:999px;padding:6px 10px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;font-size:11px}
+    .modern-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:12px}
+    @media(max-width:960px){.modern-grid{grid-template-columns:1fr}}
+    .modern-panel{background:var(--card);border:1px solid #1f2633;border-radius:14px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.32)}
+    .modern-panel h3{margin:0 0 12px 0;font-size:16px;letter-spacing:.2px}
+    .stacked-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+    .modern-controls{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+    .chip{padding:10px 12px;border-radius:12px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt);font-weight:700;display:flex;align-items:center;gap:8px}
+    .modern-cta{display:flex;justify-content:flex-end;margin-top:12px}
+    .btn-primary{background:linear-gradient(135deg,#0a84ff,#6dd3ff);color:#0c1022;border:none;border-radius:12px;padding:14px 16px;font-weight:800;cursor:pointer;box-shadow:0 10px 26px rgba(0,0,0,.35)}
+    .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:6px}
+    .metric-card{background:#0c101a;border:1px solid #1f2633;border-radius:12px;padding:12px}
+    .metric-label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-bottom:4px}
+    .metric-value{font-size:22px;font-weight:900;letter-spacing:.2px}
+    .drawer{margin-top:12px;border:1px solid #1f2633;border-radius:12px;padding:10px;background:#0d111c}
+    .drawer summary{cursor:pointer;font-weight:800;color:var(--txt);list-style:none}
+    .drawer summary::-webkit-details-marker{display:none}
+    .drawer summary::after{content:'›';float:right;transition:transform .2s ease}
+    .drawer[open] summary::after{transform:rotate(90deg)}
+    .drawer table{width:100%;border-collapse:collapse;margin-top:10px;font-family:var(--mono);font-size:12px}
+    .drawer th,.drawer td{border-bottom:1px solid #1f2633;padding:6px;text-align:left}
+    .drawer td.num{text-align:right}
+    .pill-success{background:#10272b;color:#6dd3ff;border:1px solid #1f3a40;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px}
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media(max-width:620px){.two-col{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
   <div id="version" class="version-badge" aria-label="App version"></div>
   <div class="wrap">
-    <h1>AC Pay Calculator</h1>
+    <div class="topbar">
+      <div class="ui-switcher">
+        <label for="ui-mode">Interface</label>
+        <select id="ui-mode">
+          <option value="modern" selected>New UI</option>
+          <option value="legacy">Legacy</option>
+        </select>
+      </div>
+      <h1>AC Pay Calculator</h1>
+    </div>
 
+    <div id="modern-ui">
+      <div class="modern-hero">
+        <div>
+          <div class="badge-pill">New</div>
+          <h2>Streamlined AC Pay</h2>
+          <p>Fast inputs, focused summaries, with deep dives hidden until you need them.</p>
+        </div>
+        <div class="pill-success" aria-live="polite">Minimal taps · Collapsed details by default</div>
+      </div>
+
+      <div class="modern-panel" id="modern-tabs">
+        <div class="tabs">
+          <button class="tabbtn active" data-tab="modern-annual" id="tabbtn-modern-annual">Annual</button>
+          <button class="tabbtn" data-tab="modern-monthly" id="tabbtn-modern-monthly">Monthly</button>
+          <button class="tabbtn" data-tab="modern-vo" id="tabbtn-modern-vo">VO</button>
+        </div>
+        <div id="modern-annual" class="modern-tab">
+          <div class="modern-grid">
+            <div>
+              <h3>Flight details</h3>
+              <div class="stacked-fields">
+                <div>
+                  <label>Seat</label>
+                  <select id="modern-seat">
+                    <option selected>FO</option>
+                    <option>CA</option>
+                    <option>RP</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Aircraft</label>
+                  <select id="modern-ac">
+                    <option>777</option><option>787</option><option>330</option><option>767</option>
+                    <option selected>320</option><option>737</option><option>220</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Year</label>
+                  <select id="modern-year">
+                    <option>2023</option><option>2024</option><option selected>2025</option><option>2026</option>
+                    <option>2027</option><option>2028</option><option>2029</option><option>2030</option><option>2031</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Step (Jan 1)</label>
+                  <select id="modern-step">
+                    <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+                    <option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Province/Territory</label>
+                  <select id="modern-prov">
+                    <option>AB</option><option>BC</option><option selected>MB</option><option>NB</option><option>NL</option><option>NS</option>
+                    <option>NT</option><option>NU</option><option>ON</option><option>PE</option><option>QC</option><option>SK</option><option>YT</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Avg monthly credit hours</label>
+                  <input id="modern-avgHrs" type="number" min="0" max="200" step="0.25" value="80">
+                </div>
+                <div>
+                  <label>RRSP Contributions</label>
+                  <input id="modern-rrsp" type="number" min="0" step="1000" value="0">
+                </div>
+                <div>
+                  <label>ESOP</label>
+                  <div class="two-col">
+                    <input id="modern-esop" type="range" min="2" max="10" value="10" step="1">
+                    <div class="pill" style="justify-content:center"><span id="modern-esopPct">10%</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="modern-controls">
+                <label class="chip"><input id="modern-tie" type="checkbox"> Tie Year/Step</label>
+                <label class="chip"><input id="modern-xlr" type="checkbox"> XLR</label>
+              </div>
+              <div class="modern-cta"><button id="modern-calc" class="btn-primary" type="button">Calculate annual</button></div>
+            </div>
+            <div>
+              <h3>Highlights</h3>
+              <div id="modern-out"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="modern-monthly" class="modern-tab hidden">
+          <div class="modern-grid">
+            <div>
+              <h3>Monthly snapshot</h3>
+              <div class="stacked-fields">
+                <div>
+                  <label>Seat</label>
+                  <select id="modern-mon-seat">
+                    <option selected>FO</option>
+                    <option>CA</option>
+                    <option>RP</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Aircraft</label>
+                  <select id="modern-mon-ac">
+                    <option>777</option><option>787</option><option>330</option><option>767</option>
+                    <option selected>320</option><option>737</option><option>220</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Year</label>
+                  <select id="modern-mon-year">
+                    <option>2023</option><option>2024</option><option selected>2025</option><option>2026</option>
+                    <option>2027</option><option>2028</option><option>2029</option><option>2030</option><option>2031</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Step (Jan 1)</label>
+                  <select id="modern-mon-step">
+                    <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+                    <option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Province/Territory</label>
+                  <select id="modern-mon-prov">
+                    <option>AB</option><option>BC</option><option selected>MB</option><option>NB</option><option>NL</option><option>NS</option>
+                    <option>NT</option><option>NU</option><option>ON</option><option>PE</option><option>QC</option><option>SK</option><option>YT</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Monthly credit hours</label>
+                  <input id="modern-mon-hrs" type="number" min="0" max="300" step="0.25" value="80">
+                </div>
+                <div>
+                  <label>VO credit hours</label>
+                  <input id="modern-mon-vo" type="number" min="0" max="300" step="0.25" value="0">
+                </div>
+                <div>
+                  <label>TAFB (hrs)</label>
+                  <input id="modern-mon-tafb" type="number" min="0" max="500" step="0.1" value="0">
+                </div>
+                <div>
+                  <label>ESOP</label>
+                  <div class="two-col">
+                    <input id="modern-mon-esop" type="range" min="2" max="10" value="10" step="1">
+                    <div class="pill" style="justify-content:center"><span id="modern-mon-esopPct">10%</span></div>
+                  </div>
+                </div>
+                <div>
+                  <label>Advance</label>
+                  <select id="modern-mon-adv">
+                    <option value="3250" selected>$3,250</option>
+                    <option value="4000">$4,000</option>
+                    <option value="5000">$5,000</option>
+                    <option value="6500">$6,500</option>
+                  </select>
+                </div>
+              </div>
+              <div class="modern-controls">
+                <label class="chip"><input id="modern-mon-tie" type="checkbox"> Tie Year/Step</label>
+                <label class="chip"><input id="modern-mon-xlr" type="checkbox"> XLR</label>
+                <label class="chip"><input id="modern-mon-maxcpp" type="checkbox"> Maxed CPP/EI</label>
+              </div>
+              <div class="modern-cta"><button id="modern-mon-calc" class="btn-primary" type="button">Calculate monthly</button></div>
+            </div>
+            <div>
+              <h3>Highlights</h3>
+              <div id="modern-mon-out"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="modern-vo" class="modern-tab hidden">
+          <div class="modern-grid">
+            <div>
+              <h3>VO quick calc</h3>
+              <div class="stacked-fields">
+                <div>
+                  <label>Seat</label>
+                  <select id="modern-ot-seat">
+                    <option selected>FO</option>
+                    <option>CA</option>
+                    <option>RP</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Aircraft</label>
+                  <select id="modern-ot-ac">
+                    <option>777</option><option>787</option><option>330</option><option>767</option>
+                    <option selected>320</option><option>737</option><option>220</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Year</label>
+                  <select id="modern-ot-year">
+                    <option>2023</option><option>2024</option><option selected>2025</option><option>2026</option>
+                    <option>2027</option><option>2028</option><option>2029</option><option>2030</option><option>2031</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Step</label>
+                  <select id="modern-ot-step">
+                    <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+                    <option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Province/Territory</label>
+                  <select id="modern-ot-prov">
+                    <option>AB</option><option>BC</option><option selected>MB</option><option>NB</option><option>NL</option><option>NS</option>
+                    <option>NT</option><option>NU</option><option>ON</option><option>PE</option><option>QC</option><option>SK</option><option>YT</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Credit Hours</label>
+                  <input id="modern-ot-cred-h" type="number" min="0" step="1" value="10">
+                </div>
+                <div>
+                  <label>Credit Minutes</label>
+                  <input id="modern-ot-cred-m" type="number" min="0" max="59" step="1" value="0">
+                </div>
+              </div>
+              <div class="modern-controls">
+                <label class="chip"><input id="modern-ot-tie" type="checkbox"> Tie Year/Step</label>
+                <label class="chip"><input id="modern-ot-xlr" type="checkbox"> XLR</label>
+              </div>
+              <div class="modern-cta"><button id="modern-ot-calc" class="btn-primary" type="button">Calculate VO</button></div>
+            </div>
+            <div>
+              <h3>Highlights</h3>
+              <div id="modern-ot-out"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="legacy-ui" class="hidden">
     <div class="tabs">
       <!-- Tab buttons: Monthly inserted between Annual and VO -->
       <button class="tabbtn active" data-tab="annual" id="tabbtn-annual">
@@ -389,6 +669,8 @@
       </div>
       <div id="ot-out"></div>
     </div>
+
+    </div> <!-- /legacy-ui -->
 
   </div>
   <script src="app.js" defer></script>

@@ -750,6 +750,21 @@ function computeMonthly(params){
 }
 
 // --- UI helpers ---
+function updateAircraftOptions(seatValue, selectEl){
+  if (!selectEl) return;
+  const allowed = (seatValue === 'RP') ? ["777","787","330"] : AIRCRAFT_ORDER.slice();
+  const current = selectEl.value;
+  selectEl.innerHTML = '';
+  allowed.forEach(ac => {
+    const opt=document.createElement('option'); opt.textContent=ac; selectEl.appendChild(opt);
+  });
+  if (allowed.includes(current)) {
+    selectEl.value = current;
+  } else if (allowed.includes('320')) {
+    selectEl.value='320';
+  }
+}
+
 function setActiveTab(which){
   const btnA=document.getElementById('tabbtn-annual');
   const btnM=document.getElementById('tabbtn-monthly');
@@ -769,26 +784,48 @@ function setActiveTab(which){
   }
 }
 
+function setModernTab(which){
+  const tabs = ['modern-annual','modern-monthly','modern-vo'];
+  tabs.forEach(id => {
+    const btn = document.getElementById(`tabbtn-${id}`);
+    const pane = document.getElementById(id);
+    if (!btn || !pane) return;
+    if (id === which){
+      btn.classList.add('active');
+      pane.classList.remove('hidden');
+    } else {
+      btn.classList.remove('active');
+      pane.classList.add('hidden');
+    }
+  });
+}
+
 function onSeatChange(isVO){
   const seat = (isVO? document.getElementById('ot-seat').value : document.getElementById('seat').value);
   const acSel = isVO? document.getElementById('ot-ac') : document.getElementById('ac');
-  const allowed = (seat==='RP') ? ["777","787","330"] : AIRCRAFT_ORDER.slice();
-  acSel.innerHTML = '';
-  allowed.forEach(ac => {
-    const opt=document.createElement('option'); opt.textContent=ac; acSel.appendChild(opt);
-  });
-  if (allowed.includes('320')) acSel.value='320';
+  updateAircraftOptions(seat, acSel);
 }
 // Seat change for Monthly tab
 function onSeatChangeMonthly(){
   const seat = document.getElementById('mon-seat').value;
   const acSel = document.getElementById('mon-ac');
-  const allowed = (seat==='RP') ? ["777","787","330"] : AIRCRAFT_ORDER.slice();
-  acSel.innerHTML = '';
-  allowed.forEach(ac => {
-    const opt=document.createElement('option'); opt.textContent=ac; acSel.appendChild(opt);
-  });
-  if (allowed.includes('320')) acSel.value='320';
+  updateAircraftOptions(seat, acSel);
+}
+
+function onSeatChangeModern(){
+  const seat = document.getElementById('modern-seat')?.value;
+  const acSel = document.getElementById('modern-ac');
+  updateAircraftOptions(seat, acSel);
+}
+function onSeatChangeModernMonthly(){
+  const seat = document.getElementById('modern-mon-seat')?.value;
+  const acSel = document.getElementById('modern-mon-ac');
+  updateAircraftOptions(seat, acSel);
+}
+function onSeatChangeModernVO(){
+  const seat = document.getElementById('modern-ot-seat')?.value;
+  const acSel = document.getElementById('modern-ot-ac');
+  updateAircraftOptions(seat, acSel);
 }
 function tieYearStepFromYear(isVO){
   const tie = (isVO? document.getElementById('ot-tie') : document.getElementById('tie')).checked;
@@ -822,6 +859,79 @@ function tieYearStepFromStepMonthly(){
   const stepEl = document.getElementById('mon-step');
   const s = Math.max(1, Math.min(12, +stepEl.value));
   yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
+}
+
+function tieYearStepFromYearModern(){
+  const tie = document.getElementById('modern-tie')?.checked;
+  if (!tie) return;
+  const yearEl = document.getElementById('modern-year');
+  const stepEl = document.getElementById('modern-step');
+  if (!yearEl || !stepEl) return;
+  const y = +yearEl.value;
+  stepEl.value = String(Math.max(1, Math.min(12, (y-2025)+1)));
+}
+function tieYearStepFromStepModern(){
+  const tie = document.getElementById('modern-tie')?.checked;
+  if (!tie) return;
+  const yearEl = document.getElementById('modern-year');
+  const stepEl = document.getElementById('modern-step');
+  if (!yearEl || !stepEl) return;
+  const s = Math.max(1, Math.min(12, +stepEl.value));
+  yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
+}
+function tieYearStepFromYearModernMonthly(){
+  const tie = document.getElementById('modern-mon-tie')?.checked;
+  if (!tie) return;
+  const yearEl = document.getElementById('modern-mon-year');
+  const stepEl = document.getElementById('modern-mon-step');
+  if (!yearEl || !stepEl) return;
+  const y = +yearEl.value;
+  stepEl.value = String(Math.max(1, Math.min(12, (y-2025)+1)));
+}
+function tieYearStepFromStepModernMonthly(){
+  const tie = document.getElementById('modern-mon-tie')?.checked;
+  if (!tie) return;
+  const yearEl = document.getElementById('modern-mon-year');
+  const stepEl = document.getElementById('modern-mon-step');
+  if (!yearEl || !stepEl) return;
+  const s = Math.max(1, Math.min(12, +stepEl.value));
+  yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
+}
+function tieYearStepFromYearModernVO(){
+  const tie = document.getElementById('modern-ot-tie')?.checked;
+  if (!tie) return;
+  const yearEl = document.getElementById('modern-ot-year');
+  const stepEl = document.getElementById('modern-ot-step');
+  if (!yearEl || !stepEl) return;
+  const y = +yearEl.value;
+  stepEl.value = String(Math.max(1, Math.min(12, (y-2025)+1)));
+}
+function tieYearStepFromStepModernVO(){
+  const tie = document.getElementById('modern-ot-tie')?.checked;
+  if (!tie) return;
+  const yearEl = document.getElementById('modern-ot-year');
+  const stepEl = document.getElementById('modern-ot-step');
+  if (!yearEl || !stepEl) return;
+  const s = Math.max(1, Math.min(12, +stepEl.value));
+  yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
+}
+
+function switchUIMode(mode){
+  const legacy = document.getElementById('legacy-ui');
+  const modern = document.getElementById('modern-ui');
+  const selector = document.getElementById('ui-mode');
+  if (selector && selector.value !== mode) selector.value = mode;
+  if (mode === 'legacy'){
+    document.body.dataset.ui = 'legacy';
+    if (modern) modern.classList.add('hidden');
+    if (legacy) legacy.classList.remove('hidden');
+    setActiveTab('annual');
+  } else {
+    document.body.dataset.ui = 'modern';
+    if (modern) modern.classList.remove('hidden');
+    if (legacy) legacy.classList.add('hidden');
+    setModernTab('modern-annual');
+  }
 }
 
 // --- Renderers ---
@@ -876,6 +986,111 @@ function infoBubble(text){
 
 function labelWithInfo(title, desc){
   return `${title} ${infoBubble(desc)}`;
+}
+
+function renderAnnualModern(res, params){
+  const out = document.getElementById('modern-out');
+  if (!out) return;
+  const hourly = res.audit && res.audit.length ? res.audit[0].hourly : 0;
+  const unionAnnual = (res.monthly?.union_dues || 0) * 12;
+  const metricHTML = `
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Annual Net</div><div class="metric-value">${money(res.net)}</div></div>
+      <div class="metric-card"><div class="metric-label">Annual Gross</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">Monthly Net</div><div class="metric-value">${money(res.monthly.net)}</div></div>
+      <div class="metric-card"><div class="metric-label">Tax Return (est.)</div><div class="metric-value">${money(res.tax_return)}</div></div>
+      <div class="metric-card"><div class="metric-label">Hourly rate</div><div class="metric-value">${money(hourly)}</div></div>
+    </div>`;
+
+  const deductions = `
+    <details class="drawer"><summary>See taxes & deductions</summary>
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">Income Tax</div><div class="metric-value">${money(res.tax)}</div></div>
+        <div class="metric-card"><div class="metric-label">CPP/QPP</div><div class="metric-value">${money(res.cpp)}</div></div>
+        <div class="metric-card"><div class="metric-label">EI</div><div class="metric-value">${money(res.ei)}</div></div>
+        <div class="metric-card"><div class="metric-label">Pension</div><div class="metric-value">${money(res.pension)}</div></div>
+        <div class="metric-card"><div class="metric-label">Union dues</div><div class="metric-value">${money(unionAnnual)}</div></div>
+        <div class="metric-card"><div class="metric-label">Health</div><div class="metric-value">${money(res.health)}</div></div>
+        <div class="metric-card"><div class="metric-label">ESOP</div><div class="metric-value">${money(res.esop)}</div></div>
+        <div class="metric-card"><div class="metric-label">ESOP match (after tax)</div><div class="metric-value">${money(res.esop_match_after_tax)}</div></div>
+      </div>
+    </details>`;
+
+  const auditRows = (res.audit||[]).map(seg=>{
+    const fmt = d => d.toISOString().slice(0,10);
+    return `<tr><td>${fmt(seg.start)}</td><td>${fmt(seg.end)}</td><td>${seg.pay_table_year}</td><td>${seg.step}</td><td class="num">$${seg.hourly.toFixed(2)}</td><td class="num">${seg.hours.toFixed(2)}</td><td class="num">$${seg.segment_gross.toFixed(2)}</td></tr>`;
+  }).join('');
+  const auditHTML = `
+    <details class="drawer"><summary>Audit timeline</summary>
+      <table>
+        <thead><tr><th>Start</th><th>End</th><th>Tbl Yr</th><th>Step</th><th>Hourly</th><th>Hours</th><th>Gross</th></tr></thead>
+        <tbody>${auditRows}</tbody>
+      </table>
+    </details>`;
+
+  out.innerHTML = metricHTML + deductions + auditHTML;
+}
+
+function renderMonthlyModern(res){
+  const out = document.getElementById('modern-mon-out');
+  if (!out) return;
+  const metricHTML = `
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Net (after split)</div><div class="metric-value">${money(res.net)}</div></div>
+      <div class="metric-card"><div class="metric-label">Gross</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">Pay advance</div><div class="metric-value">${money(res.pay_advance)}</div></div>
+      <div class="metric-card"><div class="metric-label">Second pay</div><div class="metric-value">${money(res.second_pay)}</div></div>
+      <div class="metric-card"><div class="metric-label">Hourly rate</div><div class="metric-value">${money(res.rate)}</div></div>
+    </div>`;
+
+  const deductions = `
+    <details class="drawer"><summary>Show deductions</summary>
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">Income Tax</div><div class="metric-value">${money(res.tax)}</div></div>
+        <div class="metric-card"><div class="metric-label">CPP/QPP</div><div class="metric-value">${money(res.cpp)}</div></div>
+        <div class="metric-card"><div class="metric-label">EI</div><div class="metric-value">${money(res.ei)}</div></div>
+        <div class="metric-card"><div class="metric-label">Pension</div><div class="metric-value">${money(res.pension)}</div></div>
+        <div class="metric-card"><div class="metric-label">Union dues</div><div class="metric-value">${money(res.union)}</div></div>
+        <div class="metric-card"><div class="metric-label">Health</div><div class="metric-value">${money(res.health)}</div></div>
+        <div class="metric-card"><div class="metric-label">ESOP</div><div class="metric-value">${money(res.esop)}</div></div>
+        <div class="metric-card"><div class="metric-label">ESOP match (after tax)</div><div class="metric-value">${money(res.esop_match_after_tax)}</div></div>
+        <div class="metric-card"><div class="metric-label">TAFB</div><div class="metric-value">${money(res.tafb_net)}</div></div>
+        <div class="metric-card"><div class="metric-label">Marginal FED</div><div class="metric-value">${(100*res.fed_m).toFixed(1)}%</div></div>
+        <div class="metric-card"><div class="metric-label">Marginal PROV</div><div class="metric-value">${(100*res.prov_m).toFixed(1)}%</div></div>
+      </div>
+    </details>`;
+
+  const split = `
+    <details class="drawer"><summary>Paycheque split details</summary>
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">Advance net</div><div class="metric-value">${money(res.pay_advance)}</div></div>
+        <div class="metric-card"><div class="metric-label">Second pay net</div><div class="metric-value">${money(res.second_pay)}</div></div>
+        <div class="metric-card"><div class="metric-label">Credits</div><div class="metric-value">${res.credits.toFixed(2)}</div></div>
+        <div class="metric-card"><div class="metric-label">VO credits</div><div class="metric-value">${res.voCredits.toFixed(2)}</div></div>
+      </div>
+    </details>`;
+
+  out.innerHTML = metricHTML + deductions + split;
+}
+
+function renderVOModern(res){
+  const out = document.getElementById('modern-ot-out');
+  if (!out) return;
+  const metricHTML = `
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Net</div><div class="metric-value">${money(res.net)}</div></div>
+      <div class="metric-card"><div class="metric-label">Gross</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">Hourly</div><div class="metric-value">${money(res.rate)}</div></div>
+      <div class="metric-card"><div class="metric-label">Hours (Credit×2)</div><div class="metric-value">${res.hours.toFixed(2)}</div></div>
+    </div>`;
+  const detail = `
+    <details class="drawer"><summary>Tax rates</summary>
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">Marginal FED</div><div class="metric-value">${(100*res.fed_m).toFixed(1)}%</div></div>
+        <div class="metric-card"><div class="metric-label">Marginal PROV</div><div class="metric-value">${(100*res.prov_m).toFixed(1)}%</div></div>
+      </div>
+    </details>`;
+  out.innerHTML = metricHTML + detail;
 }
 
 function renderAnnual(res, params){
@@ -1026,6 +1241,77 @@ function calcMonthly(){
   }
 }
 
+function calcAnnualModern(){
+  try{
+    const params = {
+      seat: document.getElementById('modern-seat').value,
+      ac: document.getElementById('modern-ac').value,
+      year: +document.getElementById('modern-year').value,
+      stepInput: +document.getElementById('modern-step').value,
+      tieOn: document.getElementById('modern-tie').checked,
+      xlrOn: document.getElementById('modern-xlr').checked,
+      avgMonthlyHours: +document.getElementById('modern-avgHrs').value,
+      province: document.getElementById('modern-prov').value,
+      esopPct: +document.getElementById('modern-esop').value,
+      rrsp: +document.getElementById('modern-rrsp').value
+    };
+    const res = computeAnnual(params);
+    renderAnnualModern(res, params);
+  } catch(err){
+    const out = document.getElementById('modern-out');
+    if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
+
+function calcMonthlyModern(){
+  try{
+    const params = {
+      seat: document.getElementById('modern-mon-seat').value,
+      ac: document.getElementById('modern-mon-ac').value,
+      year: +document.getElementById('modern-mon-year').value,
+      stepInput: +document.getElementById('modern-mon-step').value,
+      tieOn: document.getElementById('modern-mon-tie').checked,
+      xlrOn: document.getElementById('modern-mon-xlr').checked,
+      province: document.getElementById('modern-mon-prov').value,
+      credits: +document.getElementById('modern-mon-hrs').value,
+      voCredits: +document.getElementById('modern-mon-vo').value,
+      tafb: +document.getElementById('modern-mon-tafb').value,
+      esopPct: +document.getElementById('modern-mon-esop').value,
+      adv: +document.getElementById('modern-mon-adv').value,
+      maxcpp: document.getElementById('modern-mon-maxcpp').checked
+    };
+    const res = computeMonthly(params);
+    renderMonthlyModern(res, params);
+  } catch(err){
+    const out = document.getElementById('modern-mon-out');
+    if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
+
+function calcVOModern(){
+  try{
+    const params = {
+      seat: document.getElementById('modern-ot-seat').value,
+      ac: document.getElementById('modern-ot-ac').value,
+      year: +document.getElementById('modern-ot-year').value,
+      stepInput: +document.getElementById('modern-ot-step').value,
+      tieOn: document.getElementById('modern-ot-tie').checked,
+      xlrOn: document.getElementById('modern-ot-xlr').checked,
+      province: document.getElementById('modern-ot-prov').value,
+      creditH: +document.getElementById('modern-ot-cred-h').value,
+      creditM: +document.getElementById('modern-ot-cred-m').value
+    };
+    const res = computeVO(params);
+    renderVOModern(res, params);
+  } catch(err){
+    const out = document.getElementById('modern-ot-out');
+    if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
+
 // --- Init ---
 function autoSelectDefaults() {
   try {
@@ -1052,8 +1338,8 @@ function autoSelectDefaults() {
     }
     if (step > 12) step = 12;
     // Apply to dropdowns; include Monthly tab
-    const ids = ['year','step','ot-year','ot-step','mon-year','mon-step'];
-    const vals = [payYear, step, payYear, step, payYear, step];
+    const ids = ['year','step','ot-year','ot-step','mon-year','mon-step','modern-year','modern-step','modern-ot-year','modern-ot-step','modern-mon-year','modern-mon-step'];
+    const vals = [payYear, step, payYear, step, payYear, step, payYear, step, payYear, step, payYear, step];
     ids.forEach((id, idx) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -1072,41 +1358,69 @@ function autoSelectDefaults() {
 
 function init(){
   updateVersionBadgeFromSW();
+  switchUIMode('modern');
   // Tabs
   document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('annual'); });
   document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('monthly'); });
   document.getElementById('tabbtn-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setActiveTab('vo'); });
+  document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-annual'); });
+  document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-monthly'); });
+  document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernTab('modern-vo'); });
+  document.getElementById('ui-mode')?.addEventListener('change', (e)=>{ const v=e.target.value==='legacy'?'legacy':'modern'; switchUIMode(v); });
   // Dropdown behaviors
   document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
   document.getElementById('ot-seat')?.addEventListener('change', ()=>onSeatChange(true));
   document.getElementById('mon-seat')?.addEventListener('change', ()=>onSeatChangeMonthly());
+  document.getElementById('modern-seat')?.addEventListener('change', ()=>onSeatChangeModern());
+  document.getElementById('modern-ot-seat')?.addEventListener('change', ()=>onSeatChangeModernVO());
+  document.getElementById('modern-mon-seat')?.addEventListener('change', ()=>onSeatChangeModernMonthly());
   document.getElementById('year')?.addEventListener('change', ()=>tieYearStepFromYear(false));
   document.getElementById('ot-year')?.addEventListener('change', ()=>tieYearStepFromYear(true));
   document.getElementById('mon-year')?.addEventListener('change', ()=>tieYearStepFromYearMonthly());
+  document.getElementById('modern-year')?.addEventListener('change', ()=>tieYearStepFromYearModern());
+  document.getElementById('modern-ot-year')?.addEventListener('change', ()=>tieYearStepFromYearModernVO());
+  document.getElementById('modern-mon-year')?.addEventListener('change', ()=>tieYearStepFromYearModernMonthly());
   document.getElementById('step')?.addEventListener('change', ()=>tieYearStepFromStep(false));
   document.getElementById('ot-step')?.addEventListener('change', ()=>tieYearStepFromStep(true));
   document.getElementById('mon-step')?.addEventListener('change', ()=>tieYearStepFromStepMonthly());
+  document.getElementById('modern-step')?.addEventListener('change', ()=>tieYearStepFromStepModern());
+  document.getElementById('modern-ot-step')?.addEventListener('change', ()=>tieYearStepFromStepModernVO());
+  document.getElementById('modern-mon-step')?.addEventListener('change', ()=>tieYearStepFromStepModernMonthly());
   // ESOP slider labels
   const esopEl=document.getElementById('esop'); const esopPct=document.getElementById('esopPct');
   if (esopEl && esopPct){ esopEl.addEventListener('input', ()=>{ esopPct.textContent = esopEl.value+'%'; }); }
   const monEsopEl=document.getElementById('mon-esop'); const monEsopPct=document.getElementById('mon-esopPct');
   if (monEsopEl && monEsopPct){ monEsopEl.addEventListener('input', ()=>{ monEsopPct.textContent = monEsopEl.value+'%'; }); }
+  const newEsopEl=document.getElementById('modern-esop'); const newEsopPct=document.getElementById('modern-esopPct');
+  if (newEsopEl && newEsopPct){ newEsopEl.addEventListener('input', ()=>{ newEsopPct.textContent = newEsopEl.value+'%'; }); }
+  const newMonEsopEl=document.getElementById('modern-mon-esop'); const newMonEsopPct=document.getElementById('modern-mon-esopPct');
+  if (newMonEsopEl && newMonEsopPct){ newMonEsopEl.addEventListener('input', ()=>{ newMonEsopPct.textContent = newMonEsopEl.value+'%'; }); }
   // Buttons
   document.getElementById('calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnual(); });
   document.getElementById('ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVO(); });
   document.getElementById('mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthly(); });
+  document.getElementById('modern-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
+  document.getElementById('modern-ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
+  document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
   // Defaults
   onSeatChange(false);
   onSeatChange(true);
   onSeatChangeMonthly();
+  onSeatChangeModern();
+  onSeatChangeModernVO();
+  onSeatChangeModernMonthly();
   tieYearStepFromYear(false);
   tieYearStepFromYear(true);
   tieYearStepFromYearMonthly();
+  tieYearStepFromYearModern();
+  tieYearStepFromYearModernVO();
+  tieYearStepFromYearModernMonthly();
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does
   // nothing beyond setting defaults.
   autoSelectDefaults();
+  setModernTab('modern-annual');
 }
 if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', init); } else { init(); }
 // PWA: register the service worker
