@@ -68,7 +68,16 @@ const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
 const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 let airportLookupPromise = null;
+const IATA_FALLBACK_MAP = {
+  YYZ:'CYYZ', YUL:'CYUL', YVR:'CYVR', YYC:'CYYC', YEG:'CYEG', YOW:'CYOW', YQB:'CYQB', YHZ:'CYHZ',
+  YXE:'CYXE', YQR:'CYQR', YWG:'CYWG', YSJ:'CYSJ', YXX:'CYXX', YHM:'CYHM', YYJ:'CYYJ', YQT:'CYQT',
+  JFK:'KJFK', LGA:'KLGA', EWR:'KEWR', LAX:'KLAX', SFO:'KSFO', SEA:'KSEA', BOS:'KBOS', ORD:'KORD',
+  DEN:'KDEN', DFW:'KDFW', MIA:'KMIA', FLL:'KFLL', IAH:'KIAH', IAD:'KIAD', DCA:'KDCA', ATL:'KATL',
+  DTW:'KDTW', MSP:'KMSP', PHX:'KPHX', LAS:'KLAS', SAN:'KSAN', SNA:'KSNA', PDX:'KPDX', HNL:'PHNL',
+  CDG:'LFPG', LHR:'EGLL', FRA:'EDDF', AMS:'EHAM', NRT:'RJAA'
+};
 
 // --- Pay tables 2023–2026 (from contract) ---
 const PAY_TABLES = {
@@ -943,18 +952,34 @@ function switchUIMode(mode){
 function escapeHtml(str=''){
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+async function fetchJsonWithCorsFallback(url, cache='no-store'){
+  const attempt = async (target, note) => {
+    const resp = await fetch(target, { cache, mode:'cors' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.json();
+  };
+  try {
+    return await attempt(url, 'direct');
+  } catch(err){
+    console.warn(`Direct fetch failed for ${url}; retrying via proxy`, err);
+    if (url.startsWith(CORS_PROXY)) throw err;
+    return attempt(`${CORS_PROXY}${encodeURIComponent(url)}`, 'proxy');
+  }
+}
 async function loadAirportLookup(){
   if (airportLookupPromise) return airportLookupPromise;
-  airportLookupPromise = fetch(IATA_LOOKUP_URL, { cache: 'force-cache' })
-    .then(resp => { if (!resp.ok) throw new Error('Unable to load airport directory'); return resp.json(); })
+  airportLookupPromise = fetchJsonWithCorsFallback(IATA_LOOKUP_URL, 'force-cache')
     .then(list => {
-      const map = {};
+      const map = { ...IATA_FALLBACK_MAP };
       (list || []).forEach(entry => {
         const ia = entry?.iata_code, ic = entry?.icao_code;
         if (ia && ic) map[String(ia).toUpperCase()] = String(ic).toUpperCase();
       });
       return map;
-    }).catch(err => { airportLookupPromise = null; throw err; });
+    }).catch(err => {
+      console.warn('IATA directory fetch failed; using fallback map only.', err);
+      return { ...IATA_FALLBACK_MAP };
+    });
   return airportLookupPromise;
 }
 async function resolveAirportCode(input){
@@ -964,6 +989,7 @@ async function resolveAirportCode(input){
   if (code.length === 3){
     const lookup = await loadAirportLookup();
     if (lookup[code]) return lookup[code];
+    if (code.startsWith('Y')) return `C${code}`; // common Canadian pattern when lookup unavailable
     throw new Error(`Unable to map ${code} to an ICAO station.`);
   }
   throw new Error('Use a 3-letter IATA or 4-letter ICAO code.');
@@ -1043,16 +1069,22 @@ function formatZulu(ms){
   return d.toISOString().slice(0,16).replace('T',' ') + 'Z';
 }
 async function fetchWeatherForAirport(icao){
-  const [metarRes, tafRes] = await Promise.all([
-    fetch(`${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`, { cache:'no-store' }),
-    fetch(`${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`, { cache:'no-store' })
+  const metarUrl = `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`;
+  const tafUrl = `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`;
+  const [metarJson, tafJson] = await Promise.all([
+    fetchJsonWithCorsFallback(metarUrl, 'no-store').catch(err => {
+      console.warn(`METAR fetch failed for ${icao}`, err);
+      return [];
+    }),
+    fetchJsonWithCorsFallback(tafUrl, 'no-store').catch(err => {
+      console.warn(`TAF fetch failed for ${icao}`, err);
+      return [];
+    })
   ]);
-  const metarJson = metarRes.ok ? await metarRes.json() : [];
-  const tafJson = tafRes.ok ? await tafRes.json() : [];
   const metar = Array.isArray(metarJson) ? metarJson[0] : null;
   const taf = Array.isArray(tafJson) ? tafJson[0] : null;
   const name = metar?.name || taf?.name || icao;
-  if (!metar && !taf) throw new Error(`No METAR/TAF found for ${icao}`);
+  if (!metar && !taf) throw new Error(`No METAR/TAF found for ${icao}. Check the airport code or try again later.`);
   return { icao, name, metar, taf };
 }
 function metarTimeMs(metar){
