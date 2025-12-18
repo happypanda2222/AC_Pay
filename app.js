@@ -75,6 +75,16 @@ const TAF_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`,
   (icao) => `https://aviationweather.gov/cgi-bin/data/taf.php?format=json&ids=${icao}`
 ];
+const TAF_DECODER_SOURCES = [
+  (icao) => `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`,
+  (icao) => `https://aviationweather.gov/cgi-bin/data/taf.php?format=json&ids=${icao}`,
+  (icao) => TAF_TEXT_FALLBACK(icao)
+];
+const NOTAM_SOURCES = [
+  (icao) => `${CORS_PROXY}${encodeURIComponent(`https://www.aviationweather.gov/api/data/notam?format=json&ids=${icao}`)}`,
+  (icao) => `${CORS_PROXY}${encodeURIComponent(`https://api.flightplandatabase.com/nav/notams/${icao}`)}`,
+  (icao) => `${CORS_PROXY}${encodeURIComponent(`https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${icao}`)}`
+];
 const METAR_TEXT_FALLBACKS = [
   (icao) => `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`,
   (icao) => `https://metar.vatsim.net/${icao}`
@@ -1089,7 +1099,7 @@ function parseMetarText(raw, icao){
   const vvToken = tokens.find(t => /^VV\d{3}/.test(t));
   const clouds = tokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}/.test(t)).map(t => ({
     cover: t.slice(0,3),
-    base: Number(t.slice(3)) * 100
+    base: normalizeCloudBaseFt(Number(t.slice(3)))
   }));
   const visib = visToken ? parseVisibilityToSM(visToken) : null;
   const vertVis = vvToken ? Number(vvToken.slice(2)) * 100 : null;
@@ -1120,7 +1130,7 @@ function parseTafText(raw, icao){
   }
   const visMatch = rawTAF.match(/\s([PM]?\d+(?:\/\d+)?SM)\b/);
   const cloudTokens = rawTAF.match(/(VV\d{3}|FEW\d{3}|SCT\d{3}|BKN\d{3}|OVC\d{3})/g) || [];
-  const clouds = cloudTokens.map(t => ({ cover:t.slice(0,3), base:Number(t.slice(3)) * 100 }));
+  const clouds = cloudTokens.map(t => ({ cover:t.slice(0,3), base:normalizeCloudBaseFt(Number(t.slice(3))) }));
   const fcsts = (fromMs && toMs) ? [{
     timeFrom: Math.floor(fromMs / 1000),
     timeTo: Math.floor(toMs / 1000),
@@ -1134,6 +1144,119 @@ function parseTafText(raw, icao){
     rawTAF,
     fcsts
   };
+}
+function normalizeTafPayload(raw, icao){
+  if (!raw) return null;
+  const fcstList = Array.isArray(raw.fcsts) ? raw.fcsts
+    : Array.isArray(raw.forecast) ? raw.forecast
+    : Array.isArray(raw.forecasts) ? raw.forecasts
+    : Array.isArray(raw.data) ? raw.data
+    : [];
+  const fcsts = fcstList.map(f => {
+    const timeFrom = f.timeFrom || f.fcst_time_from || f.valid_time_from || f.validTimeFrom || f.start_time || f.startTime;
+    const timeTo = f.timeTo || f.fcst_time_to || f.valid_time_to || f.validTimeTo || f.end_time || f.endTime;
+    const cloudsSrc = f.clouds || f.sky_condition || [];
+    const clouds = (Array.isArray(cloudsSrc) ? cloudsSrc : [cloudsSrc]).filter(Boolean).map(c => ({
+      cover: c.cover || c.sky_cover || c.skyCover || c.code || c.type || '',
+      base: normalizeCloudBaseFt(c.base || c.cloud_base_ft_agl || c.base_ft_agl || c.altitude)
+    }));
+    const visRaw = f.visib || f.visibility || f.visibility_statute_mi || f.visibility_statute_mi || f.visibility_sm;
+    const vertVis = f.vertVis || f.vert_vis_ft || f.vert_vis || f.vertical_visibility;
+    const wx = f.wxString || f.wx_string || f.weather_string || f.raw_text || f.text || '';
+    const fromMs = timeFrom ? Date.parse(timeFrom) : null;
+    const toMs = timeTo ? Date.parse(timeTo) : null;
+    if (!fromMs || !toMs) return null;
+    return {
+      timeFrom: Math.floor(fromMs / 1000),
+      timeTo: Math.floor(toMs / 1000),
+      visib: parseVisibilityToSM(visRaw),
+      vertVis: vertVis ? normalizeCloudBaseFt(vertVis) : null,
+      clouds,
+      wxString: wx.trim()
+    };
+  }).filter(Boolean);
+  const rawTAF = raw.rawTAF || raw.raw_text || raw.taf || '';
+  return fcsts.length ? { icaoId: icao, name: raw.name || `${icao} (decoder)`, rawTAF, fcsts } : null;
+}
+function majorityVote(items, keyFn){
+  const counts = new Map();
+  items.forEach((item, idx) => {
+    const key = keyFn(item, idx);
+    if (key === null || key === undefined) return;
+    if (!counts.has(key)) counts.set(key, { count: 0, indexes: [] });
+    const bucket = counts.get(key);
+    bucket.count += 1;
+    bucket.indexes.push(idx);
+  });
+  let winner = null;
+  for (const entry of counts.values()){
+    if (!winner || entry.count > winner.count) winner = entry;
+  }
+  if (!winner || winner.count < 2) return null;
+  return winner;
+}
+function tafConsensusForTime(decodes, targetMs){
+  const segments = decodes.map(d => {
+    if (!d || !d.taf) return null;
+    const seg = tafSegmentForTime(d.taf.fcsts, targetMs);
+    if (!seg) return null;
+    const ceiling = extractCeilingFt(seg.clouds, seg.vertVis);
+    const vis = parseVisibilityToSM(seg.visib);
+    const wxKey = (seg.wxString || '').toUpperCase().replace(/\s+/g,' ').trim();
+    return { seg, key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}` };
+  });
+  const vote = majorityVote(segments, s => s?.key);
+  const icons = segments.map((s, idx) => vote && vote.indexes.includes(idx));
+  const chosenIdx = vote ? vote.indexes[0] : null;
+  const chosen = (chosenIdx !== null && chosenIdx !== undefined) ? segments[chosenIdx]?.seg : null;
+  if (!vote) throw new Error('TAF decoders disagree.');
+  return { segment: chosen, icons };
+}
+function renderDecoderIcons(flags){
+  if (!Array.isArray(flags)) return '';
+  return `<div class="decoder-row">${flags.map(ok => `<span class="${ok ? 'decoder-ok' : 'decoder-bad'}">${ok ? '✔' : '✖'}</span>`).join('')}</div>`;
+}
+function parseNotamList(raw){
+  if (!raw) return [];
+  if (Array.isArray(raw)){
+    return raw.map(n => ({
+      text: n.text || n.message || n.notam || n.raw_text || '',
+      start: Date.parse(n.start_time || n.effective || n.validFrom || n.startDate || n.start) || null,
+      end: Date.parse(n.end_time || n.expires || n.validTo || n.endDate || n.end) || null
+    })).filter(n => n.text);
+  }
+  if (typeof raw === 'string'){
+    return raw.split(/\r?\n/).map(line => ({ text: line.trim(), start: null, end: null })).filter(n => n.text);
+  }
+  if (typeof raw === 'object'){
+    if (Array.isArray(raw.notams)) return parseNotamList(raw.notams);
+    if (Array.isArray(raw.items)) return parseNotamList(raw.items);
+  }
+  return [];
+}
+function classifyNotamSeverity(text){
+  const upper = text.toUpperCase();
+  if (/RUNWAY|RWY|AD\s+CLOSED|AIRPORT\s+CLOSED|AD\s+CLSD|RWY\s+CLSD/.test(upper)) return 'red';
+  if (/TAXIWAY|TWY|APRON|APN|LIGHTING|PCL/.test(upper)) return 'yellow';
+  return 'green';
+}
+function filterActiveNotams(notams, targetMs){
+  const windowStart = targetMs - 3600000;
+  const windowEnd = targetMs + 3600000;
+  return notams.filter(n => {
+    const start = n.start || 0;
+    const end = n.end || Infinity;
+    return start <= windowEnd && end >= windowStart;
+  });
+}
+function buildNotamConsensus(decodes){
+  const signatures = decodes.map(d => JSON.stringify((d.notams || []).map(n => n.text).sort()));
+  const vote = majorityVote(signatures, s => s);
+  const icons = signatures.map((s, idx) => vote && vote.indexes.includes(idx));
+  if (!vote) throw new Error('NOTAM decoders disagree.');
+  const winnerIdx = vote.indexes[0];
+  const notams = decodes[winnerIdx]?.notams || [];
+  return { notams, icons };
 }
 async function loadAirportLookup(){
   if (airportLookupPromise) return airportLookupPromise;
@@ -1183,6 +1306,12 @@ function parseVisibilityToSM(raw){
   if (num === null) return null;
   if (num > 50) return +(num / 1609.34).toFixed(2); // assume meters/visibility 9999 etc
   return +num.toFixed(2);
+}
+function normalizeCloudBaseFt(base){
+  const b = Number(base);
+  if (Number.isNaN(b)) return null;
+  if (b < 250) return Math.round(b * 100);
+  return Math.round(b);
 }
 function formatVisSm(v){
   if (v === null || v === undefined || Number.isNaN(v)) return 'Not reported';
@@ -1265,6 +1394,41 @@ async function fetchJsonWeatherRecord(builders, icao, label, keys){
   }
   return null;
 }
+async function fetchTafDecoders(icao){
+  const sources = TAF_DECODER_SOURCES.map((buildUrl, idx) => {
+    return (async () => {
+      try {
+        if (idx === 2){
+          const txt = await fetchTextWithCorsFallback(buildUrl(icao), 'no-store');
+          return { taf: parseTafText(txt, icao) };
+        }
+        const payload = await fetchJsonWithCorsFallback(buildUrl(icao), 'no-store');
+        const record = pickFirstWeatherRecord(payload, ['tafs', 'data', 'results']);
+        return { taf: normalizeTafPayload(record, icao) };
+      } catch(err){
+        console.warn(`TAF decoder ${idx + 1} failed for ${icao}`, err);
+        return { taf: null };
+      }
+    })();
+  });
+  return Promise.all(sources);
+}
+async function fetchNotamDecoders(icao){
+  const decoders = NOTAM_SOURCES.map((buildUrl, idx) => (async () => {
+    try {
+      const url = buildUrl(icao);
+      const payload = idx === 2
+        ? await fetchTextWithCorsFallback(url, 'no-store')
+        : await fetchJsonWithCorsFallback(url, 'no-store');
+      const notams = parseNotamList(payload);
+      return { notams };
+    } catch(err){
+      console.warn(`NOTAM decoder ${idx + 1} failed for ${icao}`, err);
+      return { notams: [] };
+    }
+  })());
+  return Promise.all(decoders);
+}
 async function fetchWeatherForAirport(icao){
   const [metarJson, tafJson] = await Promise.all([
     fetchJsonWeatherRecord(METAR_JSON_ENDPOINTS, icao, 'METAR', ['metars', 'data', 'results'])
@@ -1283,7 +1447,9 @@ async function fetchWeatherForAirport(icao){
   const finalTaf = tafJson || tafTxt;
   let name = finalMetar?.name || finalTaf?.name || icao;
   if (!finalMetar && !finalTaf) throw new Error(`No METAR/TAF found for ${icao}. Check the airport code or try again later.`);
-  return { icao, name, metar: finalMetar, taf: finalTaf };
+  const tafDecodes = await fetchTafDecoders(icao);
+  const notamDecodes = await fetchNotamDecoders(icao);
+  return { icao, name, metar: finalMetar, taf: finalTaf, tafDecodes, notamDecodes };
 }
 function metarTimeMs(metar){
   if (!metar) return null;
@@ -1292,7 +1458,16 @@ function metarTimeMs(metar){
   return null;
 }
 function summarizeWeatherWindow(airportData, targetMs, label){
-  const tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
+  let tafIcons = [false, false, false];
+  let tafSeg = null;
+  try {
+    const tafOutcome = tafConsensusForTime(airportData?.tafDecodes || [], targetMs);
+    tafSeg = tafOutcome.segment;
+    tafIcons = tafOutcome.icons;
+  } catch(err){
+    console.warn(err?.message || err);
+  }
+  if (!tafSeg) tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
   const metarMs = metarTimeMs(airportData.metar);
   const metarIsCurrent = metarMs ? Math.abs(targetMs - metarMs) <= 90 * 60000 : false;
   const useMetar = metarIsCurrent && (!tafSeg || targetMs <= metarMs + 45 * 60000);
@@ -1310,6 +1485,12 @@ function summarizeWeatherWindow(airportData, targetMs, label){
   if (ceiling !== null) reasonBits.push(`Ceiling ${ceiling} ft`);
   if (vis !== null) reasonBits.push(`Vis ${formatVisSm(vis)}`);
   if (wx && wx !== 'None reported') reasonBits.push(wx);
+  const notamConsensus = airportData.notamConsensus;
+  const notamIcons = notamConsensus?.icons || [false, false, false];
+  const activeNotams = notamConsensus ? filterActiveNotams(notamConsensus.notams, targetMs) : [];
+  const flaggedNotams = activeNotams.filter(n => classifyNotamSeverity(n.text) !== 'green');
+  const hasRed = flaggedNotams.some(n => classifyNotamSeverity(n.text) === 'red');
+  const notamLabel = hasRed ? 'Critical NOTAMs in window' : (flaggedNotams.length ? 'Cautionary NOTAMs in window' : 'No critical NOTAMs');
   return {
     label,
     icao: airportData.icao,
@@ -1323,14 +1504,19 @@ function summarizeWeatherWindow(airportData, targetMs, label){
     rules,
     ils,
     wx,
+    tafIcons,
+    notamIcons,
+    notamLabel,
+    notams: flaggedNotams,
     summary: reasonBits.join(' · ') || 'No significant weather decoded'
   };
 }
-function renderWeatherResults(outEl, rawEl, assessments, rawSources){
+function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl){
   if (!outEl) return;
   if (!assessments || !assessments.length){
     outEl.innerHTML = '<div class="wx-error">No weather data available.</div>';
     if (rawEl) rawEl.innerHTML = '';
+    if (notamEl) notamEl.innerHTML = '';
     return;
   }
   const cards = assessments.map(a => {
@@ -1350,6 +1536,8 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources){
         <div class="wx-box"><div class="label">Visibility</div><div class="value">${escapeHtml(visTxt)}</div></div>
         <div class="wx-box"><div class="label">ILS guidance</div><div class="value"><span class="ils-badge">${escapeHtml(a.ils.cat)}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(a.ils.reason)}</div></div></div>
         <div class="wx-box"><div class="label">Drivers</div><div class="value" style="font-size:14px;line-height:1.4">${escapeHtml(a.summary)}</div></div>
+        <div class="wx-box"><div class="label">TAF decoders</div><div class="value">${renderDecoderIcons(a.tafIcons)}</div></div>
+        <div class="wx-box"><div class="label">NOTAM health</div><div class="value">${escapeHtml(a.notamLabel)}${renderDecoderIcons(a.notamIcons)}</div></div>
       </div>
     </div>`;
   }).join('');
@@ -1364,13 +1552,23 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources){
     `).join('');
     rawEl.innerHTML = rawHtml;
   }
+  if (notamEl){
+    const list = assessments.map(a => {
+      if (!a.notams.length) return '';
+      const items = a.notams.map(n => `<li><strong>${classifyNotamSeverity(n.text).toUpperCase()}</strong>: ${escapeHtml(n.text)}</li>`).join('');
+      return `<div class="wx-box"><div class="label">${escapeHtml(a.label)} (${escapeHtml(a.icao)})</div><ul>${items}</ul></div>`;
+    }).filter(Boolean).join('');
+    notamEl.innerHTML = list || '<div class="muted-note">No flagged NOTAMs in the selected windows.</div>';
+  }
 }
-async function runWeatherWorkflow({ depId, arrId, depHrsId, arrHrsId, outId, rawId }){
+async function runWeatherWorkflow({ depId, arrId, depHrsId, arrHrsId, outId, rawId, notamId }){
   const outEl = document.getElementById(outId);
   const rawEl = document.getElementById(rawId);
+  const notamEl = document.getElementById(notamId);
   const rawDetails = rawEl?.closest('details');
   if (outEl) outEl.innerHTML = '<div class="muted-note">Fetching METAR/TAF and decoding…</div>';
   if (rawEl) rawEl.innerHTML = '';
+  if (notamEl) notamEl.innerHTML = '';
   if (rawDetails) rawDetails.open = false;
   try {
     const depCode = document.getElementById(depId)?.value || '';
@@ -1384,17 +1582,24 @@ async function runWeatherWorkflow({ depId, arrId, depHrsId, arrHrsId, outId, raw
     const weatherMap = {};
     for (const icao of uniqueIcao){
       weatherMap[icao] = await fetchWeatherForAirport(icao);
+      try {
+        weatherMap[icao].notamConsensus = buildNotamConsensus(weatherMap[icao].notamDecodes);
+      } catch(err){
+        console.warn(err?.message || err);
+        weatherMap[icao].notamConsensus = { notams: [], icons:[false,false,false] };
+      }
     }
     const now = Date.now();
     const assessments = [
       summarizeWeatherWindow(weatherMap[depIcao], now + depHrs * 3600000, 'Departure field'),
       summarizeWeatherWindow(weatherMap[arrIcao], now + arrHrs * 3600000, 'Arrival field')
     ];
-    renderWeatherResults(outEl, rawEl, assessments, uniqueIcao.map(c => weatherMap[c]));
+    renderWeatherResults(outEl, rawEl, assessments, uniqueIcao.map(c => weatherMap[c]), notamEl);
   } catch(err){
     console.error(err);
     if (outEl) outEl.innerHTML = `<div class="wx-error">${escapeHtml(err.message || 'Weather lookup failed')}</div>`;
     if (rawEl) rawEl.innerHTML = '';
+    if (notamEl) notamEl.innerHTML = '';
   }
 }
 
@@ -1871,8 +2076,8 @@ function init(){
   document.getElementById('modern-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
   document.getElementById('modern-ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
   document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
-  document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body' }); });
-  document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
+  document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body', notamId:'notam-raw-body' }); });
+  document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body', notamId:'modern-notam-raw-body' }); });
   // Tab defaults
   setLegacyPrimaryTab('pay');
   setLegacySubTab('annual');
