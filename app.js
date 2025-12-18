@@ -1176,7 +1176,8 @@ function normalizeTafPayload(raw, icao){
     };
   }).filter(Boolean);
   const rawTAF = raw.rawTAF || raw.raw_text || raw.taf || '';
-  return fcsts.length ? { icaoId: icao, name: raw.name || `${icao} (decoder)`, rawTAF, fcsts } : null;
+  const sorted = fcsts.sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  return sorted.length ? { icaoId: icao, name: raw.name || `${icao} (decoder)`, rawTAF, fcsts: sorted } : null;
 }
 function majorityVote(items, keyFn){
   const counts = new Map();
@@ -1205,11 +1206,16 @@ function tafConsensusForTime(decodes, targetMs){
     const wxKey = (seg.wxString || '').toUpperCase().replace(/\s+/g,' ').trim();
     return { seg, key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}` };
   });
+  const anySegments = segments.some(Boolean);
+  if (!anySegments) return { segment: null, icons: decodes.map(() => false) };
   const vote = majorityVote(segments, s => s?.key);
-  const icons = segments.map((s, idx) => vote && vote.indexes.includes(idx));
-  const chosenIdx = vote ? vote.indexes[0] : null;
-  const chosen = (chosenIdx !== null && chosenIdx !== undefined) ? segments[chosenIdx]?.seg : null;
-  if (!vote) throw new Error('TAF decoders disagree.');
+  const icons = vote
+    ? segments.map((s, idx) => vote.indexes.includes(idx))
+    : segments.map(s => Boolean(s));
+  const chosenIdx = vote ? vote.indexes[0] : segments.findIndex(Boolean);
+  const chosen = (chosenIdx !== null && chosenIdx !== undefined && chosenIdx >= 0)
+    ? segments[chosenIdx]?.seg
+    : null;
   return { segment: chosen, icons };
 }
 function renderDecoderIcons(flags){
@@ -1357,10 +1363,11 @@ function ilsCategory(ceilingFt, visSm){
 }
 function tafSegmentForTime(fcsts, targetMs){
   if (!Array.isArray(fcsts) || !fcsts.length) return null;
-  const exact = fcsts.find(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
+  const ordered = [...fcsts].sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const exact = ordered.find(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
   if (exact) return exact;
-  const future = fcsts.find(f => f.timeFrom * 1000 > targetMs);
-  return future || fcsts[fcsts.length - 1];
+  const future = ordered.find(f => f.timeFrom * 1000 > targetMs);
+  return future || ordered[ordered.length - 1];
 }
 function formatZulu(ms){
   const d = new Date(ms);
@@ -2026,8 +2033,25 @@ function autoSelectDefaults() {
   }
 }
 
+function startUtcClock(ids) {
+  const targets = ids.map(id => document.getElementById(id)).filter(Boolean);
+  if (!targets.length) return;
+  const update = () => {
+    const now = new Date();
+    const hh = String(now.getUTCHours()).padStart(2, '0');
+    const mm = String(now.getUTCMinutes()).padStart(2, '0');
+    const dd = String(now.getUTCDate()).padStart(2, '0');
+    const month = now.toLocaleString('en', { month: 'short', timeZone: 'UTC' });
+    const ts = `Current UTC: ${hh}:${mm} ${dd} ${month}`;
+    targets.forEach(el => { el.textContent = ts; });
+  };
+  update();
+  setInterval(update, 30000);
+}
+
 function init(){
   updateVersionBadgeFromSW();
+  startUtcClock(['legacy-utc-clock', 'modern-utc-clock']);
   switchUIMode('modern');
   // Tabs
   document.getElementById('tabbtn-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('pay'); });
