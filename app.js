@@ -62,7 +62,7 @@ async function updateVersionBadgeFromSW() {
 
 // --- Constants & Config ---
 const DOH = new Date('2024-08-07T00:00:00Z');
-const PROGRESSION = {m:11, d:10};
+const PROGRESSION = {m:11, d:5};
 const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
@@ -942,12 +942,15 @@ const INFO_COPY = {
     monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours.',
     monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match (no cheque split).',
     taxReturn: 'Difference between annual tax owed and estimated withholdings on a single monthly paycheque, plus RRSP tax savings.',
+    hourlyRate: 'Pay table rate for each segment of the year (with XLR when toggled), including the progression date increase.',
     incomeTax: 'Total annual federal and provincial income tax after pension and RRSP offsets.',
     cpp: 'Annual CPP/QPP contributions on employment income up to the yearly maximum.',
     ei: 'Annual EI premiums based on insurable earnings up to the yearly maximum.',
     pension: 'Employee pension contributions using the current pension rate applied to gross pay.',
     esopContribution: 'Employee ESOP contributions at the selected percentage of gross, capped at $30,000 annually.',
-    esopMatch: 'Employer ESOP match (30% of your contribution) shown after estimated tax on the match.'
+    esopMatch: 'Employer ESOP match (30% of your contribution) shown after estimated tax on the match.',
+    union: 'Estimated annual union dues derived from monthly dues across all months.',
+    health: 'Annualized health deduction at the monthly premium rate.'
   },
   monthly: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
@@ -995,24 +998,24 @@ function renderAnnualModern(res, params){
   const unionAnnual = (res.monthly?.union_dues || 0) * 12;
   const metricHTML = `
     <div class="metric-grid">
-      <div class="metric-card"><div class="metric-label">Annual Net</div><div class="metric-value">${money(res.net)}</div></div>
-      <div class="metric-card"><div class="metric-label">Annual Gross</div><div class="metric-value">${money(res.gross)}</div></div>
-      <div class="metric-card"><div class="metric-label">Monthly Net</div><div class="metric-value">${money(res.monthly.net)}</div></div>
-      <div class="metric-card"><div class="metric-label">Tax Return (est.)</div><div class="metric-value">${money(res.tax_return)}</div></div>
-      <div class="metric-card"><div class="metric-label">Hourly rate</div><div class="metric-value">${money(hourly)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Annual Net', INFO_COPY.annual.annualNet)}</div><div class="metric-value">${money(res.net)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Annual Gross', INFO_COPY.annual.annualGross)}</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Monthly Net', INFO_COPY.annual.monthlyNet)}</div><div class="metric-value">${money(res.monthly.net)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Tax Return (est.)', INFO_COPY.annual.taxReturn)}</div><div class="metric-value">${money(res.tax_return)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Hourly rate', INFO_COPY.annual.hourlyRate)}</div><div class="metric-value">${money(hourly)}</div></div>
     </div>`;
 
   const deductions = `
     <details class="drawer"><summary>See taxes & deductions</summary>
       <div class="metric-grid">
-        <div class="metric-card"><div class="metric-label">Income Tax</div><div class="metric-value">${money(res.tax)}</div></div>
-        <div class="metric-card"><div class="metric-label">CPP/QPP</div><div class="metric-value">${money(res.cpp)}</div></div>
-        <div class="metric-card"><div class="metric-label">EI</div><div class="metric-value">${money(res.ei)}</div></div>
-        <div class="metric-card"><div class="metric-label">Pension</div><div class="metric-value">${money(res.pension)}</div></div>
-        <div class="metric-card"><div class="metric-label">Union dues</div><div class="metric-value">${money(unionAnnual)}</div></div>
-        <div class="metric-card"><div class="metric-label">Health</div><div class="metric-value">${money(res.health)}</div></div>
-        <div class="metric-card"><div class="metric-label">ESOP</div><div class="metric-value">${money(res.esop)}</div></div>
-        <div class="metric-card"><div class="metric-label">ESOP match (after tax)</div><div class="metric-value">${money(res.esop_match_after_tax)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Income Tax', INFO_COPY.annual.incomeTax)}</div><div class="metric-value">${money(res.tax)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('CPP/QPP', INFO_COPY.annual.cpp)}</div><div class="metric-value">${money(res.cpp)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('EI', INFO_COPY.annual.ei)}</div><div class="metric-value">${money(res.ei)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Pension', INFO_COPY.annual.pension)}</div><div class="metric-value">${money(res.pension)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Union dues', INFO_COPY.annual.union)}</div><div class="metric-value">${money(unionAnnual)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Health', INFO_COPY.annual.health)}</div><div class="metric-value">${money(res.health)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('ESOP', INFO_COPY.annual.esopContribution)}</div><div class="metric-value">${money(res.esop)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('ESOP match (after tax)', INFO_COPY.annual.esopMatch)}</div><div class="metric-value">${money(res.esop_match_after_tax)}</div></div>
       </div>
     </details>`;
 
@@ -1036,37 +1039,37 @@ function renderMonthlyModern(res){
   if (!out) return;
   const metricHTML = `
     <div class="metric-grid">
-      <div class="metric-card"><div class="metric-label">Net (after split)</div><div class="metric-value">${money(res.net)}</div></div>
-      <div class="metric-card"><div class="metric-label">Gross</div><div class="metric-value">${money(res.gross)}</div></div>
-      <div class="metric-card"><div class="metric-label">Pay advance</div><div class="metric-value">${money(res.pay_advance)}</div></div>
-      <div class="metric-card"><div class="metric-label">Second pay</div><div class="metric-value">${money(res.second_pay)}</div></div>
-      <div class="metric-card"><div class="metric-label">Hourly rate</div><div class="metric-value">${money(res.rate)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Net (after split)', INFO_COPY.monthly.net)}</div><div class="metric-value">${money(res.net)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Gross', INFO_COPY.monthly.gross)}</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Pay advance', INFO_COPY.monthly.payAdvance)}</div><div class="metric-value">${money(res.pay_advance)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Second pay', INFO_COPY.monthly.secondPay)}</div><div class="metric-value">${money(res.second_pay)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Hourly rate', INFO_COPY.monthly.hourlyRate)}</div><div class="metric-value">${money(res.rate)}</div></div>
     </div>`;
 
   const deductions = `
     <details class="drawer"><summary>Show deductions</summary>
       <div class="metric-grid">
-        <div class="metric-card"><div class="metric-label">Income Tax</div><div class="metric-value">${money(res.tax)}</div></div>
-        <div class="metric-card"><div class="metric-label">CPP/QPP</div><div class="metric-value">${money(res.cpp)}</div></div>
-        <div class="metric-card"><div class="metric-label">EI</div><div class="metric-value">${money(res.ei)}</div></div>
-        <div class="metric-card"><div class="metric-label">Pension</div><div class="metric-value">${money(res.pension)}</div></div>
-        <div class="metric-card"><div class="metric-label">Union dues</div><div class="metric-value">${money(res.union)}</div></div>
-        <div class="metric-card"><div class="metric-label">Health</div><div class="metric-value">${money(res.health)}</div></div>
-        <div class="metric-card"><div class="metric-label">ESOP</div><div class="metric-value">${money(res.esop)}</div></div>
-        <div class="metric-card"><div class="metric-label">ESOP match (after tax)</div><div class="metric-value">${money(res.esop_match_after_tax)}</div></div>
-        <div class="metric-card"><div class="metric-label">TAFB</div><div class="metric-value">${money(res.tafb_net)}</div></div>
-        <div class="metric-card"><div class="metric-label">Marginal FED</div><div class="metric-value">${(100*res.fed_m).toFixed(1)}%</div></div>
-        <div class="metric-card"><div class="metric-label">Marginal PROV</div><div class="metric-value">${(100*res.prov_m).toFixed(1)}%</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Income Tax', INFO_COPY.monthly.incomeTax)}</div><div class="metric-value">${money(res.tax)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('CPP/QPP', INFO_COPY.monthly.cpp)}</div><div class="metric-value">${money(res.cpp)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('EI', INFO_COPY.monthly.ei)}</div><div class="metric-value">${money(res.ei)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Pension', INFO_COPY.monthly.pension)}</div><div class="metric-value">${money(res.pension)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Union dues', INFO_COPY.monthly.union)}</div><div class="metric-value">${money(res.union)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Health', INFO_COPY.monthly.health)}</div><div class="metric-value">${money(res.health)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('ESOP', INFO_COPY.monthly.esop)}</div><div class="metric-value">${money(res.esop)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('ESOP match (after tax)', INFO_COPY.monthly.esopMatch)}</div><div class="metric-value">${money(res.esop_match_after_tax)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('TAFB', INFO_COPY.monthly.tafb)}</div><div class="metric-value">${money(res.tafb_net)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Marginal FED', INFO_COPY.monthly.marginalFed)}</div><div class="metric-value">${(100*res.fed_m).toFixed(1)}%</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Marginal PROV', INFO_COPY.monthly.marginalProv)}</div><div class="metric-value">${(100*res.prov_m).toFixed(1)}%</div></div>
       </div>
     </details>`;
 
   const split = `
     <details class="drawer"><summary>Paycheque split details</summary>
       <div class="metric-grid">
-        <div class="metric-card"><div class="metric-label">Advance net</div><div class="metric-value">${money(res.pay_advance)}</div></div>
-        <div class="metric-card"><div class="metric-label">Second pay net</div><div class="metric-value">${money(res.second_pay)}</div></div>
-        <div class="metric-card"><div class="metric-label">Credits</div><div class="metric-value">${res.credits.toFixed(2)}</div></div>
-        <div class="metric-card"><div class="metric-label">VO credits</div><div class="metric-value">${res.voCredits.toFixed(2)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Advance net', INFO_COPY.monthly.payAdvance)}</div><div class="metric-value">${money(res.pay_advance)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Second pay net', INFO_COPY.monthly.secondPay)}</div><div class="metric-value">${money(res.second_pay)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Credits', INFO_COPY.monthly.credits)}</div><div class="metric-value">${res.credits.toFixed(2)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('VO credits', INFO_COPY.monthly.voCredits)}</div><div class="metric-value">${res.voCredits.toFixed(2)}</div></div>
       </div>
     </details>`;
 
@@ -1078,16 +1081,16 @@ function renderVOModern(res){
   if (!out) return;
   const metricHTML = `
     <div class="metric-grid">
-      <div class="metric-card"><div class="metric-label">Net</div><div class="metric-value">${money(res.net)}</div></div>
-      <div class="metric-card"><div class="metric-label">Gross</div><div class="metric-value">${money(res.gross)}</div></div>
-      <div class="metric-card"><div class="metric-label">Hourly</div><div class="metric-value">${money(res.rate)}</div></div>
-      <div class="metric-card"><div class="metric-label">Hours (Credit×2)</div><div class="metric-value">${res.hours.toFixed(2)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Net', INFO_COPY.vo.net)}</div><div class="metric-value">${money(res.net)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Gross', INFO_COPY.vo.gross)}</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Hourly', INFO_COPY.vo.hourlyRate)}</div><div class="metric-value">${money(res.rate)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Hours (Credit×2)', INFO_COPY.vo.hours)}</div><div class="metric-value">${res.hours.toFixed(2)}</div></div>
     </div>`;
   const detail = `
     <details class="drawer"><summary>Tax rates</summary>
       <div class="metric-grid">
-        <div class="metric-card"><div class="metric-label">Marginal FED</div><div class="metric-value">${(100*res.fed_m).toFixed(1)}%</div></div>
-        <div class="metric-card"><div class="metric-label">Marginal PROV</div><div class="metric-value">${(100*res.prov_m).toFixed(1)}%</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Marginal FED', INFO_COPY.vo.marginalFed)}</div><div class="metric-value">${(100*res.fed_m).toFixed(1)}%</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Marginal PROV', INFO_COPY.vo.marginalProv)}</div><div class="metric-value">${(100*res.prov_m).toFixed(1)}%</div></div>
       </div>
     </details>`;
   out.innerHTML = metricHTML + detail;
