@@ -69,6 +69,7 @@ const HEALTH_MO = 58.80;
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
 const WEATHER_MAX_ATTEMPTS = 5;
 const WEATHER_RETRY_DELAY_MS = 500;
+const DEPARTURE_METAR_THRESHOLD_HRS = 1;
 const METAR_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`,
   (icao) => `https://aviationweather.gov/cgi-bin/data/metar.php?format=json&ids=${icao}`
@@ -1025,6 +1026,34 @@ function switchUIMode(mode){
 function escapeHtml(str=''){
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+function getStoredNotamCredential(key){
+  return (localStorage.getItem(key) || '').trim();
+}
+function syncNotamCredentialInputs(){
+  const fields = Array.from(document.querySelectorAll('[data-notam-key]'));
+  if (!fields.length) return;
+  const keys = Array.from(new Set(fields.map(field => field.dataset.notamKey).filter(Boolean)));
+  const applyFromStorage = (key) => {
+    const value = getStoredNotamCredential(key);
+    fields.filter(field => field.dataset.notamKey === key).forEach(field => {
+      if (field.value !== value) field.value = value;
+    });
+  };
+  keys.forEach(applyFromStorage);
+  fields.forEach(field => {
+    field.addEventListener('input', () => {
+      const key = field.dataset.notamKey;
+      if (!key) return;
+      const value = field.value.trim();
+      if (value) {
+        localStorage.setItem(key, value);
+      } else {
+        localStorage.removeItem(key);
+      }
+      applyFromStorage(key);
+    });
+  });
+}
 async function fetchJsonWithCorsFallback(url, cache='no-store'){
   const attempt = async (target, note) => {
     const resp = await fetch(target, { cache, mode:'cors' });
@@ -1736,8 +1765,8 @@ async function fetchTafDecoders(icao){
 async function fetchNotamDecoders(icao){
   const decoders = [
     async (code) => {
-      const clientId = localStorage.getItem('faaNotamClientId') || '';
-      const clientSecret = localStorage.getItem('faaNotamClientSecret') || '';
+      const clientId = getStoredNotamCredential('faaNotamClientId');
+      const clientSecret = getStoredNotamCredential('faaNotamClientSecret');
       if (!clientId || !clientSecret){
         return { notams: [], skipped: true };
       }
@@ -1798,25 +1827,31 @@ function metarTimeMs(metar){
   if (metar.obsTime) return Number(metar.obsTime) * 1000;
   return null;
 }
-function summarizeWeatherWindow(airportData, targetMs, label){
+function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
+  const forceMetar = Boolean(options.forceMetar);
+  const hasMetar = Boolean(airportData?.metar);
   let tafIcons = [false, false, false];
   let tafSeg = null;
   let tafProbLabelText = '';
-  try {
-    const tafOutcome = tafConsensusForTime(airportData?.tafDecodes || [], targetMs);
-    tafSeg = tafOutcome.segment;
-    tafIcons = tafOutcome.icons;
-    tafProbLabelText = tafOutcome.probLabel || '';
-  } catch(err){
-    console.warn(err?.message || err);
-  }
-  if (!tafSeg){
-    tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
-    tafProbLabelText = tafProbLabel(tafSeg);
+  if (!forceMetar || !hasMetar){
+    try {
+      const tafOutcome = tafConsensusForTime(airportData?.tafDecodes || [], targetMs);
+      tafSeg = tafOutcome.segment;
+      tafIcons = tafOutcome.icons;
+      tafProbLabelText = tafOutcome.probLabel || '';
+    } catch(err){
+      console.warn(err?.message || err);
+    }
+    if (!tafSeg){
+      tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
+      tafProbLabelText = tafProbLabel(tafSeg);
+    }
+  } else {
+    tafIcons = [null, null, null];
   }
   const metarMs = metarTimeMs(airportData.metar);
   const metarIsCurrent = metarMs ? Math.abs(targetMs - metarMs) <= 90 * 60000 : false;
-  const useMetar = metarIsCurrent && (!tafSeg || targetMs <= metarMs + 45 * 60000);
+  const useMetar = (forceMetar && hasMetar) || (metarIsCurrent && (!tafSeg || targetMs <= metarMs + 45 * 60000));
   const segment = useMetar ? airportData.metar : (tafSeg || airportData.metar);
   const source = useMetar ? 'METAR' : (tafSeg ? 'TAF' : 'METAR');
   const sourceDetail = source === 'TAF' && tafProbLabelText ? `${source} · ${tafProbLabelText}` : source;
@@ -1952,7 +1987,12 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
     }
     const now = Date.now();
     const assessments = [
-      summarizeWeatherWindow(weatherMap[depIcao], now + depHrs * 3600000, 'Departure field'),
+      summarizeWeatherWindow(
+        weatherMap[depIcao],
+        now + depHrs * 3600000,
+        'Departure field',
+        { forceMetar: depHrs < DEPARTURE_METAR_THRESHOLD_HRS }
+      ),
       summarizeWeatherWindow(weatherMap[arrIcao], now + arrHrs * 3600000, 'Arrival field')
     ];
     renderWeatherResults(outEl, rawEl, assessments, uniqueIcao.map(c => weatherMap[c]), notamEl);
@@ -2413,6 +2453,7 @@ function startUtcClock(ids) {
 function init(){
   updateVersionBadgeFromSW();
   startUtcClock(['legacy-utc-clock', 'modern-utc-clock']);
+  syncNotamCredentialInputs();
   switchUIMode('modern');
   // Tabs
   document.getElementById('tabbtn-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('pay'); });
