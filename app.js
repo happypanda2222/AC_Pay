@@ -85,6 +85,7 @@ const METAR_TEXT_FALLBACKS = [
 const TAF_TEXT_FALLBACK = (icao) => `https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`;
 const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
 const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+const NOTAM_DECODER_COUNT = 3;
 let airportLookupPromise = null;
 const IATA_FALLBACK_MAP = {
   ABJ:'DIAP', ADD:'HAAB', AKL:'NZAA', AMS:'EHAM', ANU:'TAPA', ATL:'KATL', AUA:'TNCA', AUH:'OMAA', AZS:'MDCY',
@@ -1343,58 +1344,66 @@ function majorityVote(items, keyFn){
   return winner;
 }
 function tafConsensusForTime(decodes, targetMs){
-  const selectWorstSegment = (segments) => {
-    if (!segments.length) return null;
-    return segments.reduce((worst, seg) => {
-      if (!seg) return worst;
-      if (!worst) return seg;
-      const ceiling = extractCeilingFt(seg.clouds, seg.vertVis);
-      const vis = parseVisibilityToSM(seg.visib);
-      const worstCeiling = extractCeilingFt(worst.clouds, worst.vertVis);
-      const worstVis = parseVisibilityToSM(worst.visib);
-      const severity = classifyFlightRules(ceiling, vis).code;
-      const worstSeverity = classifyFlightRules(worstCeiling, worstVis).code;
+  const selectWorstSegment = (entries) => {
+    if (!entries.length) return null;
+    return entries.reduce((worst, entry) => {
+      if (!entry) return worst;
+      if (!worst) return entry;
+      const severity = classifyFlightRules(entry.ceiling, entry.vis).code;
+      const worstSeverity = classifyFlightRules(worst.ceiling, worst.vis).code;
       const severityRank = { LIFR: 4, IFR: 3, MVFR: 2, VFR: 1, UNK: 0 };
       const score = severityRank[severity] ?? 0;
       const worstScore = severityRank[worstSeverity] ?? 0;
-      if (score !== worstScore) return score > worstScore ? seg : worst;
-      const ceilVal = ceiling ?? Infinity;
-      const worstCeilVal = worstCeiling ?? Infinity;
-      if (ceilVal !== worstCeilVal) return ceilVal < worstCeilVal ? seg : worst;
-      const visVal = vis ?? Infinity;
-      const worstVisVal = worstVis ?? Infinity;
-      if (visVal !== worstVisVal) return visVal < worstVisVal ? seg : worst;
-      return seg;
+      if (score !== worstScore) return score > worstScore ? entry : worst;
+      const ceilVal = entry.ceiling ?? Infinity;
+      const worstCeilVal = worst.ceiling ?? Infinity;
+      if (ceilVal !== worstCeilVal) return ceilVal < worstCeilVal ? entry : worst;
+      const visVal = entry.vis ?? Infinity;
+      const worstVisVal = worst.vis ?? Infinity;
+      if (visVal !== worstVisVal) return visVal < worstVisVal ? entry : worst;
+      return entry;
     }, null);
   };
   const segments = decodes.map(d => {
     if (!d || !d.taf) return null;
     const seg = tafSegmentForTime(d.taf.fcsts, targetMs);
     if (!seg) return null;
-    const ceiling = extractCeilingFt(seg.clouds, seg.vertVis);
+    const ceiling = ceilingWithCarry(d.taf.fcsts, seg);
     const vis = parseVisibilityToSM(seg.visib);
     const wxKey = (seg.wxString || '').toUpperCase().replace(/\s+/g,' ').trim();
-    return { seg, key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}`, probLabel: tafProbLabel(seg) };
+    return {
+      seg,
+      fcsts: d.taf.fcsts,
+      ceiling,
+      vis,
+      key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}`,
+      probLabel: tafProbLabel(seg)
+    };
   });
   const anySegments = segments.some(Boolean);
-  if (!anySegments) return { segment: null, icons: decodes.map(d => Boolean(d?.taf)), probLabel: '' };
+  if (!anySegments) return { segment: null, icons: decodes.map(d => Boolean(d?.taf)), probLabel: '', fcsts: null };
   const vote = majorityVote(segments, s => s?.key);
   const icons = vote
     ? segments.map((s, idx) => vote.indexes.includes(idx))
     : segments.map(s => Boolean(s));
   if (vote){
     const chosenIdx = vote.indexes[0];
-    const chosen = chosenIdx >= 0 ? segments[chosenIdx]?.seg : null;
-    return { segment: chosen, icons, probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '' };
+    const chosenEntry = chosenIdx >= 0 ? segments[chosenIdx] : null;
+    return {
+      segment: chosenEntry?.seg || null,
+      icons,
+      probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '',
+      fcsts: chosenEntry?.fcsts || null
+    };
   }
-  const available = segments.map(s => s?.seg).filter(Boolean);
+  const available = segments.filter(Boolean);
   const chosen = selectWorstSegment(available);
-  if (!chosen) return { segment: null, icons, probLabel: '' };
-  const chosenKey = segments.find(s => s?.seg === chosen)?.key;
+  if (!chosen) return { segment: null, icons, probLabel: '', fcsts: null };
+  const chosenKey = segments.find(s => s?.seg === chosen.seg)?.key;
   const matchingIdx = segments.map((s, idx) => (s?.key === chosenKey ? idx : null)).filter(idx => idx !== null);
   const fallbackIcons = matchingIdx.length ? segments.map((_, idx) => matchingIdx.includes(idx)) : icons;
-  const chosenProb = segments.find(s => s?.seg === chosen)?.probLabel || '';
-  return { segment: chosen, icons: fallbackIcons, probLabel: chosenProb };
+  const chosenProb = segments.find(s => s?.seg === chosen.seg)?.probLabel || '';
+  return { segment: chosen.seg, icons: fallbackIcons, probLabel: chosenProb, fcsts: chosen.fcsts || null };
 }
 function renderDecoderIcons(flags){
   if (!Array.isArray(flags)) return '';
@@ -1403,59 +1412,71 @@ function renderDecoderIcons(flags){
     return `<span class="${ok ? 'decoder-ok' : 'decoder-bad'}">${ok ? '✔' : '✖'}</span>`;
   }).join('')}</div>`;
 }
-function parseNotamList(raw){
+function stripNotamHtml(raw){
+  return String(raw || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\u00a0/g, ' ');
+}
+function normalizeNotamRecord(record){
+  if (!record) return null;
+  const text = record.text || record.message || record.notam || record.notamText || record.raw_text || record.notam_text
+    || record.raw || record.description || record.subject || record.body || '';
+  if (!text) return null;
+  const start = Date.parse(record.start_time || record.effective || record.validFrom || record.startDate
+    || record.start || record.startTime || record.effectiveStart || record.from) || null;
+  const end = Date.parse(record.end_time || record.expires || record.validTo || record.endDate
+    || record.end || record.endTime || record.effectiveEnd || record.to) || null;
+  return { text, start, end };
+}
+function parseNotamTextBlocks(raw){
   if (!raw) return [];
-  if (Array.isArray(raw)){
-    return raw.map(n => ({
-      text: n.text || n.message || n.notam || n.notamText || n.raw_text || n.notam_text || '',
-      start: Date.parse(n.start_time || n.effective || n.validFrom || n.startDate || n.start || n.startTime || n.effectiveStart) || null,
-      end: Date.parse(n.end_time || n.expires || n.validTo || n.endDate || n.end || n.endTime || n.effectiveEnd) || null
-    })).filter(n => n.text);
+  const cleaned = String(raw || '').replace(/\r/g, '\n');
+  const stripped = /<[^>]+>/.test(cleaned) ? stripNotamHtml(cleaned) : cleaned;
+  if (!stripped.trim()) return [];
+  if (/<!DOCTYPE|Just a moment|Error 404|Not Found|CAPTCHA|Access Denied/i.test(stripped)) return [];
+  const normalized = stripped.replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
+  const blocks = [];
+  const notamPattern = /(?:^|\n)(!\w{3,4}[\s\S]*?)(?=\n!|\nFDC|\n$|$)/g;
+  const fdcPattern = /(?:^|\n)(FDC\s+\d+\/\d+[\s\S]*?)(?=\nFDC|\n!|\n$|$)/g;
+  for (const match of normalized.matchAll(notamPattern)){
+    blocks.push(match[1].trim());
   }
-  if (typeof raw === 'string'){
-    const cleaned = raw.replace(/\r/g, '').trim();
-    if (!cleaned) return [];
-    if (/<!DOCTYPE|<html|Just a moment|Error 404|Not Found|CAPTCHA/i.test(cleaned)) return [];
-    const chunks = cleaned.split(/\n(?=!)/).map(block => block.replace(/\s+/g, ' ').trim()).filter(Boolean);
-    if (chunks.length > 1) return chunks.map(text => ({ text, start: null, end: null }));
-    return cleaned.split(/\n+/).map(line => ({ text: line.trim(), start: null, end: null })).filter(n => n.text);
+  if (!blocks.length){
+    for (const match of normalized.matchAll(fdcPattern)){
+      blocks.push(match[1].trim());
+    }
   }
-  if (typeof raw === 'object'){
-    if (Array.isArray(raw.notams)) return parseNotamList(raw.notams);
-    if (Array.isArray(raw.items)) return parseNotamList(raw.items);
-    if (Array.isArray(raw.results)) return parseNotamList(raw.results);
-    if (Array.isArray(raw.data)) return parseNotamList(raw.data);
-    if (Array.isArray(raw.notamList)) return parseNotamList(raw.notamList);
-    if (Array.isArray(raw.notamListItems)) return parseNotamList(raw.notamListItems);
-    if (Array.isArray(raw.notam)) return parseNotamList(raw.notam);
-    if (typeof raw.raw === 'string') return parseNotamList(raw.raw);
-    if (typeof raw.rawText === 'string') return parseNotamList(raw.rawText);
+  if (!blocks.length){
+    normalized.split(/\n+/).forEach(line => {
+      const trimmed = line.trim();
+      if (trimmed) blocks.push(trimmed);
+    });
+  }
+  return blocks.map(text => ({ text, start: null, end: null }));
+}
+function parseNotamPayload(payload){
+  if (!payload) return [];
+  if (typeof payload === 'string') return parseNotamTextBlocks(payload);
+  if (Array.isArray(payload)) return payload.map(normalizeNotamRecord).filter(Boolean);
+  if (typeof payload === 'object'){
+    const list = Array.isArray(payload.notams) ? payload.notams
+      : Array.isArray(payload.items) ? payload.items
+      : Array.isArray(payload.results) ? payload.results
+      : Array.isArray(payload.data) ? payload.data
+      : Array.isArray(payload.notamList) ? payload.notamList
+      : Array.isArray(payload.notamListItems) ? payload.notamListItems
+      : Array.isArray(payload.notam) ? payload.notam
+      : Array.isArray(payload.value) ? payload.value
+      : Array.isArray(payload.features) ? payload.features.map(f => f?.properties || f)
+      : [];
+    if (list.length) return list.map(normalizeNotamRecord).filter(Boolean);
+    if (typeof payload.raw === 'string') return parseNotamTextBlocks(payload.raw);
+    if (typeof payload.rawText === 'string') return parseNotamTextBlocks(payload.rawText);
+    if (typeof payload.text === 'string') return parseNotamTextBlocks(payload.text);
   }
   return [];
-}
-function parseFlightplanDbNotams(payload){
-  if (!payload) return [];
-  const list = Array.isArray(payload.notams) ? payload.notams
-    : Array.isArray(payload.data) ? payload.data
-    : Array.isArray(payload.results) ? payload.results
-    : Array.isArray(payload.items) ? payload.items
-    : Array.isArray(payload) ? payload
-    : [];
-  if (!Array.isArray(list) || !list.length) return [];
-  return list.map(n => ({
-    text: n.text || n.notam || n.raw || n.message || n.description || '',
-    start: Date.parse(n.start_time || n.start || n.effective || n.validFrom || n.from) || null,
-    end: Date.parse(n.end_time || n.end || n.expires || n.validTo || n.to) || null
-  })).filter(n => n.text);
-}
-function parseNotamFaaRawText(raw){
-  const cleaned = String(raw || '').replace(/\r/g, '').trim();
-  if (!cleaned) return [];
-  if (/<!DOCTYPE|<html|Just a moment|Error 404|Not Found|CAPTCHA/i.test(cleaned)) return [];
-  const normalized = cleaned.replace(/\s+/g, ' ').trim();
-  const chunks = normalized.split('!').map(text => text.trim()).filter(Boolean);
-  if (!chunks.length) return [];
-  return chunks.map(text => ({ text: `!${text}`, start: null, end: null }));
 }
 function classifyNotamSeverity(text){
   const upper = text.toUpperCase();
@@ -1588,6 +1609,20 @@ function extractCeilingFt(clouds, vertVis){
   }
   return ceil;
 }
+function ceilingWithCarry(fcsts, seg){
+  const direct = extractCeilingFt(seg?.clouds, seg?.vertVis);
+  if (direct !== null && direct !== undefined) return direct;
+  if (!Array.isArray(fcsts) || !seg) return null;
+  const segFrom = Number(seg.timeFrom);
+  if (!Number.isFinite(segFrom)) return null;
+  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
+  for (const candidate of prior){
+    const ceiling = extractCeilingFt(candidate.clouds, candidate.vertVis);
+    if (ceiling !== null && ceiling !== undefined) return ceiling;
+  }
+  return null;
+}
 function classifyFlightRules(ceilingFt, visSm){
   const ceil = (ceilingFt === null || ceilingFt === undefined) ? Infinity : ceilingFt;
   const vis = (visSm === null || visSm === undefined) ? Infinity : visSm;
@@ -1627,9 +1662,9 @@ function tafSegmentForTime(fcsts, targetMs){
     if (!segments.length) return null;
     return segments.reduce((worst, seg) => {
       if (!worst) return seg;
-      const ceiling = extractCeilingFt(seg.clouds, seg.vertVis);
+      const ceiling = ceilingWithCarry(ordered, seg);
       const vis = parseVisibilityToSM(seg.visib);
-      const worstCeiling = extractCeilingFt(worst.clouds, worst.vertVis);
+      const worstCeiling = ceilingWithCarry(ordered, worst);
       const worstVis = parseVisibilityToSM(worst.visib);
       const severity = classifyFlightRules(ceiling, vis).code;
       const worstSeverity = classifyFlightRules(worstCeiling, worstVis).code;
@@ -1737,14 +1772,19 @@ async function fetchTafDecoders(icao){
 async function fetchNotamDecoders(icao){
   const decoders = [
     async (code) => {
-      const url = `https://api.flightplandatabase.com/nav/notams/${code}`;
+      const url = `https://notamapi.aviationweather.gov/v1/notams?location=${code}`;
       const payload = await fetchJsonWithCorsFallback(url, 'no-store');
-      return { notams: parseFlightplanDbNotams(payload) };
+      return { notams: parseNotamPayload(payload) };
+    },
+    async (code) => {
+      const url = `https://notamapi.aviationweather.gov/v1/notams?icaoLocation=${code}`;
+      const payload = await fetchJsonWithCorsFallback(url, 'no-store');
+      return { notams: parseNotamPayload(payload) };
     },
     async (code) => {
       const url = `https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${code}`;
       const payload = await fetchTextWithCorsFallback(url, 'no-store');
-      return { notams: parseNotamFaaRawText(payload) };
+      return { notams: parseNotamPayload(payload) };
     }
   ];
   return Promise.all(decoders.map(async (fn, idx) => {
@@ -1790,18 +1830,21 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   let tafIcons = [false, false, false];
   let tafSeg = null;
   let tafProbLabelText = '';
+  let tafFcsts = null;
   if (!forceMetar || !hasMetar){
     try {
       const tafOutcome = tafConsensusForTime(airportData?.tafDecodes || [], targetMs);
       tafSeg = tafOutcome.segment;
       tafIcons = tafOutcome.icons;
       tafProbLabelText = tafOutcome.probLabel || '';
+      tafFcsts = tafOutcome.fcsts || null;
     } catch(err){
       console.warn(err?.message || err);
     }
     if (!tafSeg){
       tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
       tafProbLabelText = tafProbLabel(tafSeg);
+      tafFcsts = airportData?.taf?.fcsts || null;
     }
   } else {
     tafIcons = [null, null, null];
@@ -1813,7 +1856,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const source = useMetar ? 'METAR' : (tafSeg ? 'TAF' : 'METAR');
   const sourceDetail = source === 'TAF' && tafProbLabelText ? `${source} · ${tafProbLabelText}` : source;
   const probFlag = source === 'TAF' ? tafProbLabelText : '';
-  const ceiling = extractCeilingFt(segment?.clouds, segment?.vertVis);
+  const ceiling = source === 'TAF' ? ceilingWithCarry(tafFcsts || [], segment) : extractCeilingFt(segment?.clouds, segment?.vertVis);
   const vis = parseVisibilityToSM(segment?.visib);
   const rules = classifyFlightRules(ceiling, vis);
   const ils = ilsCategory(ceiling, vis);
@@ -1826,7 +1869,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   if (vis !== null) reasonBits.push(`Vis ${formatVisSm(vis)}`);
   if (wx && wx !== 'None reported') reasonBits.push(wx);
   const notamConsensus = airportData.notamConsensus;
-  const notamIcons = notamConsensus?.icons || [false, false, false];
+  const notamIcons = notamConsensus?.icons || Array.from({ length: NOTAM_DECODER_COUNT }, () => false);
   const activeNotams = notamConsensus ? filterActiveNotams(notamConsensus.notams, targetMs) : [];
   const flaggedNotams = activeNotams.filter(n => classifyNotamSeverity(n.text) !== 'green');
   const hasRed = flaggedNotams.some(n => classifyNotamSeverity(n.text) === 'red');
@@ -1939,7 +1982,7 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
         weatherMap[icao].notamConsensus = buildNotamConsensus(weatherMap[icao].notamDecodes);
       } catch(err){
         console.warn(err?.message || err);
-        weatherMap[icao].notamConsensus = { notams: [], icons:[false,false,false] };
+        weatherMap[icao].notamConsensus = { notams: [], icons: Array.from({ length: NOTAM_DECODER_COUNT }, () => false) };
       }
     }
     const now = Date.now();
