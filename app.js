@@ -1369,8 +1369,8 @@ function tafConsensusForTime(decodes, targetMs){
     const seg = tafSegmentForTime(d.taf.fcsts, targetMs);
     if (!seg) return null;
     const ceiling = ceilingWithCarry(d.taf.fcsts, seg);
-    const vis = parseVisibilityToSM(seg.visib);
-    const wxKey = (seg.wxString || '').toUpperCase().replace(/\s+/g,' ').trim();
+    const vis = visibilityWithCarry(d.taf.fcsts, seg);
+    const wxKey = wxWithCarry(d.taf.fcsts, seg).toUpperCase().replace(/\s+/g,' ').trim();
     return {
       seg,
       fcsts: d.taf.fcsts,
@@ -1623,6 +1623,34 @@ function ceilingWithCarry(fcsts, seg){
   }
   return null;
 }
+function visibilityWithCarry(fcsts, seg){
+  const direct = parseVisibilityToSM(seg?.visib);
+  if (direct !== null && direct !== undefined) return direct;
+  if (!Array.isArray(fcsts) || !seg) return null;
+  const segFrom = Number(seg.timeFrom);
+  if (!Number.isFinite(segFrom)) return null;
+  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
+  for (const candidate of prior){
+    const vis = parseVisibilityToSM(candidate.visib);
+    if (vis !== null && vis !== undefined) return vis;
+  }
+  return null;
+}
+function wxWithCarry(fcsts, seg){
+  const direct = (seg?.wxString || (Array.isArray(seg?.weather) ? seg.weather.join(' ') : '')).trim();
+  if (direct) return direct;
+  if (!Array.isArray(fcsts) || !seg) return '';
+  const segFrom = Number(seg.timeFrom);
+  if (!Number.isFinite(segFrom)) return '';
+  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
+  for (const candidate of prior){
+    const wx = (candidate?.wxString || (Array.isArray(candidate?.weather) ? candidate.weather.join(' ') : '')).trim();
+    if (wx) return wx;
+  }
+  return '';
+}
 function classifyFlightRules(ceilingFt, visSm){
   const ceil = (ceilingFt === null || ceilingFt === undefined) ? Infinity : ceilingFt;
   const vis = (visSm === null || visSm === undefined) ? Infinity : visSm;
@@ -1663,9 +1691,9 @@ function tafSegmentForTime(fcsts, targetMs){
     return segments.reduce((worst, seg) => {
       if (!worst) return seg;
       const ceiling = ceilingWithCarry(ordered, seg);
-      const vis = parseVisibilityToSM(seg.visib);
+      const vis = visibilityWithCarry(ordered, seg);
       const worstCeiling = ceilingWithCarry(ordered, worst);
-      const worstVis = parseVisibilityToSM(worst.visib);
+      const worstVis = visibilityWithCarry(ordered, worst);
       const severity = classifyFlightRules(ceiling, vis).code;
       const worstSeverity = classifyFlightRules(worstCeiling, worstVis).code;
       const severityRank = { LIFR: 4, IFR: 3, MVFR: 2, VFR: 1, UNK: 0 };
@@ -1857,10 +1885,13 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const sourceDetail = source === 'TAF' && tafProbLabelText ? `${source} · ${tafProbLabelText}` : source;
   const probFlag = source === 'TAF' ? tafProbLabelText : '';
   const ceiling = source === 'TAF' ? ceilingWithCarry(tafFcsts || [], segment) : extractCeilingFt(segment?.clouds, segment?.vertVis);
-  const vis = parseVisibilityToSM(segment?.visib);
+  const vis = source === 'TAF' ? visibilityWithCarry(tafFcsts || [], segment) : parseVisibilityToSM(segment?.visib);
   const rules = classifyFlightRules(ceiling, vis);
   const ils = ilsCategory(ceiling, vis);
-  const wx = segment?.wxString || (Array.isArray(segment?.weather) ? segment.weather.join(' ') : '') || 'None reported';
+  const wxRaw = source === 'TAF'
+    ? wxWithCarry(tafFcsts || [], segment)
+    : (segment?.wxString || (Array.isArray(segment?.weather) ? segment.weather.join(' ') : ''));
+  const wx = wxRaw ? wxRaw : 'None reported';
   const windowText = source === 'TAF' && tafSeg
     ? `${formatZulu(tafSeg.timeFrom * 1000)} → ${formatZulu(tafSeg.timeTo * 1000)}`
     : (metarMs ? `Obs ${formatZulu(metarMs)}` : 'Timing unavailable');
