@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://aviationweather.gov https://raw.githubusercontent.com https://api.allorigins.win https://external-api.faa.gov https://api.flightplandatabase.com https://notams.aim.faa.gov;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://aviationweather.gov https://raw.githubusercontent.com https://api.allorigins.win https://api.flightplandatabase.com https://notams.aim.faa.gov;">
   <meta name="theme-color" content="#0a84ff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -488,20 +488,6 @@
                   </div>
                 </div>
               </div>
-              <details class="drawer">
-                <summary>NOTAM API credentials (optional)</summary>
-                <div class="row" style="margin-top:10px">
-                  <div>
-                    <label>FAA NOTAM Client ID</label>
-                    <input id="modern-notam-client-id" type="text" inputmode="text" autocapitalize="off" autocomplete="off" data-notam-key="faaNotamClientId" placeholder="Client ID">
-                  </div>
-                  <div>
-                    <label>FAA NOTAM Client Secret</label>
-                    <input id="modern-notam-client-secret" type="password" inputmode="text" autocapitalize="off" autocomplete="off" data-notam-key="faaNotamClientSecret" placeholder="Client secret">
-                  </div>
-                </div>
-                <div class="muted-note">Stored locally in your browser to enable FAA NOTAM API decoding.</div>
-              </details>
               <div class="modern-cta"><button id="modern-wx-run" class="btn-primary" type="button">Analyze weather</button></div>
               <div class="muted-note" id="modern-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
             </div>
@@ -783,20 +769,6 @@
           <input id="wx-arr-hrs" type="number" min="0" max="72" step="0.5" value="6">
         </div>
       </div>
-      <details class="drawer">
-        <summary>NOTAM API credentials (optional)</summary>
-        <div class="row" style="margin-top:10px">
-          <div>
-            <label>FAA NOTAM Client ID</label>
-            <input id="notam-client-id" type="text" inputmode="text" autocapitalize="off" autocomplete="off" data-notam-key="faaNotamClientId" placeholder="Client ID">
-          </div>
-          <div>
-            <label>FAA NOTAM Client Secret</label>
-            <input id="notam-client-secret" type="password" inputmode="text" autocapitalize="off" autocomplete="off" data-notam-key="faaNotamClientSecret" placeholder="Client secret">
-          </div>
-        </div>
-        <div class="muted-note">Stored locally in your browser to enable FAA NOTAM API decoding.</div>
-      </details>
       <div class="row" style="margin-top:10px">
         <button id="wx-run" class="btn" type="button">Analyze weather</button>
       </div>
