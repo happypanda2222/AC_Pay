@@ -67,6 +67,8 @@ const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
+const WEATHER_MAX_ATTEMPTS = 5;
+const WEATHER_RETRY_DELAY_MS = 500;
 const METAR_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`,
   (icao) => `https://aviationweather.gov/cgi-bin/data/metar.php?format=json&ids=${icao}`
@@ -1392,12 +1394,17 @@ function tafSegmentForTime(fcsts, targetMs){
   const ordered = [...fcsts].sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
   const exact = ordered.find(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
   if (exact) return exact;
+  const prior = [...ordered].reverse().find(f => f.timeFrom * 1000 <= targetMs);
+  if (prior) return prior;
   const future = ordered.find(f => f.timeFrom * 1000 > targetMs);
   return future || ordered[ordered.length - 1];
 }
 function formatZulu(ms){
   const d = new Date(ms);
   return d.toISOString().slice(0,16).replace('T',' ') + 'Z';
+}
+function sleep(ms){
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 function pickFirstWeatherRecord(payload, arrayKeys){
   if (!payload) return null;
@@ -1595,12 +1602,18 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl){
     notamEl.innerHTML = list || '<div class="muted-note">No flagged NOTAMs in the selected windows.</div>';
   }
 }
-async function runWeatherWorkflow({ depId, arrId, depHrsId, arrHrsId, outId, rawId, notamId }){
+async function runWeatherWorkflow(opts){
+  return runWeatherWorkflowAttempt(opts, 1);
+}
+async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, outId, rawId, notamId }, attempt){
   const outEl = document.getElementById(outId);
   const rawEl = document.getElementById(rawId);
   const notamEl = document.getElementById(notamId);
   const rawDetails = rawEl?.closest('details');
-  if (outEl) outEl.innerHTML = '<div class="muted-note">Fetching METAR/TAF and decoding…</div>';
+  const attemptMsg = attempt === 1
+    ? 'Fetching METAR/TAF and decoding…'
+    : `Retrying weather fetch (attempt ${attempt}/${WEATHER_MAX_ATTEMPTS})…`;
+  if (outEl) outEl.innerHTML = `<div class="muted-note">${escapeHtml(attemptMsg)}</div>`;
   if (rawEl) rawEl.innerHTML = '';
   if (notamEl) notamEl.innerHTML = '';
   if (rawDetails) rawDetails.open = false;
@@ -1631,7 +1644,14 @@ async function runWeatherWorkflow({ depId, arrId, depHrsId, arrHrsId, outId, raw
     renderWeatherResults(outEl, rawEl, assessments, uniqueIcao.map(c => weatherMap[c]), notamEl);
   } catch(err){
     console.error(err);
-    if (outEl) outEl.innerHTML = `<div class="wx-error">${escapeHtml(err.message || 'Weather lookup failed')}</div>`;
+    const message = err.message || 'Weather lookup failed';
+    const shouldRetry = /no\s+(metar\/)?taf/i.test(message);
+    if (shouldRetry && attempt < WEATHER_MAX_ATTEMPTS){
+      if (outEl) outEl.innerHTML = `<div class="muted-note">Attempt ${attempt} failed: ${escapeHtml(message)}. Retrying (${attempt + 1}/${WEATHER_MAX_ATTEMPTS})…</div>`;
+      await sleep(WEATHER_RETRY_DELAY_MS);
+      return runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, outId, rawId, notamId }, attempt + 1);
+    }
+    if (outEl) outEl.innerHTML = `<div class="wx-error">Attempt ${attempt}: ${escapeHtml(message)}</div>`;
     if (rawEl) rawEl.innerHTML = '';
     if (notamEl) notamEl.innerHTML = '';
   }
