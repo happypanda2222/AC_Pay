@@ -1026,34 +1026,6 @@ function switchUIMode(mode){
 function escapeHtml(str=''){
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-function getStoredNotamCredential(key){
-  return (localStorage.getItem(key) || '').trim();
-}
-function syncNotamCredentialInputs(){
-  const fields = Array.from(document.querySelectorAll('[data-notam-key]'));
-  if (!fields.length) return;
-  const keys = Array.from(new Set(fields.map(field => field.dataset.notamKey).filter(Boolean)));
-  const applyFromStorage = (key) => {
-    const value = getStoredNotamCredential(key);
-    fields.filter(field => field.dataset.notamKey === key).forEach(field => {
-      if (field.value !== value) field.value = value;
-    });
-  };
-  keys.forEach(applyFromStorage);
-  fields.forEach(field => {
-    field.addEventListener('input', () => {
-      const key = field.dataset.notamKey;
-      if (!key) return;
-      const value = field.value.trim();
-      if (value) {
-        localStorage.setItem(key, value);
-      } else {
-        localStorage.removeItem(key);
-      }
-      applyFromStorage(key);
-    });
-  });
-}
 async function fetchJsonWithCorsFallback(url, cache='no-store'){
   const attempt = async (target, note) => {
     const resp = await fetch(target, { cache, mode:'cors' });
@@ -1765,21 +1737,6 @@ async function fetchTafDecoders(icao){
 async function fetchNotamDecoders(icao){
   const decoders = [
     async (code) => {
-      const clientId = getStoredNotamCredential('faaNotamClientId');
-      const clientSecret = getStoredNotamCredential('faaNotamClientSecret');
-      if (!clientId || !clientSecret){
-        return { notams: [], skipped: true };
-      }
-      const params = new URLSearchParams({
-        location: code,
-        client_id: clientId,
-        client_secret: clientSecret
-      });
-      const url = `https://external-api.faa.gov/notamapi/v1/notams?${params.toString()}`;
-      const payload = await fetchJsonWithCorsFallback(url, 'no-store');
-      return { notams: parseNotamList(payload) };
-    },
-    async (code) => {
       const url = `https://api.flightplandatabase.com/nav/notams/${code}`;
       const payload = await fetchJsonWithCorsFallback(url, 'no-store');
       return { notams: parseFlightplanDbNotams(payload) };
@@ -2453,7 +2410,6 @@ function startUtcClock(ids) {
 function init(){
   updateVersionBadgeFromSW();
   startUtcClock(['legacy-utc-clock', 'modern-utc-clock']);
-  syncNotamCredentialInputs();
   switchUIMode('modern');
   // Tabs
   document.getElementById('tabbtn-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('pay'); });
