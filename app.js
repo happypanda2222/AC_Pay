@@ -1195,6 +1195,7 @@ function parseTafRawForecasts(rawTAF){
       timeTo: Math.floor(endMs / 1000),
       visib: visToken ? parseVisibilityToSM(visToken) : null,
       clouds,
+      vertVis: null,
       wxString,
       changeIndicator
     };
@@ -1255,7 +1256,18 @@ function parseTafRawForecasts(rawTAF){
   }
   const finalBase = buildSegment(baseTokens, baseStartMs, validToMs, baseIndicator);
   if (finalBase) baseSegments.push(finalBase);
-  return [...baseSegments, ...overlaySegments].filter(Boolean);
+  const overlaysWithBase = overlaySegments.map(seg => {
+    if (!seg) return null;
+    const base = baseSegments.find(b => seg.timeFrom < b.timeTo && seg.timeTo > b.timeFrom);
+    if (!base) return seg;
+    return {
+      ...seg,
+      visib: seg.visib ?? base.visib ?? null,
+      vertVis: seg.vertVis ?? base.vertVis ?? null,
+      clouds: (Array.isArray(seg.clouds) && seg.clouds.length) ? seg.clouds : (base.clouds || [])
+    };
+  }).filter(Boolean);
+  return [...baseSegments, ...overlaysWithBase].filter(Boolean);
 }
 function normalizeTafPayload(raw, icao){
   if (!raw) return null;
@@ -1330,6 +1342,30 @@ function majorityVote(items, keyFn){
   return winner;
 }
 function tafConsensusForTime(decodes, targetMs){
+  const selectWorstSegment = (segments) => {
+    if (!segments.length) return null;
+    return segments.reduce((worst, seg) => {
+      if (!seg) return worst;
+      if (!worst) return seg;
+      const ceiling = extractCeilingFt(seg.clouds, seg.vertVis);
+      const vis = parseVisibilityToSM(seg.visib);
+      const worstCeiling = extractCeilingFt(worst.clouds, worst.vertVis);
+      const worstVis = parseVisibilityToSM(worst.visib);
+      const severity = classifyFlightRules(ceiling, vis).code;
+      const worstSeverity = classifyFlightRules(worstCeiling, worstVis).code;
+      const severityRank = { LIFR: 4, IFR: 3, MVFR: 2, VFR: 1, UNK: 0 };
+      const score = severityRank[severity] ?? 0;
+      const worstScore = severityRank[worstSeverity] ?? 0;
+      if (score !== worstScore) return score > worstScore ? seg : worst;
+      const ceilVal = ceiling ?? Infinity;
+      const worstCeilVal = worstCeiling ?? Infinity;
+      if (ceilVal !== worstCeilVal) return ceilVal < worstCeilVal ? seg : worst;
+      const visVal = vis ?? Infinity;
+      const worstVisVal = worstVis ?? Infinity;
+      if (visVal !== worstVisVal) return visVal < worstVisVal ? seg : worst;
+      return seg;
+    }, null);
+  };
   const segments = decodes.map(d => {
     if (!d || !d.taf) return null;
     const seg = tafSegmentForTime(d.taf.fcsts, targetMs);
@@ -1345,15 +1381,26 @@ function tafConsensusForTime(decodes, targetMs){
   const icons = vote
     ? segments.map((s, idx) => vote.indexes.includes(idx))
     : segments.map(s => Boolean(s));
-  const chosenIdx = vote ? vote.indexes[0] : segments.findIndex(Boolean);
-  const chosen = (chosenIdx !== null && chosenIdx !== undefined && chosenIdx >= 0)
-    ? segments[chosenIdx]?.seg
-    : null;
-  return { segment: chosen, icons, probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '' };
+  if (vote){
+    const chosenIdx = vote.indexes[0];
+    const chosen = chosenIdx >= 0 ? segments[chosenIdx]?.seg : null;
+    return { segment: chosen, icons, probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '' };
+  }
+  const available = segments.map(s => s?.seg).filter(Boolean);
+  const chosen = selectWorstSegment(available);
+  if (!chosen) return { segment: null, icons, probLabel: '' };
+  const chosenKey = segments.find(s => s?.seg === chosen)?.key;
+  const matchingIdx = segments.map((s, idx) => (s?.key === chosenKey ? idx : null)).filter(idx => idx !== null);
+  const fallbackIcons = matchingIdx.length ? segments.map((_, idx) => matchingIdx.includes(idx)) : icons;
+  const chosenProb = segments.find(s => s?.seg === chosen)?.probLabel || '';
+  return { segment: chosen, icons: fallbackIcons, probLabel: chosenProb };
 }
 function renderDecoderIcons(flags){
   if (!Array.isArray(flags)) return '';
-  return `<div class="decoder-row">${flags.map(ok => `<span class="${ok ? 'decoder-ok' : 'decoder-bad'}">${ok ? '✔' : '✖'}</span>`).join('')}</div>`;
+  return `<div class="decoder-row">${flags.map(ok => {
+    if (ok === null) return `<span class="decoder-na">—</span>`;
+    return `<span class="${ok ? 'decoder-ok' : 'decoder-bad'}">${ok ? '✔' : '✖'}</span>`;
+  }).join('')}</div>`;
 }
 function parseNotamList(raw){
   if (!raw) return [];
@@ -1426,22 +1473,23 @@ function filterActiveNotams(notams, targetMs){
 }
 function buildNotamConsensus(decodes){
   const pools = (decodes || []).map(d => (d?.notams || []).filter(n => n && n.text));
+  const disabled = (decodes || []).map(d => Boolean(d?.skipped));
   const signatures = pools.map(list => (list.length ? JSON.stringify(list.map(n => n.text).sort()) : null));
   const vote = majorityVote(signatures, s => s);
   if (vote){
     const winnerIdx = vote.indexes[0];
     const notams = pools[winnerIdx] || [];
-    const icons = signatures.map((s, idx) => vote.indexes.includes(idx));
+    const icons = signatures.map((s, idx) => (disabled[idx] ? null : vote.indexes.includes(idx)));
     return { notams, icons };
   }
   const candidates = pools
     .map((list, idx) => ({ list, idx }))
     .filter(entry => entry.list.length);
   if (!candidates.length){
-    return { notams: [], icons: pools.map(() => false) };
+    return { notams: [], icons: pools.map((_, idx) => (disabled[idx] ? null : false)) };
   }
   const winner = candidates.reduce((best, entry) => entry.list.length > best.list.length ? entry : best, candidates[0]);
-  const icons = pools.map((_, idx) => idx === winner.idx);
+  const icons = pools.map((_, idx) => (disabled[idx] ? null : idx === winner.idx));
   return { notams: winner.list, icons };
 }
 async function loadAirportLookup(){
@@ -1647,10 +1695,9 @@ async function fetchTafDecoderAviationWeather(icao){
   return { taf: normalizeTafPayload(record, icao) };
 }
 async function fetchTafDecoderNoaaText(icao){
-  const url = TAF_TEXT_FALLBACK(icao);
-  const txt = await fetchTextWithCorsFallback(url, 'no-store');
-  const taf = parseTafText(txt, icao);
-  if (taf) taf.name = `${icao} (NOAA text feed)`;
+  const url = `${WEATHER_API_ROOT}/taf?format=raw&ids=${icao}`;
+  const raw = await fetchTextWithCorsFallback(url, 'no-store');
+  const taf = buildTafFromRaw(raw, icao, 'AviationWeather raw');
   return { taf };
 }
 async function fetchTafDecoderNws(icao){
@@ -1689,7 +1736,17 @@ async function fetchTafDecoders(icao){
 async function fetchNotamDecoders(icao){
   const decoders = [
     async (code) => {
-      const url = `https://www.aviationweather.gov/api/data/notam?format=json&ids=${code}`;
+      const clientId = localStorage.getItem('faaNotamClientId') || '';
+      const clientSecret = localStorage.getItem('faaNotamClientSecret') || '';
+      if (!clientId || !clientSecret){
+        return { notams: [], skipped: true };
+      }
+      const params = new URLSearchParams({
+        location: code,
+        client_id: clientId,
+        client_secret: clientSecret
+      });
+      const url = `https://external-api.faa.gov/notamapi/v1/notams?${params.toString()}`;
       const payload = await fetchJsonWithCorsFallback(url, 'no-store');
       return { notams: parseNotamList(payload) };
     },
