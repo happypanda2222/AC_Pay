@@ -1609,6 +1609,14 @@ function extractCeilingFt(clouds, vertVis){
   }
   return ceil;
 }
+function hasSkyClear(segment){
+  const clouds = segment?.clouds;
+  if (Array.isArray(clouds)){
+    if (clouds.some(c => String(c?.cover || '').toUpperCase() === 'SKC')) return true;
+  }
+  const raw = segment?.rawOb || segment?.raw_text || segment?.rawTAF || segment?.raw || '';
+  return /\bSKC\b/.test(String(raw).toUpperCase());
+}
 function ceilingWithCarry(fcsts, seg){
   const direct = extractCeilingFt(seg?.clouds, seg?.vertVis);
   if (direct !== null && direct !== undefined) return direct;
@@ -1888,6 +1896,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const vis = source === 'TAF' ? visibilityWithCarry(tafFcsts || [], segment) : parseVisibilityToSM(segment?.visib);
   const rules = classifyFlightRules(ceiling, vis);
   const ils = ilsCategory(ceiling, vis);
+  const skyClear = ceiling === null && hasSkyClear(segment);
   const wxRaw = source === 'TAF'
     ? wxWithCarry(tafFcsts || [], segment)
     : (segment?.wxString || (Array.isArray(segment?.weather) ? segment.weather.join(' ') : ''));
@@ -1897,6 +1906,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     : (metarMs ? `Obs ${formatZulu(metarMs)}` : 'Timing unavailable');
   const reasonBits = [];
   if (ceiling !== null) reasonBits.push(`Ceiling ${ceiling} ft`);
+  if (ceiling === null && skyClear) reasonBits.push('SKC');
   if (vis !== null) reasonBits.push(`Vis ${formatVisSm(vis)}`);
   if (wx && wx !== 'None reported') reasonBits.push(wx);
   const notamConsensus = airportData.notamConsensus;
@@ -1905,6 +1915,8 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const flaggedNotams = activeNotams.filter(n => classifyNotamSeverity(n.text) !== 'green');
   const hasRed = flaggedNotams.some(n => classifyNotamSeverity(n.text) === 'red');
   const notamLabel = hasRed ? 'Critical NOTAMs in window' : (flaggedNotams.length ? 'Cautionary NOTAMs in window' : 'No critical NOTAMs');
+  const notamFlag = hasRed ? 'red' : (flaggedNotams.length ? 'yellow' : 'green');
+  const notamFlagLabel = hasRed ? 'NOTAM Critical' : (flaggedNotams.length ? 'NOTAM Caution' : 'NOTAM Clear');
   return {
     label,
     icao: airportData.icao,
@@ -1918,25 +1930,32 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     visibility: vis,
     rules,
     ils,
+    skyClear,
     wx,
     probFlag,
     tafIcons,
     notamIcons,
     notamLabel,
+    notamFlag,
+    notamFlagLabel,
+    allNotams: activeNotams,
     notams: flaggedNotams,
     summary: reasonBits.join(' · ') || 'No significant weather decoded'
   };
 }
-function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl){
+function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl, allNotamEl){
   if (!outEl) return;
   if (!assessments || !assessments.length){
     outEl.innerHTML = '<div class="wx-error">No weather data available.</div>';
     if (rawEl) rawEl.innerHTML = '';
     if (notamEl) notamEl.innerHTML = '';
+    if (allNotamEl) allNotamEl.innerHTML = '';
     return;
   }
   const cards = assessments.map(a => {
-    const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined) ? `${a.ceiling} ft` : 'Not reported';
+    const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined)
+      ? `${a.ceiling} ft`
+      : (a.skyClear ? 'SKC' : 'Not reported');
     const visTxt = formatVisSm(a.visibility);
     return `<div class="weather-card">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
@@ -1949,7 +1968,10 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl){
             ${a.probFlag ? `<span class="prob-flag">${escapeHtml(a.probFlag)}</span>` : ''}
           </div>
         </div>
-        <span class="status-badge ${a.rules.className}">${escapeHtml(a.rules.label)}</span>
+        <div class="status-row">
+          <span class="status-badge ${a.rules.className}">${escapeHtml(a.rules.label)}</span>
+          <span class="status-badge notam-badge notam-${escapeHtml(a.notamFlag)}">${escapeHtml(a.notamFlagLabel)}</span>
+        </div>
       </div>
       <div class="wx-metric">
         <div class="wx-box"><div class="label">Ceiling</div><div class="value">${escapeHtml(ceilTxt)}</div></div>
@@ -1981,22 +2003,36 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl){
     }).filter(Boolean).join('');
     notamEl.innerHTML = list || '<div class="muted-note">No flagged NOTAMs in the selected windows.</div>';
   }
+  if (allNotamEl){
+    const list = assessments.map(a => {
+      if (!a.allNotams.length) return '';
+      const items = a.allNotams.map(n => `<li><strong>${classifyNotamSeverity(n.text).toUpperCase()}</strong>: ${escapeHtml(n.text)}</li>`).join('');
+      return `<div class="wx-box"><div class="label">${escapeHtml(a.label)} (${escapeHtml(a.icao)})</div><ul>${items}</ul></div>`;
+    }).filter(Boolean).join('');
+    allNotamEl.innerHTML = list || '<div class="muted-note">No active NOTAMs in the selected windows.</div>';
+  }
 }
 async function runWeatherWorkflow(opts){
   return runWeatherWorkflowAttempt(opts, 1);
 }
-async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, outId, rawId, notamId }, attempt){
+async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, outId, rawId, notamId, notamAllId }, attempt){
   const outEl = document.getElementById(outId);
   const rawEl = document.getElementById(rawId);
   const notamEl = document.getElementById(notamId);
+  const notamAllEl = document.getElementById(notamAllId);
   const rawDetails = rawEl?.closest('details');
+  const notamDetails = notamEl?.closest('details');
+  const notamAllDetails = notamAllEl?.closest('details');
   const attemptMsg = attempt === 1
     ? 'Fetching METAR/TAF and decoding…'
     : `Retrying weather fetch (attempt ${attempt}/${WEATHER_MAX_ATTEMPTS})…`;
   if (outEl) outEl.innerHTML = `<div class="muted-note">${escapeHtml(attemptMsg)}</div>`;
   if (rawEl) rawEl.innerHTML = '';
   if (notamEl) notamEl.innerHTML = '';
+  if (notamAllEl) notamAllEl.innerHTML = '';
   if (rawDetails) rawDetails.open = false;
+  if (notamDetails) notamDetails.open = false;
+  if (notamAllDetails) notamAllDetails.open = false;
   try {
     const depCode = document.getElementById(depId)?.value || '';
     const arrCode = document.getElementById(arrId)?.value || '';
@@ -2026,7 +2062,7 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
       ),
       summarizeWeatherWindow(weatherMap[arrIcao], now + arrHrs * 3600000, 'Arrival field')
     ];
-    renderWeatherResults(outEl, rawEl, assessments, uniqueIcao.map(c => weatherMap[c]), notamEl);
+    renderWeatherResults(outEl, rawEl, assessments, uniqueIcao.map(c => weatherMap[c]), notamEl, notamAllEl);
   } catch(err){
     console.error(err);
     const message = err.message || 'Weather lookup failed';
@@ -2034,11 +2070,12 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
     if (shouldRetry && attempt < WEATHER_MAX_ATTEMPTS){
       if (outEl) outEl.innerHTML = `<div class="muted-note">Attempt ${attempt} failed: ${escapeHtml(message)}. Retrying (${attempt + 1}/${WEATHER_MAX_ATTEMPTS})…</div>`;
       await sleep(WEATHER_RETRY_DELAY_MS);
-      return runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, outId, rawId, notamId }, attempt + 1);
+      return runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, outId, rawId, notamId, notamAllId }, attempt + 1);
     }
     if (outEl) outEl.innerHTML = `<div class="wx-error">Attempt ${attempt}: ${escapeHtml(message)}</div>`;
     if (rawEl) rawEl.innerHTML = '';
     if (notamEl) notamEl.innerHTML = '';
+    if (notamAllEl) notamAllEl.innerHTML = '';
   }
 }
 
@@ -2532,8 +2569,8 @@ function init(){
   document.getElementById('modern-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
   document.getElementById('modern-ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
   document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
-  document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body', notamId:'notam-raw-body' }); });
-  document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body', notamId:'modern-notam-raw-body' }); });
+  document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body', notamId:'notam-raw-body', notamAllId:'notam-all-body' }); });
+  document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body', notamId:'modern-notam-raw-body', notamAllId:'modern-notam-all-body' }); });
   // Tab defaults
   setLegacyPrimaryTab('pay');
   setLegacySubTab('annual');
