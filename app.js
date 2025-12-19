@@ -724,7 +724,9 @@ function computeMonthly(params){
   // Step on Jan1 if tie enabled; else use provided stepInput
   const step = params.tieOn ? stepOnJan1(params.stepInput, true, year) : clampStep(params.stepInput);
   const rate = rateFor(seat, ac, year, step, !!params.xlrOn);
-  const credits = Math.max(0, +params.credits);
+  const creditHours = Number.isFinite(+params.creditH) ? +params.creditH : +params.credits;
+  const creditMinutes = Number.isFinite(+params.creditM) ? +params.creditM : 0;
+  const credits = Math.max(0, (+creditHours) + Math.max(0, Math.min(59, +creditMinutes)) / 60);
   const voCredits = Math.max(0, +params.voCredits || 0);
   // Regular pay hours (<=85), overtime beyond 85, and VO credits (all double time)
   const regHours = Math.min(85, credits);
@@ -1344,6 +1346,33 @@ function majorityVote(items, keyFn){
   return winner;
 }
 function tafConsensusForTime(decodes, targetMs){
+  const normalizeWxKey = (wx) => String(wx || '')
+    .toUpperCase()
+    .replace(/\bNSW\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const normalizeCeiling = (ceiling) => (
+    ceiling === null || ceiling === undefined ? null : Math.round(ceiling / 100) * 100
+  );
+  const normalizeVis = (vis) => (
+    vis === null || vis === undefined ? null : Math.round(vis * 2) / 2
+  );
+  const segmentsClose = (a, b) => {
+    if (!a || !b) return false;
+    const severityA = classifyFlightRules(a.ceiling, a.vis).code;
+    const severityB = classifyFlightRules(b.ceiling, b.vis).code;
+    if (severityA !== severityB) return false;
+    const ceilingClose = a.ceiling === null || b.ceiling === null
+      ? a.ceiling === b.ceiling
+      : Math.abs(a.ceiling - b.ceiling) <= 300;
+    const visClose = a.vis === null || b.vis === null
+      ? a.vis === b.vis
+      : Math.abs(a.vis - b.vis) <= 0.5;
+    const wxA = normalizeWxKey(a.wxKey);
+    const wxB = normalizeWxKey(b.wxKey);
+    const wxClose = !wxA || !wxB || wxA === wxB;
+    return ceilingClose && visClose && wxClose;
+  };
   const selectWorstSegment = (entries) => {
     if (!entries.length) return null;
     return entries.reduce((worst, entry) => {
@@ -1377,21 +1406,21 @@ function tafConsensusForTime(decodes, targetMs){
       ceiling,
       vis,
       key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}`,
+      normalizedKey: `${normalizeCeiling(ceiling) ?? 'X'}|${normalizeVis(vis) ?? 'X'}|${normalizeWxKey(wxKey) || 'NONE'}`,
+      wxKey,
       probLabel: tafProbLabel(seg)
     };
   });
   const anySegments = segments.some(Boolean);
   if (!anySegments) return { segment: null, icons: decodes.map(d => Boolean(d?.taf)), probLabel: '', fcsts: null };
-  const vote = majorityVote(segments, s => s?.key);
-  const icons = vote
-    ? segments.map((s, idx) => vote.indexes.includes(idx))
-    : segments.map(s => Boolean(s));
+  const vote = majorityVote(segments, s => s?.normalizedKey ?? s?.key);
+  const icons = segments.map(s => Boolean(s));
   if (vote){
     const chosenIdx = vote.indexes[0];
     const chosenEntry = chosenIdx >= 0 ? segments[chosenIdx] : null;
     return {
       segment: chosenEntry?.seg || null,
-      icons,
+      icons: segments.map(s => (s && chosenEntry ? segmentsClose(s, chosenEntry) : false)),
       probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '',
       fcsts: chosenEntry?.fcsts || null
     };
@@ -1399,9 +1428,7 @@ function tafConsensusForTime(decodes, targetMs){
   const available = segments.filter(Boolean);
   const chosen = selectWorstSegment(available);
   if (!chosen) return { segment: null, icons, probLabel: '', fcsts: null };
-  const chosenKey = segments.find(s => s?.seg === chosen.seg)?.key;
-  const matchingIdx = segments.map((s, idx) => (s?.key === chosenKey ? idx : null)).filter(idx => idx !== null);
-  const fallbackIcons = matchingIdx.length ? segments.map((_, idx) => matchingIdx.includes(idx)) : icons;
+  const fallbackIcons = segments.map(s => (s ? segmentsClose(s, chosen) : false));
   const chosenProb = segments.find(s => s?.seg === chosen.seg)?.probLabel || '';
   return { segment: chosen.seg, icons: fallbackIcons, probLabel: chosenProb, fcsts: chosen.fcsts || null };
 }
@@ -1466,11 +1493,14 @@ function parseNotamPayload(payload){
       : Array.isArray(payload.items) ? payload.items
       : Array.isArray(payload.results) ? payload.results
       : Array.isArray(payload.data) ? payload.data
+      : Array.isArray(payload.data?.notams) ? payload.data.notams
+      : Array.isArray(payload.data?.results) ? payload.data.results
       : Array.isArray(payload.notamList) ? payload.notamList
       : Array.isArray(payload.notamListItems) ? payload.notamListItems
       : Array.isArray(payload.notam) ? payload.notam
       : Array.isArray(payload.value) ? payload.value
       : Array.isArray(payload.features) ? payload.features.map(f => f?.properties || f)
+      : Array.isArray(payload['@graph']) ? payload['@graph']
       : [];
     if (list.length) return list.map(normalizeNotamRecord).filter(Boolean);
     if (typeof payload.data === 'string') return parseNotamTextBlocks(payload.data);
@@ -1818,23 +1848,24 @@ async function fetchTafDecoders(icao){
     }
   }));
 }
+async function fetchNotamDecoderWithFallback(url){
+  try {
+    const payload = await fetchJsonWithCorsFallback(url, 'no-store');
+    return { notams: parseNotamPayload(payload), ok: true };
+  } catch(err){
+    try {
+      const text = await fetchTextWithCorsFallback(url, 'no-store');
+      return { notams: parseNotamPayload(text), ok: true };
+    } catch(err2){
+      throw err2;
+    }
+  }
+}
 async function fetchNotamDecoders(icao){
   const decoders = [
-    async (code) => {
-      const url = `https://notamapi.aviationweather.gov/v1/notams?location=${code}`;
-      const payload = await fetchJsonWithCorsFallback(url, 'no-store');
-      return { notams: parseNotamPayload(payload), ok: true };
-    },
-    async (code) => {
-      const url = `https://notamapi.aviationweather.gov/v1/notams?icaoLocation=${code}`;
-      const payload = await fetchJsonWithCorsFallback(url, 'no-store');
-      return { notams: parseNotamPayload(payload), ok: true };
-    },
-    async (code) => {
-      const url = `https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${code}`;
-      const payload = await fetchTextWithCorsFallback(url, 'no-store');
-      return { notams: parseNotamPayload(payload), ok: true };
-    }
+    async (code) => fetchNotamDecoderWithFallback(`https://notamapi.aviationweather.gov/v1/notams?location=${code}`),
+    async (code) => fetchNotamDecoderWithFallback(`https://notamapi.aviationweather.gov/v1/notams?icaoLocation=${code}`),
+    async (code) => fetchNotamDecoderWithFallback(`https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${code}`)
   ];
   return Promise.all(decoders.map(async (fn, idx) => {
     try {
@@ -2112,7 +2143,7 @@ const INFO_COPY = {
   },
   monthly: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
-    credits: 'Entered monthly credit hours paid at regular rate up to 85 hours.',
+    credits: 'Monthly credit hours plus minutes (converted to hours) paid at regular rate up to 85 hours.',
     voCredits: 'VO credit hours that are always paid at double time.',
     gross: 'Monthly gross combining regular hours at the hourly rate, overtime beyond 85 hours at double time and VO credits at double time.',
     net: 'Monthly take-home after tax, CPP/QPP, EI, health, union dues, pension and ESOP, plus the ESOP match and TAFB.',
@@ -2390,7 +2421,8 @@ function calcMonthly(){
       tieOn: document.getElementById('mon-tie').checked,
       xlrOn: document.getElementById('mon-xlr').checked,
       province: document.getElementById('mon-prov').value,
-      credits: +document.getElementById('mon-hrs').value,
+      creditH: +document.getElementById('mon-hrs').value,
+      creditM: +document.getElementById('mon-mins').value,
       voCredits: +document.getElementById('mon-vo').value,
       tafb: +document.getElementById('mon-tafb').value,
       esopPct: +document.getElementById('mon-esop').value,
@@ -2438,7 +2470,8 @@ function calcMonthlyModern(){
       tieOn: document.getElementById('modern-mon-tie').checked,
       xlrOn: document.getElementById('modern-mon-xlr').checked,
       province: document.getElementById('modern-mon-prov').value,
-      credits: +document.getElementById('modern-mon-hrs').value,
+      creditH: +document.getElementById('modern-mon-hrs').value,
+      creditM: +document.getElementById('modern-mon-mins').value,
       voCredits: +document.getElementById('modern-mon-vo').value,
       tafb: +document.getElementById('modern-mon-tafb').value,
       esopPct: +document.getElementById('modern-mon-esop').value,
