@@ -1421,8 +1421,9 @@ function stripNotamHtml(raw){
 }
 function normalizeNotamRecord(record){
   if (!record) return null;
+  if (typeof record === 'string') return { text: record, start: null, end: null };
   const text = record.text || record.message || record.notam || record.notamText || record.raw_text || record.notam_text
-    || record.raw || record.description || record.subject || record.body || '';
+    || record.raw || record.rawText || record.fullText || record.description || record.subject || record.body || record.all || '';
   if (!text) return null;
   const start = Date.parse(record.start_time || record.effective || record.validFrom || record.startDate
     || record.start || record.startTime || record.effectiveStart || record.from) || null;
@@ -1472,6 +1473,7 @@ function parseNotamPayload(payload){
       : Array.isArray(payload.features) ? payload.features.map(f => f?.properties || f)
       : [];
     if (list.length) return list.map(normalizeNotamRecord).filter(Boolean);
+    if (typeof payload.data === 'string') return parseNotamTextBlocks(payload.data);
     if (typeof payload.raw === 'string') return parseNotamTextBlocks(payload.raw);
     if (typeof payload.rawText === 'string') return parseNotamTextBlocks(payload.rawText);
     if (typeof payload.text === 'string') return parseNotamTextBlocks(payload.text);
@@ -1506,22 +1508,23 @@ function filterActiveNotams(notams, targetMs){
 function buildNotamConsensus(decodes){
   const pools = (decodes || []).map(d => (d?.notams || []).filter(n => n && n.text));
   const disabled = (decodes || []).map(d => Boolean(d?.skipped));
+  const okFlags = (decodes || []).map(d => d?.ok !== false);
   const signatures = pools.map(list => (list.length ? JSON.stringify(list.map(n => n.text).sort()) : null));
   const vote = majorityVote(signatures, s => s);
   if (vote){
     const winnerIdx = vote.indexes[0];
     const notams = pools[winnerIdx] || [];
-    const icons = signatures.map((s, idx) => (disabled[idx] ? null : vote.indexes.includes(idx)));
+    const icons = signatures.map((s, idx) => (disabled[idx] ? null : (okFlags[idx] && vote.indexes.includes(idx))));
     return { notams, icons };
   }
   const candidates = pools
     .map((list, idx) => ({ list, idx }))
     .filter(entry => entry.list.length);
   if (!candidates.length){
-    return { notams: [], icons: pools.map((_, idx) => (disabled[idx] ? null : false)) };
+    return { notams: [], icons: pools.map((_, idx) => (disabled[idx] ? null : okFlags[idx])) };
   }
   const winner = candidates.reduce((best, entry) => entry.list.length > best.list.length ? entry : best, candidates[0]);
-  const icons = pools.map((_, idx) => (disabled[idx] ? null : idx === winner.idx));
+  const icons = pools.map((_, idx) => (disabled[idx] ? null : (okFlags[idx] && idx === winner.idx)));
   return { notams: winner.list, icons };
 }
 async function loadAirportLookup(){
@@ -1820,17 +1823,17 @@ async function fetchNotamDecoders(icao){
     async (code) => {
       const url = `https://notamapi.aviationweather.gov/v1/notams?location=${code}`;
       const payload = await fetchJsonWithCorsFallback(url, 'no-store');
-      return { notams: parseNotamPayload(payload) };
+      return { notams: parseNotamPayload(payload), ok: true };
     },
     async (code) => {
       const url = `https://notamapi.aviationweather.gov/v1/notams?icaoLocation=${code}`;
       const payload = await fetchJsonWithCorsFallback(url, 'no-store');
-      return { notams: parseNotamPayload(payload) };
+      return { notams: parseNotamPayload(payload), ok: true };
     },
     async (code) => {
       const url = `https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${code}`;
       const payload = await fetchTextWithCorsFallback(url, 'no-store');
-      return { notams: parseNotamPayload(payload) };
+      return { notams: parseNotamPayload(payload), ok: true };
     }
   ];
   return Promise.all(decoders.map(async (fn, idx) => {
@@ -1838,7 +1841,7 @@ async function fetchNotamDecoders(icao){
       return await fn(icao);
     } catch(err){
       console.warn(`NOTAM decoder ${idx + 1} failed for ${icao}`, err);
-      return { notams: [] };
+      return { notams: [], ok: false };
     }
   }));
 }
@@ -2153,16 +2156,16 @@ function renderAnnualModern(res, params){
   const unionAnnual = (res.monthly?.union_dues || 0) * 12;
   const metricHTML = `
     <div class="metric-grid">
-      <div class="metric-card"><div class="metric-label">${labelWithInfo('Annual Net', INFO_COPY.annual.annualNet)}</div><div class="metric-value">${money(res.net)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Annual Gross', INFO_COPY.annual.annualGross)}</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Annual Net', INFO_COPY.annual.annualNet)}</div><div class="metric-value">${money(res.net)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Monthly Net', INFO_COPY.annual.monthlyNet)}</div><div class="metric-value">${money(res.monthly.net)}</div></div>
-      <div class="metric-card"><div class="metric-label">${labelWithInfo('Tax Return (est.)', INFO_COPY.annual.taxReturn)}</div><div class="metric-value">${money(res.tax_return)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Hourly rate', INFO_COPY.annual.hourlyRate)}</div><div class="metric-value">${money(hourly)}</div></div>
     </div>`;
 
   const deductions = `
     <details class="drawer"><summary>See taxes & deductions</summary>
       <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Tax Return (est.)', INFO_COPY.annual.taxReturn)}</div><div class="metric-value">${money(res.tax_return)}</div></div>
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Income Tax', INFO_COPY.annual.incomeTax)}</div><div class="metric-value">${money(res.tax)}</div></div>
         <div class="metric-card"><div class="metric-label">${labelWithInfo('CPP/QPP', INFO_COPY.annual.cpp)}</div><div class="metric-value">${money(res.cpp)}</div></div>
         <div class="metric-card"><div class="metric-label">${labelWithInfo('EI', INFO_COPY.annual.ei)}</div><div class="metric-value">${money(res.ei)}</div></div>
@@ -2253,11 +2256,10 @@ function renderAnnual(res, params){
   const out = document.getElementById('out');
   const simpleHTML = `
     <div class="simple">
-      <div class="block"><div class="label">${labelWithInfo('Annual Gross', INFO_COPY.annual.annualGross)}</div><div class="value">${money(res.gross)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('Annual Net', INFO_COPY.annual.annualNet)}</div><div class="value">${money(res.net)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Annual Gross', INFO_COPY.annual.annualGross)}</div><div class="value">${money(res.gross)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('Monthly Gross', INFO_COPY.annual.monthlyGross)}</div><div class="value">${money(res.monthly.gross)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('Monthly Net', INFO_COPY.annual.monthlyNet)}</div><div class="value">${money(res.monthly.net)}</div></div>
-      <div class="block"><div class="label">${labelWithInfo('Tax Return', INFO_COPY.annual.taxReturn)}</div><div class="value">${money(res.tax_return)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('Income Tax', INFO_COPY.annual.incomeTax)}</div><div class="value">${money(res.tax)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('CPP/QPP', INFO_COPY.annual.cpp)}</div><div class="value">${money(res.cpp)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('EI', INFO_COPY.annual.ei)}</div><div class="value">${money(res.ei)}</div></div>
@@ -2265,6 +2267,12 @@ function renderAnnual(res, params){
       <div class="block"><div class="label">${labelWithInfo('ESOP Contributions', INFO_COPY.annual.esopContribution)}</div><div class="value">${money(res.esop)}</div></div>
       <div class="block"><div class="label">${labelWithInfo('ESOP match (after tax)', INFO_COPY.annual.esopMatch)}</div><div class="value">${money(res.esop_match_after_tax)}</div></div>
     </div>`;
+  const taxHTML = `
+    <details class="drawer"><summary>Tax return</summary>
+      <div class="simple">
+        <div class="block"><div class="label">${labelWithInfo('Tax Return', INFO_COPY.annual.taxReturn)}</div><div class="value">${money(res.tax_return)}</div></div>
+      </div>
+    </details>`;
   const auditRows = res.audit.map(seg=>{
     const fmt = d => d.toISOString().slice(0,10);
     return `<tr>
@@ -2289,7 +2297,7 @@ function renderAnnual(res, params){
         <tbody>${auditRows}</tbody>
       </table>
     </div>`;
-  out.innerHTML = simpleHTML + auditHTML;
+  out.innerHTML = simpleHTML + taxHTML + auditHTML;
 }
 function renderVO(res, params){
   const out = document.getElementById('ot-out');

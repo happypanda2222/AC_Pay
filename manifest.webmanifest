@@ -1,6 +1,6 @@
 {
-  "name": "AC Pay Calculator",
-  "short_name": "AC Pay",
+  "name": "AC Tools",
+  "short_name": "AC Tools",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#0b0c0f",
