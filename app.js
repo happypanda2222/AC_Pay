@@ -1175,6 +1175,8 @@ function normalizeTafPayload(raw, icao){
     const timeFrom = f.timeFrom || f.fcst_time_from || f.valid_time_from || f.validTimeFrom || f.start_time || f.startTime;
     const timeTo = f.timeTo || f.fcst_time_to || f.valid_time_to || f.validTimeTo || f.end_time || f.endTime;
     const cloudsSrc = f.clouds || f.sky_condition || [];
+    const changeIndicator = f.change_indicator || f.changeIndicator || f.change_type || f.changeType || f.type || f.fcst_type || '';
+    const probability = f.probability || f.prob || f.probability_pct || f.probabilityPercent || null;
     const clouds = (Array.isArray(cloudsSrc) ? cloudsSrc : [cloudsSrc]).filter(Boolean).map(c => ({
       cover: c.cover || c.sky_cover || c.skyCover || c.code || c.type || '',
       base: normalizeCloudBaseFt(c.base || c.cloud_base_ft_agl || c.base_ft_agl || c.altitude)
@@ -1191,7 +1193,9 @@ function normalizeTafPayload(raw, icao){
       visib: parseVisibilityToSM(visRaw),
       vertVis: vertVis ? normalizeCloudBaseFt(vertVis) : null,
       clouds,
-      wxString: wx.trim()
+      wxString: wx.trim(),
+      changeIndicator: changeIndicator ? String(changeIndicator).trim() : '',
+      probability: probability === null ? null : Number(probability)
     };
   }).filter(Boolean);
   const rawTAF = raw.rawTAF || raw.raw_text || raw.taf || '';
@@ -1223,10 +1227,10 @@ function tafConsensusForTime(decodes, targetMs){
     const ceiling = extractCeilingFt(seg.clouds, seg.vertVis);
     const vis = parseVisibilityToSM(seg.visib);
     const wxKey = (seg.wxString || '').toUpperCase().replace(/\s+/g,' ').trim();
-    return { seg, key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}` };
+    return { seg, key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}`, probLabel: tafProbLabel(seg) };
   });
   const anySegments = segments.some(Boolean);
-  if (!anySegments) return { segment: null, icons: decodes.map(d => Boolean(d?.taf)) };
+  if (!anySegments) return { segment: null, icons: decodes.map(d => Boolean(d?.taf)), probLabel: '' };
   const vote = majorityVote(segments, s => s?.key);
   const icons = vote
     ? segments.map((s, idx) => vote.indexes.includes(idx))
@@ -1235,13 +1239,32 @@ function tafConsensusForTime(decodes, targetMs){
   const chosen = (chosenIdx !== null && chosenIdx !== undefined && chosenIdx >= 0)
     ? segments[chosenIdx]?.seg
     : null;
-  return { segment: chosen, icons };
+  return { segment: chosen, icons, probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '' };
 }
 function renderDecoderIcons(flags){
   if (!Array.isArray(flags)) return '';
   return `<div class="decoder-row">${flags.map(ok => `<span class="${ok ? 'decoder-ok' : 'decoder-bad'}">${ok ? '✔' : '✖'}</span>`).join('')}</div>`;
 }
 function parseNotamList(raw){
+  const parseNotamTimesFromText = (text) => {
+    if (!text) return { start: null, end: null };
+    const startMatch = text.match(/B\)\s*(\d{10})/i);
+    const endMatch = text.match(/C\)\s*(\d{10})/i);
+    const parseStamp = (stamp) => {
+      if (!stamp) return null;
+      const year = Number(stamp.slice(0, 4));
+      const month = Number(stamp.slice(4, 6)) - 1;
+      const day = Number(stamp.slice(6, 8));
+      const hour = Number(stamp.slice(8, 10));
+      const minute = Number(stamp.slice(10, 12)) || 0;
+      if ([year, month, day, hour, minute].some(n => Number.isNaN(n))) return null;
+      return Date.UTC(year, month, day, hour, minute);
+    };
+    return {
+      start: parseStamp(startMatch?.[1]) || null,
+      end: parseStamp(endMatch?.[1]) || null
+    };
+  };
   if (!raw) return [];
   if (Array.isArray(raw)){
     return raw.map(n => ({
@@ -1251,18 +1274,45 @@ function parseNotamList(raw){
     })).filter(n => n.text);
   }
   if (typeof raw === 'string'){
-    return raw.split(/\r?\n/).map(line => ({ text: line.trim(), start: null, end: null })).filter(n => n.text);
+    const cleaned = raw.replace(/\r/g, '').trim();
+    if (!cleaned) return [];
+    const lines = cleaned.split(/\n+/).map(line => line.trim()).filter(Boolean);
+    const blocks = [];
+    let current = null;
+    lines.forEach(line => {
+      if (line.startsWith('!')){
+        if (current) blocks.push(current.join(' '));
+        current = [line];
+        return;
+      }
+      if (current) current.push(line);
+    });
+    if (current) blocks.push(current.join(' '));
+    const textBlocks = blocks.length ? blocks : lines.filter(line => /^!/.test(line));
+    if (textBlocks.length){
+      return textBlocks.map(text => {
+        const times = parseNotamTimesFromText(text);
+        return { text, start: times.start, end: times.end };
+      });
+    }
+    const fallback = lines.map(line => ({ text: line, ...parseNotamTimesFromText(line) })).filter(n => n.text);
+    return fallback;
   }
   if (typeof raw === 'object'){
     if (Array.isArray(raw.notams)) return parseNotamList(raw.notams);
     if (Array.isArray(raw.items)) return parseNotamList(raw.items);
+    if (Array.isArray(raw.results)) return parseNotamList(raw.results);
+    if (Array.isArray(raw.data)) return parseNotamList(raw.data);
+    if (Array.isArray(raw.notam)) return parseNotamList(raw.notam);
+    if (typeof raw.raw === 'string') return parseNotamList(raw.raw);
+    if (raw.data && typeof raw.data === 'object') return parseNotamList(raw.data);
   }
   return [];
 }
 function classifyNotamSeverity(text){
   const upper = text.toUpperCase();
-  if (/RUNWAY|RWY|AD\s+CLOSED|AIRPORT\s+CLOSED|AD\s+CLSD|RWY\s+CLSD/.test(upper)) return 'red';
-  if (/TAXIWAY|TWY|APRON|APN|LIGHTING|PCL/.test(upper)) return 'yellow';
+  if (/RUNWAY|RWY|AD\s+CLOSED|AIRPORT\s+CLOSED|AD\s+CLSD|RWY\s+CLSD|ARPT\s+CLSD|RWY\s+CLOSED/.test(upper)) return 'red';
+  if (/TAXIWAY|TWY|APRON|APN|LIGHTING|PCL|PAPI|VASI|REIL|OBST|CRANE|ILS|LOCALIZER|GLIDESLOPE|GS\s+OUT|VOR|DME|NDB|RNAV|GPS|APPROACH/.test(upper)) return 'yellow';
   return 'green';
 }
 function filterActiveNotams(notams, targetMs){
@@ -1276,7 +1326,7 @@ function filterActiveNotams(notams, targetMs){
 }
 function buildNotamConsensus(decodes){
   const pools = (decodes || []).map(d => (d?.notams || []).filter(n => n && n.text));
-  const signatures = pools.map(list => JSON.stringify(list.map(n => n.text).sort()));
+  const signatures = pools.map(list => (list.length ? JSON.stringify(list.map(n => n.text).sort()) : null));
   const vote = majorityVote(signatures, s => s);
   if (vote){
     const winnerIdx = vote.indexes[0];
@@ -1406,11 +1456,50 @@ function ilsCategory(ceilingFt, visSm){
   if (ceil < 1000 || vis < 3) return { cat:'CAT I', reason:'IFR conditions expected' };
   return { cat:'CAT I / Visual', reason:'VMC; CAT I sufficient' };
 }
+function tafProbLabel(seg){
+  const source = `${seg?.changeIndicator || ''} ${seg?.wxString || ''}`.toUpperCase();
+  const match = source.match(/PROB(30|40)/);
+  if (match) return `PROB${match[1]}`;
+  const prob = Number(seg?.probability);
+  if (Number.isFinite(prob)){
+    if (prob >= 40) return 'PROB40';
+    if (prob >= 30) return 'PROB30';
+  }
+  return '';
+}
 function tafSegmentForTime(fcsts, targetMs){
   if (!Array.isArray(fcsts) || !fcsts.length) return null;
   const ordered = [...fcsts].sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
-  const exact = ordered.find(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
-  if (exact) return exact;
+  const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
+  const chooseWorst = (segments) => {
+    if (!segments.length) return null;
+    return segments.reduce((worst, seg) => {
+      if (!worst) return seg;
+      const ceiling = extractCeilingFt(seg.clouds, seg.vertVis);
+      const vis = parseVisibilityToSM(seg.visib);
+      const worstCeiling = extractCeilingFt(worst.clouds, worst.vertVis);
+      const worstVis = parseVisibilityToSM(worst.visib);
+      const severity = classifyFlightRules(ceiling, vis).code;
+      const worstSeverity = classifyFlightRules(worstCeiling, worstVis).code;
+      const severityRank = { LIFR: 4, IFR: 3, MVFR: 2, VFR: 1, UNK: 0 };
+      const score = severityRank[severity] ?? 0;
+      const worstScore = severityRank[worstSeverity] ?? 0;
+      if (score !== worstScore) return score > worstScore ? seg : worst;
+      const probBoost = tafProbLabel(seg) ? 0.1 : 0;
+      const worstProbBoost = tafProbLabel(worst) ? 0.1 : 0;
+      if (probBoost !== worstProbBoost) return probBoost > worstProbBoost ? seg : worst;
+      const ceilVal = ceiling ?? Infinity;
+      const worstCeilVal = worstCeiling ?? Infinity;
+      if (ceilVal !== worstCeilVal) return ceilVal < worstCeilVal ? seg : worst;
+      const visVal = vis ?? Infinity;
+      const worstVisVal = worstVis ?? Infinity;
+      if (visVal !== worstVisVal) return visVal < worstVisVal ? seg : worst;
+      return seg;
+    }, null);
+  };
+  if (matches.length){
+    return chooseWorst(matches);
+  }
   const prior = [...ordered].reverse().find(f => f.timeFrom * 1000 <= targetMs);
   if (prior) return prior;
   const future = ordered.find(f => f.timeFrom * 1000 > targetMs);
@@ -1517,19 +1606,25 @@ function metarTimeMs(metar){
 function summarizeWeatherWindow(airportData, targetMs, label){
   let tafIcons = [false, false, false];
   let tafSeg = null;
+  let tafProbLabelText = '';
   try {
     const tafOutcome = tafConsensusForTime(airportData?.tafDecodes || [], targetMs);
     tafSeg = tafOutcome.segment;
     tafIcons = tafOutcome.icons;
+    tafProbLabelText = tafOutcome.probLabel || '';
   } catch(err){
     console.warn(err?.message || err);
   }
-  if (!tafSeg) tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
+  if (!tafSeg){
+    tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
+    tafProbLabelText = tafProbLabel(tafSeg);
+  }
   const metarMs = metarTimeMs(airportData.metar);
   const metarIsCurrent = metarMs ? Math.abs(targetMs - metarMs) <= 90 * 60000 : false;
   const useMetar = metarIsCurrent && (!tafSeg || targetMs <= metarMs + 45 * 60000);
   const segment = useMetar ? airportData.metar : (tafSeg || airportData.metar);
   const source = useMetar ? 'METAR' : (tafSeg ? 'TAF' : 'METAR');
+  const sourceDetail = source === 'TAF' && tafProbLabelText ? `${source} · ${tafProbLabelText}` : source;
   const ceiling = extractCeilingFt(segment?.clouds, segment?.vertVis);
   const vis = parseVisibilityToSM(segment?.visib);
   const rules = classifyFlightRules(ceiling, vis);
@@ -1555,6 +1650,7 @@ function summarizeWeatherWindow(airportData, targetMs, label){
     targetMs,
     targetText: formatZulu(targetMs),
     source,
+    sourceDetail,
     windowText,
     ceiling,
     visibility: vis,
@@ -1584,7 +1680,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl){
         <div>
           <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">${escapeHtml(a.label)}</div>
           <div style="font-weight:800;font-size:18px">${escapeHtml(a.name)} (${escapeHtml(a.icao)})</div>
-          <div class="wx-meta"><span>${escapeHtml(a.targetText)}</span><span>${escapeHtml(a.source)} · ${escapeHtml(a.windowText)}</span></div>
+          <div class="wx-meta"><span>${escapeHtml(a.targetText)}</span><span>${escapeHtml(a.sourceDetail || a.source)} · ${escapeHtml(a.windowText)}</span></div>
         </div>
         <span class="status-badge ${a.rules.className}">${escapeHtml(a.rules.label)}</span>
       </div>
