@@ -96,7 +96,9 @@ const CORS_PROXY_PREFIXES = [
   'https://corsproxy.io/?',
   'https://thingproxy.freeboard.io/fetch/'
 ];
-const NOTAM_DECODER_COUNT = 4;
+const NOTAM_DECODER_COUNT = 2;
+const NAVCANADA_NOTAM_URL = (icao) => `https://plan.navcanada.ca/secure/notam?format=ICAO&location=${icao}`;
+const CIRIUM_NOTAM_URL = (icao) => `https://api.flightstats.com/flex/alerts/rest/v1/json/airport/NOTAM/${icao}`;
 let airportLookupPromise = null;
 const IATA_FALLBACK_MAP = {
   ABJ:'DIAP', ADD:'HAAB', AKL:'NZAA', AMS:'EHAM', ANU:'TAPA', ATL:'KATL', AUA:'TNCA', AUH:'OMAA', AZS:'MDCY',
@@ -1906,10 +1908,8 @@ async function fetchNotamDecoderWithFallback(url){
 }
 async function fetchNotamDecoders(icao){
   const decoders = [
-    async (code) => fetchNotamDecoderWithFallback(`https://api.faa.gov/notam/v1/icao/${code}`),
-    async (code) => fetchNotamDecoderWithFallback(`https://notamapi.aviationweather.gov/v1/notams?location=${code}`),
-    async (code) => fetchNotamDecoderWithFallback(`https://notamapi.aviationweather.gov/v1/notams?icaoLocation=${code}`),
-    async (code) => fetchNotamDecoderWithFallback(`https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${code}`)
+    async (code) => fetchNotamDecoderWithFallback(NAVCANADA_NOTAM_URL(code)),
+    async (code) => fetchNotamDecoderWithFallback(CIRIUM_NOTAM_URL(code))
   ];
   return Promise.all(decoders.map(async (fn, idx) => {
     try {
