@@ -1446,6 +1446,14 @@ function stripNotamHtml(raw){
     .replace(/<[^>]+>/g, ' ')
     .replace(/\u00a0/g, ' ');
 }
+function detectNotamBlock(raw){
+  if (!raw) return false;
+  const cleaned = String(raw || '').replace(/\r/g, '\n');
+  const stripped = /<[^>]+>/.test(cleaned) ? stripNotamHtml(cleaned) : cleaned;
+  const text = stripped.trim();
+  if (!text) return false;
+  return /<!DOCTYPE|Just a moment|Error 404|Not Found|CAPTCHA|Access Denied|Cloudflare|Checking your browser/i.test(text);
+}
 function normalizeNotamRecord(record){
   if (!record) return null;
   if (typeof record === 'string') return { text: record, start: null, end: null };
@@ -1463,7 +1471,7 @@ function parseNotamTextBlocks(raw){
   const cleaned = String(raw || '').replace(/\r/g, '\n');
   const stripped = /<[^>]+>/.test(cleaned) ? stripNotamHtml(cleaned) : cleaned;
   if (!stripped.trim()) return [];
-  if (/<!DOCTYPE|Just a moment|Error 404|Not Found|CAPTCHA|Access Denied/i.test(stripped)) return [];
+  if (detectNotamBlock(stripped)) return [];
   const normalized = stripped.replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
   const blocks = [];
   const notamPattern = /(?:^|\n)(!\w{3,4}[\s\S]*?)(?=\n!|\nFDC|\n$|$)/g;
@@ -1539,23 +1547,28 @@ function buildNotamConsensus(decodes){
   const pools = (decodes || []).map(d => (d?.notams || []).filter(n => n && n.text));
   const disabled = (decodes || []).map(d => Boolean(d?.skipped));
   const okFlags = (decodes || []).map(d => d?.ok !== false);
+  const blockedFlags = (decodes || []).map(d => Boolean(d?.blocked));
+  const availableFlags = okFlags.filter((_, idx) => !disabled[idx]);
+  const allFailed = availableFlags.length ? availableFlags.every(flag => !flag) : true;
+  const anyFailed = availableFlags.some(flag => !flag);
+  const status = allFailed ? (blockedFlags.some(Boolean) ? 'blocked' : 'failed') : (anyFailed ? 'partial' : 'ok');
   const signatures = pools.map(list => (list.length ? JSON.stringify(list.map(n => n.text).sort()) : null));
   const vote = majorityVote(signatures, s => s);
   if (vote){
     const winnerIdx = vote.indexes[0];
     const notams = pools[winnerIdx] || [];
     const icons = signatures.map((s, idx) => (disabled[idx] ? null : (okFlags[idx] && vote.indexes.includes(idx))));
-    return { notams, icons };
+    return { notams, icons, status };
   }
   const candidates = pools
     .map((list, idx) => ({ list, idx }))
     .filter(entry => entry.list.length);
   if (!candidates.length){
-    return { notams: [], icons: pools.map((_, idx) => (disabled[idx] ? null : okFlags[idx])) };
+    return { notams: [], icons: pools.map((_, idx) => (disabled[idx] ? null : okFlags[idx])), status };
   }
   const winner = candidates.reduce((best, entry) => entry.list.length > best.list.length ? entry : best, candidates[0]);
   const icons = pools.map((_, idx) => (disabled[idx] ? null : (okFlags[idx] && idx === winner.idx)));
-  return { notams: winner.list, icons };
+  return { notams: winner.list, icons, status };
 }
 async function loadAirportLookup(){
   if (airportLookupPromise) return airportLookupPromise;
@@ -1855,6 +1868,7 @@ async function fetchNotamDecoderWithFallback(url){
   } catch(err){
     try {
       const text = await fetchTextWithCorsFallback(url, 'no-store');
+      if (detectNotamBlock(text)) return { notams: [], ok: false, blocked: true };
       return { notams: parseNotamPayload(text), ok: true };
     } catch(err2){
       throw err2;
@@ -1893,10 +1907,12 @@ async function fetchWeatherForAirport(icao){
   const finalMetar = metarJson || metarFromText;
   const finalTaf = tafJson || tafTxt;
   let name = finalMetar?.name || finalTaf?.name || icao;
-  if (!finalMetar && !finalTaf) throw new Error(`No METAR/TAF found for ${icao}. Check the airport code or try again later.`);
   const tafDecodes = await fetchTafDecoders(icao);
   const notamDecodes = await fetchNotamDecoders(icao);
-  return { icao, name, metar: finalMetar, taf: finalTaf, tafDecodes, notamDecodes };
+  const weatherWarning = (!finalMetar && !finalTaf)
+    ? `No METAR/TAF found for ${icao}. Check the airport code or try again later.`
+    : '';
+  return { icao, name, metar: finalMetar, taf: finalTaf, tafDecodes, notamDecodes, weatherWarning };
 }
 function metarTimeMs(metar){
   if (!metar) return null;
@@ -1955,12 +1971,22 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   if (wx && wx !== 'None reported') reasonBits.push(wx);
   const notamConsensus = airportData.notamConsensus;
   const notamIcons = notamConsensus?.icons || Array.from({ length: NOTAM_DECODER_COUNT }, () => false);
+  const notamStatus = notamConsensus?.status || 'failed';
   const activeNotams = notamConsensus ? filterActiveNotams(notamConsensus.notams, targetMs) : [];
   const flaggedNotams = activeNotams.filter(n => classifyNotamSeverity(n.text) !== 'green');
   const hasRed = flaggedNotams.some(n => classifyNotamSeverity(n.text) === 'red');
-  const notamLabel = hasRed ? 'Critical NOTAMs in window' : (flaggedNotams.length ? 'Cautionary NOTAMs in window' : 'No critical NOTAMs');
-  const notamFlag = hasRed ? 'red' : (flaggedNotams.length ? 'yellow' : 'green');
-  const notamFlagLabel = hasRed ? 'NOTAM Critical' : (flaggedNotams.length ? 'NOTAM Caution' : 'NOTAM Clear');
+  let notamLabel = hasRed ? 'Critical NOTAMs in window' : (flaggedNotams.length ? 'Cautionary NOTAMs in window' : 'No critical NOTAMs');
+  let notamFlag = hasRed ? 'red' : (flaggedNotams.length ? 'yellow' : 'green');
+  let notamFlagLabel = hasRed ? 'NOTAM Critical' : (flaggedNotams.length ? 'NOTAM Caution' : 'NOTAM Clear');
+  if (notamStatus === 'failed' || notamStatus === 'blocked'){
+    notamLabel = notamStatus === 'blocked' ? 'NOTAM sources blocked' : 'NOTAM sources unavailable';
+    notamFlag = 'yellow';
+    notamFlagLabel = 'NOTAM Unavailable';
+  } else if (notamStatus === 'partial'){
+    notamLabel = hasRed ? 'Critical NOTAMs (partial data)' : (flaggedNotams.length ? 'Cautionary NOTAMs (partial data)' : 'No critical NOTAMs (partial data)');
+    if (!hasRed && !flaggedNotams.length) notamFlag = 'yellow';
+  }
+  if (!segment) reasonBits.push('No METAR/TAF available');
   return {
     label,
     icao: airportData.icao,
@@ -1979,6 +2005,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     probFlag,
     tafIcons,
     notamIcons,
+    notamStatus,
     notamLabel,
     notamFlag,
     notamFlagLabel,
@@ -2041,7 +2068,16 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl, al
   }
   if (notamEl){
     const list = assessments.map(a => {
-      if (!a.notams.length) return '';
+      if (!a.notams.length){
+        if (a.notamStatus === 'failed' || a.notamStatus === 'blocked'){
+          const label = a.notamStatus === 'blocked' ? 'NOTAM sources blocked' : 'NOTAM sources unavailable';
+          return `<div class="wx-box"><div class="label">${escapeHtml(a.label)} (${escapeHtml(a.icao)})</div><div class="muted-note">${escapeHtml(label)}.</div></div>`;
+        }
+        if (a.notamStatus === 'partial'){
+          return `<div class="wx-box"><div class="label">${escapeHtml(a.label)} (${escapeHtml(a.icao)})</div><div class="muted-note">No flagged NOTAMs (partial data).</div></div>`;
+        }
+        return '';
+      }
       const items = a.notams.map(n => `<li><strong>${classifyNotamSeverity(n.text).toUpperCase()}</strong>: ${escapeHtml(n.text)}</li>`).join('');
       return `<div class="wx-box"><div class="label">${escapeHtml(a.label)} (${escapeHtml(a.icao)})</div><ul>${items}</ul></div>`;
     }).filter(Boolean).join('');
@@ -2049,7 +2085,16 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl, al
   }
   if (allNotamEl){
     const list = assessments.map(a => {
-      if (!a.allNotams.length) return '';
+      if (!a.allNotams.length){
+        if (a.notamStatus === 'failed' || a.notamStatus === 'blocked'){
+          const label = a.notamStatus === 'blocked' ? 'NOTAM sources blocked' : 'NOTAM sources unavailable';
+          return `<div class="wx-box"><div class="label">${escapeHtml(a.label)} (${escapeHtml(a.icao)})</div><div class="muted-note">${escapeHtml(label)}.</div></div>`;
+        }
+        if (a.notamStatus === 'partial'){
+          return `<div class="wx-box"><div class="label">${escapeHtml(a.label)} (${escapeHtml(a.icao)})</div><div class="muted-note">No active NOTAMs (partial data).</div></div>`;
+        }
+        return '';
+      }
       const items = a.allNotams.map(n => `<li><strong>${classifyNotamSeverity(n.text).toUpperCase()}</strong>: ${escapeHtml(n.text)}</li>`).join('');
       return `<div class="wx-box"><div class="label">${escapeHtml(a.label)} (${escapeHtml(a.icao)})</div><ul>${items}</ul></div>`;
     }).filter(Boolean).join('');
