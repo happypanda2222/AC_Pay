@@ -84,8 +84,19 @@ const METAR_TEXT_FALLBACKS = [
 ];
 const TAF_TEXT_FALLBACK = (icao) => `https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`;
 const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
-const NOTAM_DECODER_COUNT = 3;
+const CORS_PROXY_BUILDERS = [
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://cors.isomorphic-git.org/${url}`,
+  url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  url => `https://thingproxy.freeboard.io/fetch/${url}`
+];
+const CORS_PROXY_PREFIXES = [
+  'https://api.allorigins.win/raw?url=',
+  'https://cors.isomorphic-git.org/',
+  'https://corsproxy.io/?',
+  'https://thingproxy.freeboard.io/fetch/'
+];
+const NOTAM_DECODER_COUNT = 4;
 let airportLookupPromise = null;
 const IATA_FALLBACK_MAP = {
   ABJ:'DIAP', ADD:'HAAB', AKL:'NZAA', AMS:'EHAM', ANU:'TAPA', ATL:'KATL', AUA:'TNCA', AUH:'OMAA', AZS:'MDCY',
@@ -1039,8 +1050,17 @@ async function fetchJsonWithCorsFallback(url, cache='no-store'){
     return await attempt(url, 'direct');
   } catch(err){
     console.warn(`Direct fetch failed for ${url}; retrying via proxy`, err);
-    if (url.startsWith(CORS_PROXY)) throw err;
-    return attempt(`${CORS_PROXY}${encodeURIComponent(url)}`, 'proxy');
+    if (CORS_PROXY_PREFIXES.some(prefix => url.startsWith(prefix))) throw err;
+    let lastErr = err;
+    for (const buildProxyUrl of CORS_PROXY_BUILDERS){
+      const proxyUrl = buildProxyUrl(url);
+      try {
+        return await attempt(proxyUrl, 'proxy');
+      } catch(proxyErr){
+        lastErr = proxyErr;
+      }
+    }
+    throw lastErr;
   }
 }
 async function fetchTextWithCorsFallback(url, cache='no-store'){
@@ -1053,8 +1073,17 @@ async function fetchTextWithCorsFallback(url, cache='no-store'){
     return await attempt(url);
   } catch(err){
     console.warn(`Direct text fetch failed for ${url}; retrying via proxy`, err);
-    if (url.startsWith(CORS_PROXY)) throw err;
-    return attempt(`${CORS_PROXY}${encodeURIComponent(url)}`);
+    if (CORS_PROXY_PREFIXES.some(prefix => url.startsWith(prefix))) throw err;
+    let lastErr = err;
+    for (const buildProxyUrl of CORS_PROXY_BUILDERS){
+      const proxyUrl = buildProxyUrl(url);
+      try {
+        return await attempt(proxyUrl);
+      } catch(proxyErr){
+        lastErr = proxyErr;
+      }
+    }
+    throw lastErr;
   }
 }
 async function fetchMetarTextWithFallbacks(icao){
@@ -1877,6 +1906,7 @@ async function fetchNotamDecoderWithFallback(url){
 }
 async function fetchNotamDecoders(icao){
   const decoders = [
+    async (code) => fetchNotamDecoderWithFallback(`https://api.faa.gov/notam/v1/icao/${code}`),
     async (code) => fetchNotamDecoderWithFallback(`https://notamapi.aviationweather.gov/v1/notams?location=${code}`),
     async (code) => fetchNotamDecoderWithFallback(`https://notamapi.aviationweather.gov/v1/notams?icaoLocation=${code}`),
     async (code) => fetchNotamDecoderWithFallback(`https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${code}`)
