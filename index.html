@@ -595,8 +595,8 @@
                 </div>
                 <div class="stacked-fields" id="modern-rest-unaug-fields">
                   <div>
-                    <label>Time zone difference from start (hours)</label>
-                    <input id="modern-rest-timezone-diff" type="number" min="0" max="12" step="1" value="0">
+                    <label>Layover location (IATA/ICAO)</label>
+                    <input id="modern-rest-layover-location" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LHR">
                   </div>
                   <div>
                     <label>Time away from home base (hours)</label>
@@ -604,6 +604,7 @@
                   </div>
                   <div>
                     <label>Returning FDP encroaches WOCL</label>
+                    <div class="muted-note">0200-0559 YYZ</div>
                     <select id="modern-rest-encroach">
                       <option value="no" selected>No</option>
                       <option value="yes">Yes</option>
@@ -976,11 +977,11 @@
             </select>
           </div>
         </div>
-        <div id="rest-unaug-fields">
+          <div id="rest-unaug-fields">
           <div class="row" style="margin-top:10px">
             <div>
-              <label>Time zone difference from start (hours)</label>
-              <input id="rest-timezone-diff" type="number" min="0" max="12" step="1" value="0">
+              <label>Layover location (IATA/ICAO)</label>
+              <input id="rest-layover-location" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LHR">
             </div>
             <div>
               <label>Time away from home base (hours)</label>
@@ -990,6 +991,7 @@
           <div class="row" style="margin-top:10px">
             <div>
               <label>Returning FDP encroaches WOCL</label>
+              <div class="muted-note">0200-0559 YYZ</div>
               <select id="rest-encroach">
                 <option value="no" selected>No</option>
                 <option value="yes">Yes</option>
