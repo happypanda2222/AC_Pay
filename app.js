@@ -1149,6 +1149,23 @@ function parseTafText(raw, icao){
 }
 function normalizeTafPayload(raw, icao){
   if (!raw) return null;
+  const normalizeTimeToMs = (value) => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number'){
+      return value > 1000000000000 ? value : value * 1000;
+    }
+    if (typeof value === 'string'){
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const asNumber = Number(trimmed);
+      if (!Number.isNaN(asNumber)){
+        return asNumber > 1000000000000 ? asNumber : asNumber * 1000;
+      }
+      const parsed = Date.parse(trimmed);
+      return Number.isNaN(parsed) ? null : parsed;
+    }
+    return null;
+  };
   const fcstList = Array.isArray(raw.fcsts) ? raw.fcsts
     : Array.isArray(raw.forecast) ? raw.forecast
     : Array.isArray(raw.forecasts) ? raw.forecasts
@@ -1165,8 +1182,8 @@ function normalizeTafPayload(raw, icao){
     const visRaw = f.visib || f.visibility || f.visibility_statute_mi || f.visibility_statute_mi || f.visibility_sm;
     const vertVis = f.vertVis || f.vert_vis_ft || f.vert_vis || f.vertical_visibility;
     const wx = f.wxString || f.wx_string || f.weather_string || f.raw_text || f.text || '';
-    const fromMs = timeFrom ? Date.parse(timeFrom) : null;
-    const toMs = timeTo ? Date.parse(timeTo) : null;
+    const fromMs = normalizeTimeToMs(timeFrom);
+    const toMs = normalizeTimeToMs(timeTo);
     if (!fromMs || !toMs) return null;
     return {
       timeFrom: Math.floor(fromMs / 1000),
