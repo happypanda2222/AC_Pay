@@ -196,10 +196,6 @@
     .status-mvfr{background:#2f260f;border-color:#eab308;color:#fef9c3}
     .status-vfr{background:#0f2c1a;border-color:#22c55e;color:#d1fae5}
     .status-unk{background:#1f2937;border-color:#4b5563;color:#e5e7eb}
-    .notam-badge{font-weight:900}
-    .notam-red{background:#3b1111;border-color:#ef4444;color:#fee2e2}
-    .notam-yellow{background:#33260d;border-color:#f59e0b;color:#fef3c7}
-    .notam-green{background:#0f2c1a;border-color:#22c55e;color:#d1fae5}
     .ils-badge{display:inline-flex;align-items:center;gap:6px;background:#0f1218;border:1px solid #2a2f3b;color:var(--txt);padding:6px 10px;border-radius:10px;font-weight:700}
     .prob-flag{display:inline-flex;align-items:center;background:#1e1b4b;border:1px solid #4338ca;color:#c7d2fe;padding:4px 8px;border-radius:10px;font-weight:800;font-size:11px;letter-spacing:.3px;text-transform:uppercase}
     .muted-note{color:var(--muted);font-size:13px;margin-top:8px}
@@ -501,8 +497,6 @@
               <h3>Field condition outlook</h3>
               <div id="modern-wx-out"></div>
               <details class="drawer" id="modern-wx-raw"><summary>Show METAR/TAF inputs</summary><div id="modern-wx-raw-body"></div></details>
-              <details class="drawer" id="modern-notam-raw"><summary>Show flagged NOTAMs</summary><div id="modern-notam-raw-body"></div></details>
-              <details class="drawer" id="modern-notam-all"><summary>Show all NOTAMs</summary><div id="modern-notam-all-body"></div></details>
             </div>
           </div>
         </div>
@@ -789,8 +783,6 @@
       <div class="muted-note" id="legacy-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
       <div id="wx-out"></div>
       <details class="drawer" id="wx-raw"><summary>Show METAR/TAF inputs</summary><div id="wx-raw-body"></div></details>
-      <details class="drawer" id="notam-raw"><summary>Show flagged NOTAMs</summary><div id="notam-raw-body"></div></details>
-      <details class="drawer" id="notam-all"><summary>Show all NOTAMs</summary><div id="notam-all-body"></div></details>
     </div>
 
     </div> <!-- /legacy-ui -->
