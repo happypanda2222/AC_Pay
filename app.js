@@ -1123,29 +1123,121 @@ function parseTafText(raw, icao){
   const tafLine = lines.find(l => l.trim().startsWith('TAF')) || lines.find(l => l.includes(icao)) || '';
   const rawTAF = lines.join(' ').replace(/\s+/g,' ').trim();
   if (!rawTAF) return null;
-  const validMatch = rawTAF.match(/\b(\d{4})\/(\d{4})\b/);
-  let fromMs = null, toMs = null;
-  if (validMatch){
-    const [, from, to] = validMatch;
-    fromMs = approximateUtcFromDayHour(Number(from.slice(0,2)), Number(from.slice(2)));
-    toMs = approximateUtcFromDayHour(Number(to.slice(0,2)), Number(to.slice(2)));
-  }
-  const visMatch = rawTAF.match(/\s([PM]?\d+(?:\/\d+)?SM)\b/);
-  const cloudTokens = rawTAF.match(/(VV\d{3}|FEW\d{3}|SCT\d{3}|BKN\d{3}|OVC\d{3})/g) || [];
-  const clouds = cloudTokens.map(t => ({ cover:t.slice(0,3), base:normalizeCloudBaseFt(Number(t.slice(3))) }));
-  const fcsts = (fromMs && toMs) ? [{
-    timeFrom: Math.floor(fromMs / 1000),
-    timeTo: Math.floor(toMs / 1000),
-    visib: visMatch ? parseVisibilityToSM(visMatch[1]) : null,
-    clouds,
-    wxString: tafLine || rawTAF
-  }] : [];
+  const fcsts = parseTafRawForecasts(rawTAF);
   return {
     icaoId: icao,
     name: `${icao} (text feed)`,
     rawTAF,
     fcsts
   };
+}
+function parseTafRawForecasts(rawTAF){
+  if (!rawTAF) return [];
+  const tokens = rawTAF.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const validIdx = tokens.findIndex(t => /^\d{4}\/\d{4}$/.test(t));
+  if (validIdx === -1) return [];
+  const validToken = tokens[validIdx];
+  const [fromToken, toToken] = validToken.split('/');
+  const validFromMs = approximateUtcFromDayHour(Number(fromToken.slice(0,2)), Number(fromToken.slice(2)));
+  const validToMs = approximateUtcFromDayHour(Number(toToken.slice(0,2)), Number(toToken.slice(2)));
+  const baseSegments = [];
+  const overlaySegments = [];
+  let baseTokens = [];
+  let baseStartMs = validFromMs;
+  let baseIndicator = '';
+
+  const isChangeToken = (token) => {
+    if (/^FM\d{6}$/.test(token)) return true;
+    if (token === 'TEMPO' || token === 'BECMG') return true;
+    if (/^PROB(30|40)$/.test(token)) return true;
+    return false;
+  };
+  const parseDayHourRange = (token) => {
+    if (!/^\d{4}\/\d{4}$/.test(token)) return null;
+    const [start, end] = token.split('/');
+    return {
+      startMs: approximateUtcFromDayHour(Number(start.slice(0,2)), Number(start.slice(2))),
+      endMs: approximateUtcFromDayHour(Number(end.slice(0,2)), Number(end.slice(2)))
+    };
+  };
+  const parseFmToken = (token) => {
+    const match = token.match(/^FM(\d{2})(\d{2})(\d{2})$/);
+    if (!match) return null;
+    const [, dd, hh, mm] = match;
+    return approximateUtcFromDayHour(Number(dd), Number(hh), Number(mm));
+  };
+  const buildSegment = (segmentTokens, startMs, endMs, changeIndicator) => {
+    if (!startMs || !endMs || startMs === endMs) return null;
+    const visToken = segmentTokens.find(t => /SM$/.test(t));
+    const cloudTokens = segmentTokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}$/.test(t));
+    const clouds = cloudTokens.map(t => ({ cover: t.slice(0,3), base: normalizeCloudBaseFt(Number(t.slice(3))) }));
+    const wxString = segmentTokens.join(' ').trim();
+    return {
+      timeFrom: Math.floor(startMs / 1000),
+      timeTo: Math.floor(endMs / 1000),
+      visib: visToken ? parseVisibilityToSM(visToken) : null,
+      clouds,
+      wxString,
+      changeIndicator
+    };
+  };
+
+  let i = validIdx + 1;
+  while (i < tokens.length){
+    const token = tokens[i];
+    if (/^FM\d{6}$/.test(token)){
+      const nextStartMs = parseFmToken(token);
+      if (nextStartMs){
+        const baseSeg = buildSegment(baseTokens, baseStartMs, nextStartMs, baseIndicator);
+        if (baseSeg) baseSegments.push(baseSeg);
+        baseTokens = [];
+        baseStartMs = nextStartMs;
+        baseIndicator = 'FM';
+      }
+      i += 1;
+      continue;
+    }
+    if (token === 'BECMG'){
+      const range = parseDayHourRange(tokens[i + 1] || '');
+      if (range){
+        const baseSeg = buildSegment(baseTokens, baseStartMs, range.startMs, baseIndicator);
+        if (baseSeg) baseSegments.push(baseSeg);
+        baseTokens = [];
+        baseStartMs = range.startMs;
+        baseIndicator = 'BECMG';
+        i += 2;
+        continue;
+      }
+    }
+    if (token === 'TEMPO' || /^PROB(30|40)$/.test(token)){
+      let indicator = token;
+      let j = i + 1;
+      if (/^PROB(30|40)$/.test(token) && tokens[j] === 'TEMPO'){
+        indicator = `${indicator} TEMPO`;
+        j += 1;
+      }
+      const range = parseDayHourRange(tokens[j] || '');
+      if (!range){
+        i += 1;
+        continue;
+      }
+      const segmentTokens = [];
+      j += 1;
+      while (j < tokens.length && !isChangeToken(tokens[j])){
+        segmentTokens.push(tokens[j]);
+        j += 1;
+      }
+      const overlaySeg = buildSegment(segmentTokens, range.startMs, range.endMs, indicator);
+      if (overlaySeg) overlaySegments.push(overlaySeg);
+      i = j;
+      continue;
+    }
+    baseTokens.push(token);
+    i += 1;
+  }
+  const finalBase = buildSegment(baseTokens, baseStartMs, validToMs, baseIndicator);
+  if (finalBase) baseSegments.push(finalBase);
+  return [...baseSegments, ...overlaySegments].filter(Boolean);
 }
 function normalizeTafPayload(raw, icao){
   if (!raw) return null;
@@ -1249,14 +1341,15 @@ function parseNotamList(raw){
   if (!raw) return [];
   if (Array.isArray(raw)){
     return raw.map(n => ({
-      text: n.text || n.message || n.notam || n.raw_text || '',
-      start: Date.parse(n.start_time || n.effective || n.validFrom || n.startDate || n.start) || null,
-      end: Date.parse(n.end_time || n.expires || n.validTo || n.endDate || n.end) || null
+      text: n.text || n.message || n.notam || n.notamText || n.raw_text || n.notam_text || '',
+      start: Date.parse(n.start_time || n.effective || n.validFrom || n.startDate || n.start || n.startTime || n.effectiveStart) || null,
+      end: Date.parse(n.end_time || n.expires || n.validTo || n.endDate || n.end || n.endTime || n.effectiveEnd) || null
     })).filter(n => n.text);
   }
   if (typeof raw === 'string'){
     const cleaned = raw.replace(/\r/g, '').trim();
     if (!cleaned) return [];
+    if (/<!DOCTYPE|<html|Just a moment|Error 404|Not Found|CAPTCHA/i.test(cleaned)) return [];
     const chunks = cleaned.split(/\n(?=!)/).map(block => block.replace(/\s+/g, ' ').trim()).filter(Boolean);
     if (chunks.length > 1) return chunks.map(text => ({ text, start: null, end: null }));
     return cleaned.split(/\n+/).map(line => ({ text: line.trim(), start: null, end: null })).filter(n => n.text);
@@ -1266,8 +1359,11 @@ function parseNotamList(raw){
     if (Array.isArray(raw.items)) return parseNotamList(raw.items);
     if (Array.isArray(raw.results)) return parseNotamList(raw.results);
     if (Array.isArray(raw.data)) return parseNotamList(raw.data);
+    if (Array.isArray(raw.notamList)) return parseNotamList(raw.notamList);
+    if (Array.isArray(raw.notamListItems)) return parseNotamList(raw.notamListItems);
     if (Array.isArray(raw.notam)) return parseNotamList(raw.notam);
     if (typeof raw.raw === 'string') return parseNotamList(raw.raw);
+    if (typeof raw.rawText === 'string') return parseNotamList(raw.rawText);
   }
   return [];
 }
@@ -1429,6 +1525,9 @@ function tafProbLabel(seg){
   }
   return '';
 }
+function tafIsProbSegment(seg){
+  return Boolean(tafProbLabel(seg));
+}
 function tafSegmentForTime(fcsts, targetMs){
   if (!Array.isArray(fcsts) || !fcsts.length) return null;
   const ordered = [...fcsts].sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
@@ -1584,6 +1683,7 @@ function summarizeWeatherWindow(airportData, targetMs, label){
   const segment = useMetar ? airportData.metar : (tafSeg || airportData.metar);
   const source = useMetar ? 'METAR' : (tafSeg ? 'TAF' : 'METAR');
   const sourceDetail = source === 'TAF' && tafProbLabelText ? `${source} · ${tafProbLabelText}` : source;
+  const probFlag = source === 'TAF' ? tafProbLabelText : '';
   const ceiling = extractCeilingFt(segment?.clouds, segment?.vertVis);
   const vis = parseVisibilityToSM(segment?.visib);
   const rules = classifyFlightRules(ceiling, vis);
@@ -1616,6 +1716,7 @@ function summarizeWeatherWindow(airportData, targetMs, label){
     rules,
     ils,
     wx,
+    probFlag,
     tafIcons,
     notamIcons,
     notamLabel,
@@ -1639,7 +1740,11 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, notamEl){
         <div>
           <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">${escapeHtml(a.label)}</div>
           <div style="font-weight:800;font-size:18px">${escapeHtml(a.name)} (${escapeHtml(a.icao)})</div>
-          <div class="wx-meta"><span>${escapeHtml(a.targetText)}</span><span>${escapeHtml(a.sourceDetail || a.source)} · ${escapeHtml(a.windowText)}</span></div>
+          <div class="wx-meta">
+            <span>${escapeHtml(a.targetText)}</span>
+            <span>${escapeHtml(a.sourceDetail || a.source)} · ${escapeHtml(a.windowText)}</span>
+            ${a.probFlag ? `<span class="prob-flag">${escapeHtml(a.probFlag)}</span>` : ''}
+          </div>
         </div>
         <span class="status-badge ${a.rules.className}">${escapeHtml(a.rules.label)}</span>
       </div>
