@@ -2856,8 +2856,15 @@ function init(){
 if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', init); } else { init(); }
 // PWA: register the service worker
 if ('serviceWorker' in navigator) {
+  let swReloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swReloading) return;
+    swReloading = true;
+    window.location.reload();
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js', { scope: './' })
+      .then((reg) => reg.update?.())
       .catch(() => { /* no-op */ });
   });
 }
