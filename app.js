@@ -66,6 +66,24 @@ const PROGRESSION = {m:11, d:5};
 const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
+const FDP_MAX_TABLE = [
+  { start: 0, end: 239, label: '00:00-03:59', max14: 9, max56: 9 },
+  { start: 240, end: 299, label: '04:00-04:59', max14: 10, max56: 9 },
+  { start: 300, end: 359, label: '05:00-05:59', max14: 11, max56: 10 },
+  { start: 360, end: 419, label: '06:00-06:59', max14: 12, max56: 11 },
+  { start: 420, end: 779, label: '07:00-12:59', max14: 13, max56: 12 },
+  { start: 780, end: 1019, label: '13:00-16:59', max14: 12.5, max56: 11.5 },
+  { start: 1020, end: 1319, label: '17:00-21:59', max14: 12, max56: 11 },
+  { start: 1320, end: 1379, label: '22:00-22:59', max14: 11, max56: 10 },
+  { start: 1380, end: 1439, label: '23:00-23:59', max14: 10, max56: 9 }
+];
+const AUGMENTED_FDP_TABLE = [
+  { additional: 1, facility: 3, max: 14 },
+  { additional: 1, facility: 1, max: 15 },
+  { additional: 1, facility: 2, max: 15 },
+  { additional: 2, facility: 3, max: 15.25 },
+  { additional: 2, facility: 2, max: 16.5 }
+];
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
 const WEATHER_MAX_ATTEMPTS = 5;
 const WEATHER_RETRY_DELAY_MS = 500;
@@ -806,6 +824,130 @@ function computeMonthly(params){
   return { rate, credits, voCredits, regHours, overtime, gross, net, tax: totalTax, cpp: totalCpp, ei: totalEi, health, pension, esop, esop_match_after_tax, union: union_month, fed_m, prov_m, tafb_net, step_used: step, pay_advance: payAdvance, second_pay: secondPay };
 }
 
+function parseTimeToMinutes(value){
+  if (!value) return NaN;
+  const parts = String(value).split(':').map(Number);
+  if (parts.length < 2 || parts.some(n => !Number.isFinite(n))) return NaN;
+  const [hh, mm] = parts;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return NaN;
+  return hh * 60 + mm;
+}
+
+function formatHoursValue(value){
+  const rounded = Math.round(value * 100) / 100;
+  if (!Number.isFinite(rounded)) return '--';
+  if (Math.abs(rounded % 1) < 1e-9) return String(rounded.toFixed(0));
+  return String(rounded.toFixed(2)).replace(/0+$/,'').replace(/\.$/,'');
+}
+
+function computeMaxDuty(params){
+  const dutyType = params.dutyType || 'unaugmented';
+  if (dutyType === 'augmented'){
+    const additional = Number(params.additionalCrew);
+    const facility = Number(params.restFacility);
+    if (!Number.isFinite(additional) || !Number.isFinite(facility)) {
+      throw new Error('Select the additional crew count and rest facility class.');
+    }
+    const match = AUGMENTED_FDP_TABLE.find(row => row.additional === additional && row.facility === facility);
+    if (!match) {
+      return { maxFdp: null, detail: 'This augmentation/rest facility combination is not listed in the table.' };
+    }
+    return {
+      maxFdp: match.max,
+      detail: `Augmented FDP with ${additional} additional crew member${additional > 1 ? 's' : ''} and Class ${facility} rest facility.`
+    };
+  }
+  const startMinutes = parseTimeToMinutes(params.startTime);
+  const sectors = Number(params.sectors);
+  if (!Number.isFinite(startMinutes)) throw new Error('Enter an FDP start time in HH:MM.');
+  if (!Number.isFinite(sectors) || sectors < 1 || sectors > 6) throw new Error('Planned sectors must be between 1 and 6.');
+  const row = FDP_MAX_TABLE.find(item => startMinutes >= item.start && startMinutes <= item.end);
+  if (!row) throw new Error('Start time is outside the FDP table range.');
+  const maxFdp = sectors <= 4 ? row.max14 : row.max56;
+  const sectorLabel = sectors <= 4 ? '1-4 sectors' : '5-6 sectors';
+  return {
+    maxFdp,
+    detail: `Unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).`
+  };
+}
+
+function computeRestRequirement(params){
+  const dutyType = params.dutyType || 'unaugmented';
+  const endsHome = params.endsHome === 'home';
+  const fdpDuration = Number(params.fdpDuration);
+  const tzDiff = Math.abs(Number(params.timezoneDiff));
+  const awayHours = Number(params.awayHours);
+  const encroachWOCL = params.encroachWOCL === 'yes';
+  const disruptive = params.disruptive === 'yes';
+  const uocOver = Number(params.uocOver);
+
+  if (!Number.isFinite(fdpDuration) || fdpDuration < 0) throw new Error('FDP duration must be zero or greater.');
+  if (!Number.isFinite(tzDiff) || tzDiff < 0) throw new Error('Time zone difference must be zero or greater.');
+  if (!Number.isFinite(awayHours) || awayHours < 0) throw new Error('Time away from home base must be zero or greater.');
+  if (!Number.isFinite(uocOver) || uocOver < 0) throw new Error('UOC overage must be zero or greater.');
+
+  let baseHours = null;
+  let baseNights = null;
+  let basis = '';
+
+  if (dutyType === 'augmented'){
+    const minBase = endsHome ? 16 : 14;
+    baseHours = Math.max(fdpDuration, minBase);
+    basis = `Augmented FDP rest: max of FDP duration and ${minBase} hours${endsHome ? ' when ending at home base' : ''}.`;
+  } else if (endsHome){
+    if (tzDiff < 4 || awayHours <= 36){
+      baseHours = 12;
+      basis = 'Normal rest at home base: 12 hours total or 10 hours in suitable accommodation.';
+    } else if (tzDiff === 4){
+      baseHours = 13;
+      basis = 'Home base return with a 4-hour time zone difference and >36 hours away.';
+    } else if (tzDiff > 4 && tzDiff <= 10){
+      baseNights = (awayHours <= 60 && !encroachWOCL) ? 1 : 2;
+      basis = 'Home base return with >4 to 10 hours time zone difference.';
+    } else if (tzDiff > 10){
+      baseNights = awayHours <= 60 ? 2 : 3;
+      basis = 'Home base return with >10 hours time zone difference.';
+    }
+  } else {
+    if (tzDiff < 4){
+      baseHours = 10;
+      basis = 'Normal rest away from home base (<4 hour time zone difference).';
+    } else if (tzDiff === 4){
+      baseHours = 11;
+      basis = 'Away from home base with a 4-hour time zone difference.';
+    } else {
+      baseHours = 14;
+      basis = 'Away from home base with >4 hour time zone difference.';
+    }
+  }
+
+  if (baseHours === null && baseNights === null){
+    throw new Error('Unable to determine rest requirement from the provided inputs.');
+  }
+
+  const notes = [];
+  if (dutyType === 'unaugmented' && disruptive){
+    notes.push('Disruptive schedule requires a local night’s rest in addition to the minimum rest.');
+  }
+
+  let minimumText = '';
+  if (baseNights !== null){
+    minimumText = `${baseNights} local night${baseNights > 1 ? 's' : ''} rest`;
+    if (uocOver > 0){
+      notes.push(`UOC adds at least ${formatHoursValue(uocOver)} hours in addition to the local night’s rest.`);
+    }
+  } else {
+    let minHours = baseHours;
+    if (uocOver > 0){
+      minHours += uocOver;
+      notes.push(`UOC adds ${formatHoursValue(uocOver)} hours to the minimum rest.`);
+    }
+    minimumText = `${formatHoursValue(minHours)} hours`;
+  }
+
+  return { minimumText, basis, notes };
+}
+
 // --- UI helpers ---
 function updateAircraftOptions(seatValue, selectEl){
   if (!selectEl) return;
@@ -824,24 +966,27 @@ function updateAircraftOptions(seatValue, selectEl){
 
 let currentLegacySubTab = 'annual';
 let currentModernSubTab = 'modern-annual';
+let currentLegacyDutyTab = 'duty';
+let currentModernDutyTab = 'modern-duty';
 
 function setLegacyPrimaryTab(which){
   const payBtn = document.getElementById('tabbtn-pay');
   const weatherBtn = document.getElementById('tabbtn-weather');
+  const dutyBtn = document.getElementById('tabbtn-duty-rest');
   const payPane = document.getElementById('legacy-pay');
   const weatherPane = document.getElementById('tab-weather');
-  if (which === 'weather'){
-    payBtn?.classList.remove('active');
-    weatherBtn?.classList.add('active');
-    payPane?.classList.add('hidden');
-    weatherPane?.classList.remove('hidden');
-  } else {
-    payBtn?.classList.add('active');
-    weatherBtn?.classList.remove('active');
-    payPane?.classList.remove('hidden');
-    weatherPane?.classList.add('hidden');
-    setLegacySubTab(currentLegacySubTab);
-  }
+  const dutyPane = document.getElementById('tab-duty-rest');
+  const showPay = which === 'pay';
+  const showWeather = which === 'weather';
+  const showDuty = which === 'duty-rest';
+  payBtn?.classList.toggle('active', showPay);
+  weatherBtn?.classList.toggle('active', showWeather);
+  dutyBtn?.classList.toggle('active', showDuty);
+  payPane?.classList.toggle('hidden', !showPay);
+  weatherPane?.classList.toggle('hidden', !showWeather);
+  dutyPane?.classList.toggle('hidden', !showDuty);
+  if (showPay) setLegacySubTab(currentLegacySubTab);
+  if (showDuty) setLegacyDutyTab(currentLegacyDutyTab);
 }
 
 function setLegacySubTab(which){
@@ -865,23 +1010,44 @@ function setLegacySubTab(which){
   });
 }
 
+function setLegacyDutyTab(which){
+  currentLegacyDutyTab = which;
+  const tabs = [
+    { btn: 'tabbtn-duty', pane: 'tab-duty', id: 'duty' },
+    { btn: 'tabbtn-rest', pane: 'tab-rest', id: 'rest' }
+  ];
+  tabs.forEach(({ btn, pane, id }) => {
+    const b = document.getElementById(btn);
+    const p = document.getElementById(pane);
+    if (!b || !p) return;
+    if (which === id){
+      b.classList.add('active');
+      p.classList.remove('hidden');
+    } else {
+      b.classList.remove('active');
+      p.classList.add('hidden');
+    }
+  });
+}
+
 function setModernPrimaryTab(which){
   const payBtn = document.getElementById('tabbtn-modern-pay');
   const weatherBtn = document.getElementById('tabbtn-modern-weather');
+  const dutyBtn = document.getElementById('tabbtn-modern-duty-rest');
   const payPane = document.getElementById('modern-pay');
   const weatherPane = document.getElementById('modern-weather');
-  if (which === 'modern-weather'){
-    payBtn?.classList.remove('active');
-    weatherBtn?.classList.add('active');
-    payPane?.classList.add('hidden');
-    weatherPane?.classList.remove('hidden');
-  } else {
-    payBtn?.classList.add('active');
-    weatherBtn?.classList.remove('active');
-    payPane?.classList.remove('hidden');
-    weatherPane?.classList.add('hidden');
-    setModernSubTab(currentModernSubTab);
-  }
+  const dutyPane = document.getElementById('modern-duty-rest');
+  const showPay = which === 'modern-pay';
+  const showWeather = which === 'modern-weather';
+  const showDuty = which === 'modern-duty-rest';
+  payBtn?.classList.toggle('active', showPay);
+  weatherBtn?.classList.toggle('active', showWeather);
+  dutyBtn?.classList.toggle('active', showDuty);
+  payPane?.classList.toggle('hidden', !showPay);
+  weatherPane?.classList.toggle('hidden', !showWeather);
+  dutyPane?.classList.toggle('hidden', !showDuty);
+  if (showPay) setModernSubTab(currentModernSubTab);
+  if (showDuty) setModernDutyTab(currentModernDutyTab);
 }
 
 function setModernSubTab(which){
@@ -899,6 +1065,41 @@ function setModernSubTab(which){
       pane.classList.add('hidden');
     }
   });
+}
+
+function setModernDutyTab(which){
+  currentModernDutyTab = which;
+  const tabs = ['modern-duty','modern-rest'];
+  tabs.forEach(id => {
+    const btn = document.getElementById(`tabbtn-${id}`);
+    const pane = document.getElementById(id);
+    if (!btn || !pane) return;
+    if (id === which){
+      btn.classList.add('active');
+      pane.classList.remove('hidden');
+    } else {
+      btn.classList.remove('active');
+      pane.classList.add('hidden');
+    }
+  });
+}
+
+function toggleDutyFields(typeId, unaugId, augId){
+  const typeEl = document.getElementById(typeId);
+  const unaug = document.getElementById(unaugId);
+  const aug = document.getElementById(augId);
+  if (!typeEl) return;
+  const isAug = typeEl.value === 'augmented';
+  if (unaug) unaug.classList.toggle('hidden', isAug);
+  if (aug) aug.classList.toggle('hidden', !isAug);
+}
+
+function toggleRestFields(typeId, unaugId){
+  const typeEl = document.getElementById(typeId);
+  const unaug = document.getElementById(unaugId);
+  if (!typeEl || !unaug) return;
+  const isAug = typeEl.value === 'augmented';
+  unaug.classList.toggle('hidden', isAug);
 }
 
 function onSeatChange(isVO){
@@ -2002,6 +2203,15 @@ const INFO_COPY = {
     net: 'Gross VO pay reduced by the combined marginal federal and provincial rates.',
     marginalFed: 'Marginal federal tax rate based on the VO gross amount.',
     marginalProv: 'Marginal provincial/territorial tax rate based on the VO gross amount.'
+  },
+  duty: {
+    maxFdp: 'Maximum flight duty period based on FDP start time (YYZ local), planned sectors, and augmentation/rest facility limits.',
+    basis: 'Rule bucket used to determine the maximum FDP from the tables.'
+  },
+  rest: {
+    minimum: 'Minimum rest required based on home base/away status, time zone differences, augmentation, and UOC/disruptive schedule rules.',
+    basis: 'Rule bucket used to set the base rest requirement.',
+    extras: 'Additional requirements such as disruptive schedule local night’s rest or UOC extensions.'
   }
 };
 
@@ -2203,6 +2413,55 @@ function renderMonthly(res, params){
   out.innerHTML = statsHTML;
 }
 
+function renderDutyResult(outEl, result, isModern){
+  if (!outEl) return;
+  if (!result || result.maxFdp === null){
+    const message = result?.detail || 'Unable to determine max FDP.';
+    outEl.innerHTML = `<div class="simple"><div class="block"><div class="label">Notice</div><div class="value">${escapeHtml(message)}</div></div></div>`;
+    return;
+  }
+  const maxText = `${formatHoursValue(result.maxFdp)} hours`;
+  const detailText = escapeHtml(result.detail);
+  if (isModern){
+    outEl.innerHTML = `
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Maximum FDP', INFO_COPY.duty.maxFdp)}</div><div class="metric-value">${maxText}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Rule basis', INFO_COPY.duty.basis)}</div><div class="metric-value" style="font-size:14px">${detailText}</div></div>
+      </div>`;
+  } else {
+    outEl.innerHTML = `
+      <div class="simple">
+        <div class="block"><div class="label">${labelWithInfo('Maximum FDP', INFO_COPY.duty.maxFdp)}</div><div class="value">${maxText}</div></div>
+        <div class="block"><div class="label">${labelWithInfo('Rule basis', INFO_COPY.duty.basis)}</div><div class="value" style="font-size:14px">${detailText}</div></div>
+      </div>`;
+  }
+}
+
+function renderRestResult(outEl, result, isModern){
+  if (!outEl) return;
+  const notes = result.notes || [];
+  const notesHtml = notes.length
+    ? `<ul class="note-list">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join('')}</ul>`
+    : '<div class="muted-note">No additional rest adjustments required.</div>';
+  if (isModern){
+    outEl.innerHTML = `
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Minimum rest', INFO_COPY.rest.minimum)}</div><div class="metric-value">${escapeHtml(result.minimumText)}</div></div>
+        <div class="metric-card"><div class="metric-label">${labelWithInfo('Rule basis', INFO_COPY.rest.basis)}</div><div class="metric-value" style="font-size:14px">${escapeHtml(result.basis)}</div></div>
+      </div>
+      <div class="sectionTitle">${labelWithInfo('Additional requirements', INFO_COPY.rest.extras)}</div>
+      ${notesHtml}`;
+  } else {
+    outEl.innerHTML = `
+      <div class="simple">
+        <div class="block"><div class="label">${labelWithInfo('Minimum rest', INFO_COPY.rest.minimum)}</div><div class="value">${escapeHtml(result.minimumText)}</div></div>
+        <div class="block"><div class="label">${labelWithInfo('Rule basis', INFO_COPY.rest.basis)}</div><div class="value" style="font-size:14px">${escapeHtml(result.basis)}</div></div>
+      </div>
+      <div class="sectionTitle">${labelWithInfo('Additional requirements', INFO_COPY.rest.extras)}</div>
+      ${notesHtml}`;
+  }
+}
+
 // --- Actions ---
 function calcAnnual(){
   try{
@@ -2267,6 +2526,84 @@ function calcMonthly(){
     renderMonthly(res, params);
   } catch(err){
     document.getElementById('mon-out').innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
+
+function calcDutyLegacy(){
+  try{
+    const params = {
+      dutyType: document.getElementById('duty-type')?.value,
+      startTime: document.getElementById('duty-start')?.value,
+      sectors: document.getElementById('duty-sectors')?.value,
+      additionalCrew: document.getElementById('duty-crew')?.value,
+      restFacility: document.getElementById('duty-rest-facility')?.value
+    };
+    const res = computeMaxDuty(params);
+    renderDutyResult(document.getElementById('duty-out'), res, false);
+  } catch(err){
+    const out = document.getElementById('duty-out');
+    if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
+
+function calcDutyModern(){
+  try{
+    const params = {
+      dutyType: document.getElementById('modern-duty-type')?.value,
+      startTime: document.getElementById('modern-duty-start')?.value,
+      sectors: document.getElementById('modern-duty-sectors')?.value,
+      additionalCrew: document.getElementById('modern-duty-crew')?.value,
+      restFacility: document.getElementById('modern-duty-rest-facility')?.value
+    };
+    const res = computeMaxDuty(params);
+    renderDutyResult(document.getElementById('modern-duty-out'), res, true);
+  } catch(err){
+    const out = document.getElementById('modern-duty-out');
+    if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
+
+function calcRestLegacy(){
+  try{
+    const params = {
+      dutyType: document.getElementById('rest-duty-type')?.value,
+      fdpDuration: document.getElementById('rest-fdp-duration')?.value,
+      endsHome: document.getElementById('rest-end-location')?.value,
+      timezoneDiff: document.getElementById('rest-timezone-diff')?.value,
+      awayHours: document.getElementById('rest-away-hours')?.value,
+      encroachWOCL: document.getElementById('rest-encroach')?.value,
+      disruptive: document.getElementById('rest-disruptive')?.value,
+      uocOver: document.getElementById('rest-uoc')?.value
+    };
+    const res = computeRestRequirement(params);
+    renderRestResult(document.getElementById('rest-out'), res, false);
+  } catch(err){
+    const out = document.getElementById('rest-out');
+    if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
+
+function calcRestModern(){
+  try{
+    const params = {
+      dutyType: document.getElementById('modern-rest-duty-type')?.value,
+      fdpDuration: document.getElementById('modern-rest-fdp-duration')?.value,
+      endsHome: document.getElementById('modern-rest-end-location')?.value,
+      timezoneDiff: document.getElementById('modern-rest-timezone-diff')?.value,
+      awayHours: document.getElementById('modern-rest-away-hours')?.value,
+      encroachWOCL: document.getElementById('modern-rest-encroach')?.value,
+      disruptive: document.getElementById('modern-rest-disruptive')?.value,
+      uocOver: document.getElementById('modern-rest-uoc')?.value
+    };
+    const res = computeRestRequirement(params);
+    renderRestResult(document.getElementById('modern-rest-out'), res, true);
+  } catch(err){
+    const out = document.getElementById('modern-rest-out');
+    if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
     console.error(err);
   }
 }
@@ -2405,19 +2742,32 @@ function startUtcClock(ids) {
 
 function init(){
   updateVersionBadgeFromSW();
-  startUtcClock(['legacy-utc-clock', 'modern-utc-clock']);
+  startUtcClock([
+    'legacy-utc-clock',
+    'modern-utc-clock',
+    'legacy-duty-utc-clock',
+    'legacy-rest-utc-clock',
+    'modern-duty-utc-clock',
+    'modern-rest-utc-clock'
+  ]);
   switchUIMode('modern');
   // Tabs
   document.getElementById('tabbtn-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('pay'); });
   document.getElementById('tabbtn-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('weather'); });
+  document.getElementById('tabbtn-duty-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('duty-rest'); });
   document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('annual'); });
   document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('monthly'); });
   document.getElementById('tabbtn-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('vo'); });
   document.getElementById('tabbtn-modern-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-pay'); });
   document.getElementById('tabbtn-modern-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-weather'); });
+  document.getElementById('tabbtn-modern-duty-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-duty-rest'); });
   document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
   document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
   document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
+  document.getElementById('tabbtn-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('duty'); });
+  document.getElementById('tabbtn-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('rest'); });
+  document.getElementById('tabbtn-modern-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-duty'); });
+  document.getElementById('tabbtn-modern-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-rest'); });
   document.getElementById('ui-mode')?.addEventListener('change', (e)=>{ const v=e.target.value==='legacy'?'legacy':'modern'; switchUIMode(v); });
   // Dropdown behaviors
   document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
@@ -2438,6 +2788,10 @@ function init(){
   document.getElementById('modern-step')?.addEventListener('change', ()=>tieYearStepFromStepModern());
   document.getElementById('modern-ot-step')?.addEventListener('change', ()=>tieYearStepFromStepModernVO());
   document.getElementById('modern-mon-step')?.addEventListener('change', ()=>tieYearStepFromStepModernMonthly());
+  document.getElementById('duty-type')?.addEventListener('change', ()=>toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields'));
+  document.getElementById('modern-duty-type')?.addEventListener('change', ()=>toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields'));
+  document.getElementById('rest-duty-type')?.addEventListener('change', ()=>toggleRestFields('rest-duty-type','rest-unaug-fields'));
+  document.getElementById('modern-rest-duty-type')?.addEventListener('change', ()=>toggleRestFields('modern-rest-duty-type','modern-rest-unaug-fields'));
   // ESOP slider labels
   const esopEl=document.getElementById('esop'); const esopPct=document.getElementById('esopPct');
   if (esopEl && esopPct){ esopEl.addEventListener('input', ()=>{ esopPct.textContent = esopEl.value+'%'; }); }
@@ -2454,13 +2808,19 @@ function init(){
   document.getElementById('modern-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
   document.getElementById('modern-ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
   document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
+  document.getElementById('duty-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcDutyLegacy(); });
+  document.getElementById('rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestLegacy(); });
+  document.getElementById('modern-duty-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcDutyModern(); });
+  document.getElementById('modern-rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestModern(); });
   document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body' }); });
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
   // Tab defaults
   setLegacyPrimaryTab('pay');
   setLegacySubTab('annual');
+  setLegacyDutyTab('duty');
   setModernPrimaryTab('modern-pay');
   setModernSubTab('modern-annual');
+  setModernDutyTab('modern-duty');
   // Defaults
   onSeatChange(false);
   onSeatChange(true);
@@ -2474,6 +2834,14 @@ function init(){
   tieYearStepFromYearModern();
   tieYearStepFromYearModernVO();
   tieYearStepFromYearModernMonthly();
+  toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields');
+  toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields');
+  toggleRestFields('rest-duty-type','rest-unaug-fields');
+  toggleRestFields('modern-rest-duty-type','modern-rest-unaug-fields');
+  calcDutyLegacy();
+  calcDutyModern();
+  calcRestLegacy();
+  calcRestModern();
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does

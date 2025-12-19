@@ -209,6 +209,8 @@
     .decoder-ok{color:#22c55e}
     .decoder-bad{color:#ef4444}
     .decoder-na{color:#94a3b8}
+    .note-list{margin:8px 0 0 18px;padding:0;color:var(--muted);font-size:13px}
+    .note-list li{margin:4px 0}
   </style>
 </head>
 <body data-ui="modern">
@@ -235,6 +237,7 @@
         <div class="tabs" id="modern-primary-tabs">
           <button class="tabbtn active" data-tab="modern-pay" id="tabbtn-modern-pay">Pay</button>
           <button class="tabbtn" data-tab="modern-weather" id="tabbtn-modern-weather">Weather</button>
+          <button class="tabbtn" data-tab="modern-duty-rest" id="tabbtn-modern-duty-rest">Duty/Rest</button>
         </div>
 
         <div id="modern-pay">
@@ -500,6 +503,134 @@
             </div>
           </div>
         </div>
+
+        <div id="modern-duty-rest" class="modern-tab hidden">
+          <div class="tabs" id="modern-duty-rest-tabs">
+            <button class="tabbtn active" data-tab="modern-duty" id="tabbtn-modern-duty">Duty</button>
+            <button class="tabbtn" data-tab="modern-rest" id="tabbtn-modern-rest">Rest</button>
+          </div>
+
+          <div id="modern-duty" class="modern-tab">
+            <div class="modern-grid">
+              <div class="modern-panel">
+                <h3>Max duty time</h3>
+                <div class="muted-note">Home base: YYZ (acclimatized). Start time uses YYZ local.</div>
+                <div class="stacked-fields">
+                  <div>
+                    <label>Duty type</label>
+                    <select id="modern-duty-type">
+                      <option value="unaugmented" selected>Unaugmented</option>
+                      <option value="augmented">Augmented</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="stacked-fields" id="modern-duty-unaug-fields">
+                  <div>
+                    <label>FDP start time (YYZ local)</label>
+                    <input id="modern-duty-start" type="time" value="07:00">
+                  </div>
+                  <div>
+                    <label>Planned flight sectors</label>
+                    <select id="modern-duty-sectors">
+                      <option value="1">1</option>
+                      <option value="2" selected>2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                      <option value="5">5</option>
+                      <option value="6">6</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="stacked-fields hidden" id="modern-duty-aug-fields">
+                  <div>
+                    <label>Additional crew members</label>
+                    <select id="modern-duty-crew">
+                      <option value="1" selected>1</option>
+                      <option value="2">2</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Rest facility class</label>
+                    <select id="modern-duty-rest-facility">
+                      <option value="1">Class 1</option>
+                      <option value="2">Class 2</option>
+                      <option value="3" selected>Class 3</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="modern-cta"><button id="modern-duty-calc" class="btn-primary" type="button">Calculate max duty</button></div>
+              </div>
+              <div class="modern-panel">
+                <h3>Result</h3>
+                <div id="modern-duty-out"></div>
+                <div class="muted-note" id="modern-duty-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="modern-rest" class="modern-tab hidden">
+            <div class="modern-grid">
+              <div class="modern-panel">
+                <h3>Required rest</h3>
+                <div class="muted-note">Home base: YYZ (acclimatized).</div>
+                <div class="stacked-fields">
+                  <div>
+                    <label>Duty type</label>
+                    <select id="modern-rest-duty-type">
+                      <option value="unaugmented" selected>Unaugmented</option>
+                      <option value="augmented">Augmented</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>FDP duration (hours)</label>
+                    <input id="modern-rest-fdp-duration" type="number" min="0" step="0.25" value="10">
+                  </div>
+                  <div>
+                    <label>FDP ends</label>
+                    <select id="modern-rest-end-location">
+                      <option value="home" selected>At home base (YYZ)</option>
+                      <option value="away">Away from home base</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="stacked-fields" id="modern-rest-unaug-fields">
+                  <div>
+                    <label>Time zone difference from start (hours)</label>
+                    <input id="modern-rest-timezone-diff" type="number" min="0" max="12" step="1" value="0">
+                  </div>
+                  <div>
+                    <label>Time away from home base (hours)</label>
+                    <input id="modern-rest-away-hours" type="number" min="0" step="1" value="24">
+                  </div>
+                  <div>
+                    <label>Returning FDP encroaches WOCL</label>
+                    <select id="modern-rest-encroach">
+                      <option value="no" selected>No</option>
+                      <option value="yes">Yes</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Disruptive schedule (late/night ↔ early)</label>
+                    <select id="modern-rest-disruptive">
+                      <option value="no" selected>No</option>
+                      <option value="yes">Yes</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>FDP exceeds max (UOC) by hours</label>
+                    <input id="modern-rest-uoc" type="number" min="0" step="0.25" value="0">
+                  </div>
+                </div>
+                <div class="modern-cta"><button id="modern-rest-calc" class="btn-primary" type="button">Calculate rest</button></div>
+              </div>
+              <div class="modern-panel">
+                <h3>Result</h3>
+                <div id="modern-rest-out"></div>
+                <div class="muted-note" id="modern-rest-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -510,6 +641,9 @@
       </button>
       <button class="tabbtn" data-tab="weather" id="tabbtn-weather">
         Weather
+      </button>
+      <button class="tabbtn" data-tab="duty-rest" id="tabbtn-duty-rest">
+        Duty/Rest
       </button>
     </div>
 
@@ -755,6 +889,136 @@
     </div>
 
     </div> <!-- /legacy-pay -->
+
+    <div class="card hidden" id="tab-duty-rest">
+      <div class="tabs" id="legacy-duty-tabs">
+        <button class="tabbtn active" data-tab="duty" id="tabbtn-duty">Duty</button>
+        <button class="tabbtn" data-tab="rest" id="tabbtn-rest">Rest</button>
+      </div>
+
+      <div id="tab-duty">
+        <div class="sectionTitle">Max duty time</div>
+        <div class="muted-note">Home base: YYZ (acclimatized). Start time uses YYZ local.</div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Duty type</label>
+            <select id="duty-type">
+              <option value="unaugmented" selected>Unaugmented</option>
+              <option value="augmented">Augmented</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px" id="duty-unaug-fields">
+          <div>
+            <label>FDP start time (YYZ local)</label>
+            <input id="duty-start" type="time" value="07:00">
+          </div>
+          <div>
+            <label>Planned flight sectors</label>
+            <select id="duty-sectors">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+            </select>
+          </div>
+        </div>
+        <div class="row hidden" style="margin-top:10px" id="duty-aug-fields">
+          <div>
+            <label>Additional crew members</label>
+            <select id="duty-crew">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
+            </select>
+          </div>
+          <div>
+            <label>Rest facility class</label>
+            <select id="duty-rest-facility">
+              <option value="1">Class 1</option>
+              <option value="2">Class 2</option>
+              <option value="3" selected>Class 3</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <button id="duty-calc" class="btn" type="button">Calculate max duty</button>
+          </div>
+        </div>
+        <div id="duty-out"></div>
+        <div class="muted-note" id="legacy-duty-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
+      </div>
+
+      <div id="tab-rest" class="hidden">
+        <div class="sectionTitle">Required rest</div>
+        <div class="muted-note">Home base: YYZ (acclimatized).</div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Duty type</label>
+            <select id="rest-duty-type">
+              <option value="unaugmented" selected>Unaugmented</option>
+              <option value="augmented">Augmented</option>
+            </select>
+          </div>
+          <div>
+            <label>FDP duration (hours)</label>
+            <input id="rest-fdp-duration" type="number" min="0" step="0.25" value="10">
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>FDP ends</label>
+            <select id="rest-end-location">
+              <option value="home" selected>At home base (YYZ)</option>
+              <option value="away">Away from home base</option>
+            </select>
+          </div>
+        </div>
+        <div id="rest-unaug-fields">
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>Time zone difference from start (hours)</label>
+              <input id="rest-timezone-diff" type="number" min="0" max="12" step="1" value="0">
+            </div>
+            <div>
+              <label>Time away from home base (hours)</label>
+              <input id="rest-away-hours" type="number" min="0" step="1" value="24">
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>Returning FDP encroaches WOCL</label>
+              <select id="rest-encroach">
+                <option value="no" selected>No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
+            <div>
+              <label>Disruptive schedule (late/night ↔ early)</label>
+              <select id="rest-disruptive">
+                <option value="no" selected>No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>FDP exceeds max (UOC) by hours</label>
+              <input id="rest-uoc" type="number" min="0" step="0.25" value="0">
+            </div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <button id="rest-calc" class="btn" type="button">Calculate rest</button>
+          </div>
+        </div>
+        <div id="rest-out"></div>
+        <div class="muted-note" id="legacy-rest-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
+      </div>
+    </div>
 
     <!-- Weather Tab -->
     <div class="card hidden" id="tab-weather">
