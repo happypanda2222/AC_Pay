@@ -102,6 +102,7 @@ const METAR_TEXT_FALLBACKS = [
 ];
 const TAF_TEXT_FALLBACK = (icao) => `https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`;
 const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
+const AIRPORT_TZ_LOOKUP_URL = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
 const CORS_PROXY_BUILDERS = [
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   url => `https://cors.isomorphic-git.org/${url}`,
@@ -115,6 +116,8 @@ const CORS_PROXY_PREFIXES = [
   'https://thingproxy.freeboard.io/fetch/'
 ];
 let airportLookupPromise = null;
+let airportTimezonePromise = null;
+const AIRPORT_TZ_FALLBACK = { YYZ: 'America/Toronto', CYYZ: 'America/Toronto' };
 const IATA_FALLBACK_MAP = {
   ABJ:'DIAP', ADD:'HAAB', AKL:'NZAA', AMS:'EHAM', ANU:'TAPA', ATL:'KATL', AUA:'TNCA', AUH:'OMAA', AZS:'MDCY',
   BAH:'OBBI', BCN:'LEBL', BDA:'TXKF', BDL:'KBDL', BGI:'TBPB', BJM:'HBBA', BKK:'VTBS', BNA:'KBNA', BOG:'SKBO',
@@ -1684,6 +1687,75 @@ async function loadAirportLookup(){
     });
   return airportLookupPromise;
 }
+async function loadAirportTimezones(){
+  if (airportTimezonePromise) return airportTimezonePromise;
+  airportTimezonePromise = fetchJsonWithCorsFallback(AIRPORT_TZ_LOOKUP_URL, 'force-cache')
+    .then(list => {
+      const map = { ...AIRPORT_TZ_FALLBACK };
+      if (list && typeof list === 'object'){
+        Object.values(list).forEach(entry => {
+          const tz = entry?.tz;
+          if (!tz) return;
+          const iata = entry?.iata;
+          const icao = entry?.icao;
+          if (iata) map[String(iata).toUpperCase()] = tz;
+          if (icao) map[String(icao).toUpperCase()] = tz;
+        });
+      }
+      return map;
+    })
+    .catch(err => {
+      console.warn('Airport timezone fetch failed; using fallback map only.', err);
+      return { ...AIRPORT_TZ_FALLBACK };
+    });
+  return airportTimezonePromise;
+}
+async function resolveAirportTimeZone(input){
+  const code = String(input || '').trim().toUpperCase();
+  if (!code) throw new Error('Enter a layover airport code.');
+  if (code.length !== 3 && code.length !== 4){
+    throw new Error('Use a 3-letter IATA or 4-letter ICAO code for the layover airport.');
+  }
+  const lookup = await loadAirportTimezones();
+  if (lookup[code]) return lookup[code];
+  if (code.length === 3 && lookup[`C${code}`]) return lookup[`C${code}`];
+  throw new Error(`Unable to find a time zone for ${code}.`);
+}
+function getTimeZoneOffsetMinutes(timeZone, date){
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const parts = dtf.formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+  let hour = Number(parts.hour);
+  if (hour === 24) hour = 0;
+  const utcTime = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    hour,
+    Number(parts.minute),
+    Number(parts.second)
+  );
+  return (utcTime - date.getTime()) / 60000;
+}
+async function computeTimezoneDiffFromYYZ(input){
+  const layoverZone = await resolveAirportTimeZone(input);
+  const now = new Date();
+  const yyzOffset = getTimeZoneOffsetMinutes('America/Toronto', now);
+  const layoverOffset = getTimeZoneOffsetMinutes(layoverZone, now);
+  const diffHours = Math.abs((layoverOffset - yyzOffset) / 60);
+  return Math.round(diffHours * 100) / 100;
+}
 async function resolveAirportCode(input){
   const code = String(input || '').trim().toUpperCase();
   if (!code) throw new Error('Enter an airport code.');
@@ -2209,7 +2281,7 @@ const INFO_COPY = {
     basis: 'Rule bucket used to determine the maximum FDP from the tables.'
   },
   rest: {
-    minimum: 'Minimum rest required based on home base/away status, time zone differences, augmentation, and UOC/disruptive schedule rules.',
+    minimum: 'Minimum rest required based on home base/away status, time zone differences (calculated from the layover location vs YYZ using today’s date), augmentation, and UOC/disruptive schedule rules.',
     basis: 'Rule bucket used to set the base rest requirement.',
     extras: 'Additional requirements such as disruptive schedule local night’s rest or UOC extensions.'
   }
@@ -2566,43 +2638,51 @@ function calcDutyModern(){
   }
 }
 
-function calcRestLegacy(){
+async function calcRestLegacy(){
+  const out = document.getElementById('rest-out');
   try{
+    const dutyType = document.getElementById('rest-duty-type')?.value;
+    const timezoneDiff = dutyType === 'augmented'
+      ? 0
+      : await computeTimezoneDiffFromYYZ(document.getElementById('rest-layover-location')?.value);
     const params = {
-      dutyType: document.getElementById('rest-duty-type')?.value,
+      dutyType,
       fdpDuration: document.getElementById('rest-fdp-duration')?.value,
       endsHome: document.getElementById('rest-end-location')?.value,
-      timezoneDiff: document.getElementById('rest-timezone-diff')?.value,
+      timezoneDiff,
       awayHours: document.getElementById('rest-away-hours')?.value,
       encroachWOCL: document.getElementById('rest-encroach')?.value,
       disruptive: document.getElementById('rest-disruptive')?.value,
       uocOver: document.getElementById('rest-uoc')?.value
     };
     const res = computeRestRequirement(params);
-    renderRestResult(document.getElementById('rest-out'), res, false);
+    renderRestResult(out, res, false);
   } catch(err){
-    const out = document.getElementById('rest-out');
     if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
     console.error(err);
   }
 }
 
-function calcRestModern(){
+async function calcRestModern(){
+  const out = document.getElementById('modern-rest-out');
   try{
+    const dutyType = document.getElementById('modern-rest-duty-type')?.value;
+    const timezoneDiff = dutyType === 'augmented'
+      ? 0
+      : await computeTimezoneDiffFromYYZ(document.getElementById('modern-rest-layover-location')?.value);
     const params = {
-      dutyType: document.getElementById('modern-rest-duty-type')?.value,
+      dutyType,
       fdpDuration: document.getElementById('modern-rest-fdp-duration')?.value,
       endsHome: document.getElementById('modern-rest-end-location')?.value,
-      timezoneDiff: document.getElementById('modern-rest-timezone-diff')?.value,
+      timezoneDiff,
       awayHours: document.getElementById('modern-rest-away-hours')?.value,
       encroachWOCL: document.getElementById('modern-rest-encroach')?.value,
       disruptive: document.getElementById('modern-rest-disruptive')?.value,
       uocOver: document.getElementById('modern-rest-uoc')?.value
     };
     const res = computeRestRequirement(params);
-    renderRestResult(document.getElementById('modern-rest-out'), res, true);
+    renderRestResult(out, res, true);
   } catch(err){
-    const out = document.getElementById('modern-rest-out');
     if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
     console.error(err);
   }
