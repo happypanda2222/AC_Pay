@@ -77,16 +77,6 @@ const TAF_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`,
   (icao) => `https://aviationweather.gov/cgi-bin/data/taf.php?format=json&ids=${icao}`
 ];
-const TAF_DECODER_SOURCES = [
-  (icao) => `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`,
-  (icao) => `https://aviationweather.gov/cgi-bin/data/taf.php?format=json&ids=${icao}`,
-  (icao) => TAF_TEXT_FALLBACK(icao)
-];
-const NOTAM_SOURCES = [
-  (icao) => `${CORS_PROXY}${encodeURIComponent(`https://www.aviationweather.gov/api/data/notam?format=json&ids=${icao}`)}`,
-  (icao) => `${CORS_PROXY}${encodeURIComponent(`https://api.flightplandatabase.com/nav/notams/${icao}`)}`,
-  (icao) => `${CORS_PROXY}${encodeURIComponent(`https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${icao}`)}`
-];
 const METAR_TEXT_FALLBACKS = [
   (icao) => `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`,
   (icao) => `https://metar.vatsim.net/${icao}`
@@ -1131,6 +1121,34 @@ function parseTafText(raw, icao){
     fcsts
   };
 }
+function buildTafFromRaw(rawTAF, icao, sourceLabel){
+  const cleaned = String(rawTAF || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return null;
+  const fcsts = parseTafRawForecasts(cleaned);
+  if (!fcsts.length) return null;
+  return {
+    icaoId: icao,
+    name: `${icao} (${sourceLabel})`,
+    rawTAF: cleaned,
+    fcsts
+  };
+}
+function parseTafFromNwsProduct(text, icao){
+  if (!text) return null;
+  const cleaned = String(text).replace(/\r/g, '').trim();
+  if (!cleaned) return null;
+  const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
+  const startIdx = lines.findIndex(line => /\bTAF\b/.test(line));
+  const tafLines = startIdx === -1 ? lines : lines.slice(startIdx);
+  const rawTAF = tafLines.join(' ').replace(/\s+/g, ' ').trim();
+  return buildTafFromRaw(rawTAF, icao, 'NWS feed');
+}
+function icaoToNwsTafLocation(icao){
+  const code = String(icao || '').toUpperCase();
+  if (code.length === 3) return code;
+  if (code.length === 4 && code.startsWith('K')) return code.slice(1);
+  return null;
+}
 function parseTafRawForecasts(rawTAF){
   if (!rawTAF) return [];
   const tokens = rawTAF.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
@@ -1367,6 +1385,30 @@ function parseNotamList(raw){
   }
   return [];
 }
+function parseFlightplanDbNotams(payload){
+  if (!payload) return [];
+  const list = Array.isArray(payload.notams) ? payload.notams
+    : Array.isArray(payload.data) ? payload.data
+    : Array.isArray(payload.results) ? payload.results
+    : Array.isArray(payload.items) ? payload.items
+    : Array.isArray(payload) ? payload
+    : [];
+  if (!Array.isArray(list) || !list.length) return [];
+  return list.map(n => ({
+    text: n.text || n.notam || n.raw || n.message || n.description || '',
+    start: Date.parse(n.start_time || n.start || n.effective || n.validFrom || n.from) || null,
+    end: Date.parse(n.end_time || n.end || n.expires || n.validTo || n.to) || null
+  })).filter(n => n.text);
+}
+function parseNotamFaaRawText(raw){
+  const cleaned = String(raw || '').replace(/\r/g, '').trim();
+  if (!cleaned) return [];
+  if (/<!DOCTYPE|<html|Just a moment|Error 404|Not Found|CAPTCHA/i.test(cleaned)) return [];
+  const normalized = cleaned.replace(/\s+/g, ' ').trim();
+  const chunks = normalized.split('!').map(text => text.trim()).filter(Boolean);
+  if (!chunks.length) return [];
+  return chunks.map(text => ({ text: `!${text}`, start: null, end: null }));
+}
 function classifyNotamSeverity(text){
   const upper = text.toUpperCase();
   if (/RUNWAY|RWY|AD\s+CLOSED|AIRPORT\s+CLOSED|AD\s+CLSD|RWY\s+CLSD/.test(upper)) return 'red';
@@ -1598,40 +1640,78 @@ async function fetchJsonWeatherRecord(builders, icao, label, keys){
   }
   return null;
 }
+async function fetchTafDecoderAviationWeather(icao){
+  const url = `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`;
+  const payload = await fetchJsonWithCorsFallback(url, 'no-store');
+  const record = pickFirstWeatherRecord(payload, ['tafs', 'data', 'results']);
+  return { taf: normalizeTafPayload(record, icao) };
+}
+async function fetchTafDecoderNoaaText(icao){
+  const url = TAF_TEXT_FALLBACK(icao);
+  const txt = await fetchTextWithCorsFallback(url, 'no-store');
+  const taf = parseTafText(txt, icao);
+  if (taf) taf.name = `${icao} (NOAA text feed)`;
+  return { taf };
+}
+async function fetchTafDecoderNws(icao){
+  const station = icaoToNwsTafLocation(icao);
+  if (!station) return { taf: null };
+  const listUrl = `https://api.weather.gov/products/types/TAF/locations/${station}`;
+  const listing = await fetchJsonWithCorsFallback(listUrl, 'no-store');
+  const entries = Array.isArray(listing?.['@graph']) ? listing['@graph'] : [];
+  if (!entries.length) return { taf: null };
+  const latest = entries.reduce((best, item) => {
+    if (!best) return item;
+    const bestTime = Date.parse(best.issuanceTime || '') || 0;
+    const itemTime = Date.parse(item.issuanceTime || '') || 0;
+    return itemTime > bestTime ? item : best;
+  }, null);
+  if (!latest?.id) return { taf: null };
+  const product = await fetchJsonWithCorsFallback(`https://api.weather.gov/products/${latest.id}`, 'no-store');
+  const productText = product?.productText || product?.text || '';
+  return { taf: parseTafFromNwsProduct(productText, icao) };
+}
 async function fetchTafDecoders(icao){
-  const sources = TAF_DECODER_SOURCES.map((buildUrl, idx) => {
-    return (async () => {
-      try {
-        if (idx === 2){
-          const txt = await fetchTextWithCorsFallback(buildUrl(icao), 'no-store');
-          return { taf: parseTafText(txt, icao) };
-        }
-        const payload = await fetchJsonWithCorsFallback(buildUrl(icao), 'no-store');
-        const record = pickFirstWeatherRecord(payload, ['tafs', 'data', 'results']);
-        return { taf: normalizeTafPayload(record, icao) };
-      } catch(err){
-        console.warn(`TAF decoder ${idx + 1} failed for ${icao}`, err);
-        return { taf: null };
-      }
-    })();
-  });
-  return Promise.all(sources);
+  const decoders = [
+    fetchTafDecoderAviationWeather,
+    fetchTafDecoderNoaaText,
+    fetchTafDecoderNws
+  ];
+  return Promise.all(decoders.map(async (fn, idx) => {
+    try {
+      return await fn(icao);
+    } catch(err){
+      console.warn(`TAF decoder ${idx + 1} failed for ${icao}`, err);
+      return { taf: null };
+    }
+  }));
 }
 async function fetchNotamDecoders(icao){
-  const decoders = NOTAM_SOURCES.map((buildUrl, idx) => (async () => {
+  const decoders = [
+    async (code) => {
+      const url = `https://www.aviationweather.gov/api/data/notam?format=json&ids=${code}`;
+      const payload = await fetchJsonWithCorsFallback(url, 'no-store');
+      return { notams: parseNotamList(payload) };
+    },
+    async (code) => {
+      const url = `https://api.flightplandatabase.com/nav/notams/${code}`;
+      const payload = await fetchJsonWithCorsFallback(url, 'no-store');
+      return { notams: parseFlightplanDbNotams(payload) };
+    },
+    async (code) => {
+      const url = `https://notams.aim.faa.gov/notamSearch/nfdcNotams?reportType=Raw&formatType=ICAO&locations=${code}`;
+      const payload = await fetchTextWithCorsFallback(url, 'no-store');
+      return { notams: parseNotamFaaRawText(payload) };
+    }
+  ];
+  return Promise.all(decoders.map(async (fn, idx) => {
     try {
-      const url = buildUrl(icao);
-      const payload = idx === 2
-        ? await fetchTextWithCorsFallback(url, 'no-store')
-        : await fetchJsonWithCorsFallback(url, 'no-store');
-      const notams = parseNotamList(payload);
-      return { notams };
+      return await fn(icao);
     } catch(err){
       console.warn(`NOTAM decoder ${idx + 1} failed for ${icao}`, err);
       return { notams: [] };
     }
-  })());
-  return Promise.all(decoders);
+  }));
 }
 async function fetchWeatherForAirport(icao){
   const [metarJson, tafJson] = await Promise.all([
