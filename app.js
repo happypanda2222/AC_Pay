@@ -1487,11 +1487,21 @@ function classifyNotamSeverity(text){
 function filterActiveNotams(notams, targetMs){
   const windowStart = targetMs - 3600000;
   const windowEnd = targetMs + 3600000;
-  return notams.filter(n => {
+  const matches = notams.filter(n => {
     const start = n.start || 0;
     const end = n.end || Infinity;
     return start <= windowEnd && end >= windowStart;
   });
+  if (matches.length) return matches;
+  const nowMs = Date.now();
+  const nowWindowStart = nowMs - 3600000;
+  const nowWindowEnd = nowMs + 3600000;
+  const nowMatches = notams.filter(n => {
+    const start = n.start || 0;
+    const end = n.end || Infinity;
+    return start <= nowWindowEnd && end >= nowWindowStart;
+  });
+  return nowMatches.length ? nowMatches : notams;
 }
 function buildNotamConsensus(decodes){
   const pools = (decodes || []).map(d => (d?.notams || []).filter(n => n && n.text));
