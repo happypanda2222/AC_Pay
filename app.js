@@ -1995,6 +1995,65 @@ function formatZulu(ms){
   const d = new Date(ms);
   return d.toISOString().slice(0,16).replace('T',' ') + 'Z';
 }
+function formatZuluHour(ms){
+  const d = new Date(ms);
+  const hour = String(d.getUTCHours()).padStart(2, '0');
+  return `${hour}Z`;
+}
+function formatZuluHourRange(startMs, endMs){
+  const start = new Date(startMs);
+  const end = new Date(endMs);
+  const startHour = String(start.getUTCHours()).padStart(2, '0');
+  const endHour = String(end.getUTCHours()).padStart(2, '0');
+  return `${startHour}-${endHour}Z`;
+}
+function driverLabelForSegment(seg){
+  const change = String(seg?.changeIndicator || '').toUpperCase();
+  const probLabel = tafProbLabel(seg);
+  if (probLabel){
+    return change.includes('TEMPO') ? `${probLabel} TEMPO` : probLabel;
+  }
+  if (change.includes('BECMG')) return 'BECMG';
+  if (change.includes('TEMPO')) return 'TEMPO';
+  return 'FROM';
+}
+function buildTafDriversSummary(fcsts, targetMs, ceiling, visibility){
+  if (!Array.isArray(fcsts) || !fcsts.length) return '';
+  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
+  const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs)].filter(Boolean);
+  if (!segments.length) return '';
+  const drivers = [];
+  const addDriver = (seg, valueText) => {
+    if (!seg || !valueText) return;
+    const label = driverLabelForSegment(seg);
+    const timeText = label === 'FROM'
+      ? formatZuluHour(seg.timeFrom * 1000)
+      : formatZuluHourRange(seg.timeFrom * 1000, seg.timeTo * 1000);
+    const key = `${label}|${timeText}`;
+    const existing = drivers.find(d => d.key === key);
+    if (existing){
+      existing.values.push(valueText);
+    } else {
+      drivers.push({ key, label, timeText, values: [valueText] });
+    }
+  };
+  if (ceiling !== null && ceiling !== undefined){
+    const ceilingSeg = segments.find(seg => {
+      const segCeiling = ceilingWithCarry(ordered, seg);
+      return segCeiling !== null && segCeiling !== undefined && segCeiling === ceiling;
+    });
+    addDriver(ceilingSeg, `${ceiling}FT`);
+  }
+  if (visibility !== null && visibility !== undefined){
+    const visSeg = segments.find(seg => {
+      const segVis = visibilityWithCarry(ordered, seg);
+      return segVis !== null && segVis !== undefined && segVis === visibility;
+    });
+    addDriver(visSeg, formatVisSm(visibility));
+  }
+  return drivers.map(d => `${d.label} ${d.timeText} ${d.values.join(' / ')}`).join(', ');
+}
 function sleep(ms){
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -2151,6 +2210,9 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   if (vis !== null) reasonBits.push(`Vis ${formatVisSm(vis)}`);
   if (wx && wx !== 'None reported') reasonBits.push(wx);
   if (!segment) reasonBits.push('No METAR/TAF available');
+  const driversSummary = source === 'TAF'
+    ? buildTafDriversSummary(tafFcsts || [], targetMs, ceiling, vis)
+    : '';
   return {
     label,
     icao: airportData.icao,
@@ -2168,7 +2230,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     wx,
     probFlag,
     tafIcons,
-    summary: reasonBits.join(' · ') || 'No significant weather decoded'
+    summary: driversSummary || reasonBits.join(' · ') || 'No significant weather decoded'
   };
 }
 function renderWeatherResults(outEl, rawEl, assessments, rawSources){
