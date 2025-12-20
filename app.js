@@ -81,6 +81,7 @@ const AUGMENTED_FDP_TABLE = [
   { additional: 1, facility: 3, max: 14 },
   { additional: 1, facility: 1, max: 15 },
   { additional: 1, facility: 2, max: 15 },
+  { additional: 2, facility: 1, max: 18 },
   { additional: 2, facility: 3, max: 15.25 },
   { additional: 2, facility: 2, max: 16.5 }
 ];
@@ -2296,7 +2297,7 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on the VO gross amount.'
   },
   duty: {
-    maxFdp: 'Maximum flight duty period based on FDP start time (YYZ local), planned sectors, and augmentation/rest facility limits.',
+    maxFdp: 'Maximum flight duty period based on FDP start time (YYZ local), planned sectors, and augmentation/rest facility limits (including 2 additional crew with Class 1 rest at 18 hours).',
     basis: 'Rule bucket used to determine the maximum FDP from the tables.'
   },
   rest: {
