@@ -586,18 +586,11 @@
                     <input id="modern-rest-fdp-duration" type="number" min="0" step="0.25" value="10">
                   </div>
                   <div>
-                    <label>FDP ends</label>
-                    <select id="modern-rest-end-location">
-                      <option value="home" selected>At home base (YYZ)</option>
-                      <option value="away">Away from home base</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="stacked-fields" id="modern-rest-unaug-fields">
-                  <div>
                     <label>Layover location (IATA/ICAO)</label>
                     <input id="modern-rest-layover-location" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LHR">
                   </div>
+                </div>
+                <div class="stacked-fields" id="modern-rest-unaug-fields">
                   <div>
                     <label>Time away from home base (hours)</label>
                     <input id="modern-rest-away-hours" type="number" min="0" step="1" value="24">
@@ -970,19 +963,12 @@
         </div>
         <div class="row" style="margin-top:10px">
           <div>
-            <label>FDP ends</label>
-            <select id="rest-end-location">
-              <option value="home" selected>At home base (YYZ)</option>
-              <option value="away">Away from home base</option>
-            </select>
+            <label>Layover location (IATA/ICAO)</label>
+            <input id="rest-layover-location" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LHR">
           </div>
         </div>
           <div id="rest-unaug-fields">
           <div class="row" style="margin-top:10px">
-            <div>
-              <label>Layover location (IATA/ICAO)</label>
-              <input id="rest-layover-location" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LHR">
-            </div>
             <div>
               <label>Time away from home base (hours)</label>
               <input id="rest-away-hours" type="number" min="0" step="1" value="24">

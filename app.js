@@ -115,6 +115,7 @@ const CORS_PROXY_PREFIXES = [
   'https://corsproxy.io/?',
   'https://thingproxy.freeboard.io/fetch/'
 ];
+const HOME_BASE_CODES = new Set(['YYZ', 'CYYZ']);
 let airportLookupPromise = null;
 let airportTimezonePromise = null;
 const AIRPORT_TZ_FALLBACK = { YYZ: 'America/Toronto', CYYZ: 'America/Toronto' };
@@ -841,6 +842,15 @@ function formatHoursValue(value){
   if (!Number.isFinite(rounded)) return '--';
   if (Math.abs(rounded % 1) < 1e-9) return String(rounded.toFixed(0));
   return String(rounded.toFixed(2)).replace(/0+$/,'').replace(/\.$/,'');
+}
+
+function normalizeAirportCode(code){
+  return String(code || '').trim().toUpperCase();
+}
+
+function isHomeBaseCode(code){
+  const normalized = normalizeAirportCode(code);
+  return HOME_BASE_CODES.has(normalized);
 }
 
 function computeMaxDuty(params){
@@ -2281,7 +2291,7 @@ const INFO_COPY = {
     basis: 'Rule bucket used to determine the maximum FDP from the tables.'
   },
   rest: {
-    minimum: 'Minimum rest required based on home base/away status, time zone differences (calculated from the layover location vs YYZ using today’s date), augmentation, and UOC/disruptive schedule rules.',
+    minimum: 'Minimum rest required based on home base/away status (inferred from the layover code; YYZ/CYYZ treated as home base), time zone differences (calculated from the layover location vs YYZ using today’s date), augmentation, and UOC/disruptive schedule rules.',
     basis: 'Rule bucket used to set the base rest requirement.',
     extras: 'Additional requirements such as disruptive schedule local night’s rest or UOC extensions.'
   }
@@ -2642,13 +2652,15 @@ async function calcRestLegacy(){
   const out = document.getElementById('rest-out');
   try{
     const dutyType = document.getElementById('rest-duty-type')?.value;
-    const timezoneDiff = dutyType === 'augmented'
+    const layoverCode = document.getElementById('rest-layover-location')?.value;
+    const endsHome = isHomeBaseCode(layoverCode) ? 'home' : 'away';
+    const timezoneDiff = endsHome === 'home'
       ? 0
-      : await computeTimezoneDiffFromYYZ(document.getElementById('rest-layover-location')?.value);
+      : await computeTimezoneDiffFromYYZ(layoverCode);
     const params = {
       dutyType,
       fdpDuration: document.getElementById('rest-fdp-duration')?.value,
-      endsHome: document.getElementById('rest-end-location')?.value,
+      endsHome,
       timezoneDiff,
       awayHours: document.getElementById('rest-away-hours')?.value,
       encroachWOCL: document.getElementById('rest-encroach')?.value,
@@ -2667,13 +2679,15 @@ async function calcRestModern(){
   const out = document.getElementById('modern-rest-out');
   try{
     const dutyType = document.getElementById('modern-rest-duty-type')?.value;
-    const timezoneDiff = dutyType === 'augmented'
+    const layoverCode = document.getElementById('modern-rest-layover-location')?.value;
+    const endsHome = isHomeBaseCode(layoverCode) ? 'home' : 'away';
+    const timezoneDiff = endsHome === 'home'
       ? 0
-      : await computeTimezoneDiffFromYYZ(document.getElementById('modern-rest-layover-location')?.value);
+      : await computeTimezoneDiffFromYYZ(layoverCode);
     const params = {
       dutyType,
       fdpDuration: document.getElementById('modern-rest-fdp-duration')?.value,
-      endsHome: document.getElementById('modern-rest-end-location')?.value,
+      endsHome,
       timezoneDiff,
       awayHours: document.getElementById('modern-rest-away-hours')?.value,
       encroachWOCL: document.getElementById('modern-rest-encroach')?.value,
