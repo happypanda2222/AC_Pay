@@ -1103,8 +1103,17 @@ function toggleDutyFields(typeId, unaugId, augId){
   const aug = document.getElementById(augId);
   if (!typeEl) return;
   const isAug = typeEl.value === 'augmented';
-  if (unaug) unaug.classList.toggle('hidden', isAug);
-  if (aug) aug.classList.toggle('hidden', !isAug);
+  if (unaug) {
+    unaug.classList.toggle('hidden', isAug);
+    unaug.setAttribute('aria-hidden', String(isAug));
+  }
+  if (aug) {
+    aug.classList.toggle('hidden', !isAug);
+    aug.setAttribute('aria-hidden', String(!isAug));
+    aug.querySelectorAll('input, select, textarea').forEach((field) => {
+      field.disabled = !isAug;
+    });
+  }
 }
 
 function toggleRestFields(typeId, unaugId){
