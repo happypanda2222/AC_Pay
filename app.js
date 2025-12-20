@@ -1523,7 +1523,9 @@ function parseTafRawForecasts(rawTAF){
       clouds: (Array.isArray(seg.clouds) && seg.clouds.length) ? seg.clouds : (base.clouds || [])
     };
   }).filter(Boolean);
-  return [...baseSegments, ...overlaysWithBase].filter(Boolean);
+  const fcsts = [...baseSegments, ...overlaysWithBase].filter(Boolean);
+  fcsts.fmTimes = parseTafFmTimes(rawTAF);
+  return fcsts;
 }
 function normalizeTafPayload(raw, icao){
   if (!raw) return null;
@@ -1577,8 +1579,22 @@ function normalizeTafPayload(raw, icao){
     };
   }).filter(Boolean);
   const rawTAF = raw.rawTAF || raw.raw_text || raw.taf || '';
+  const fmTimes = parseTafFmTimes(rawTAF);
   const sorted = fcsts.sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  sorted.fmTimes = fmTimes;
   return sorted.length ? { icaoId: icao, name: raw.name || `${icao} (decoder)`, rawTAF, fcsts: sorted } : null;
+}
+function parseTafFmTimes(rawTAF){
+  if (!rawTAF) return [];
+  const tokens = String(rawTAF).replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const times = tokens.map(token => {
+    const match = token.match(/^FM(\d{2})(\d{2})(\d{2})$/);
+    if (!match) return null;
+    const [, dd, hh, mm] = match;
+    const ms = approximateUtcFromDayHour(Number(dd), Number(hh), Number(mm));
+    return Math.floor(ms / 1000);
+  }).filter(Boolean);
+  return Array.from(new Set(times)).sort((a, b) => a - b);
 }
 function majorityVote(items, keyFn){
   const counts = new Map();
@@ -1865,11 +1881,18 @@ function hasSkyClear(segment){
   return /\bSKC\b/.test(String(raw).toUpperCase());
 }
 function tafOrderedFcsts(fcsts){
-  return [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  if (Array.isArray(fcsts?.fmTimes)) ordered.fmTimes = fcsts.fmTimes;
+  return ordered;
 }
 function tafFromCutoffTime(ordered, targetMs){
   if (!Array.isArray(ordered) || !ordered.length) return null;
   let cutoff = null;
+  const fmTimes = Array.isArray(ordered.fmTimes) ? ordered.fmTimes : [];
+  fmTimes.forEach(timeFrom => {
+    if (!Number.isFinite(timeFrom) || timeFrom * 1000 > targetMs) return;
+    if (cutoff === null || timeFrom > cutoff) cutoff = timeFrom;
+  });
   ordered.forEach(seg => {
     const segFrom = Number(seg?.timeFrom);
     if (!Number.isFinite(segFrom) || segFrom * 1000 > targetMs) return;
