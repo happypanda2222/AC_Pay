@@ -1649,8 +1649,9 @@ function tafConsensusForTime(decodes, targetMs){
     if (!d || !d.taf) return null;
     const seg = tafSegmentForTime(d.taf.fcsts, targetMs);
     if (!seg) return null;
-    const ceiling = ceilingWithCarry(d.taf.fcsts, seg);
-    const vis = visibilityWithCarry(d.taf.fcsts, seg);
+    const worst = tafWorstConditionsForTime(d.taf.fcsts, targetMs);
+    const ceiling = worst.ceiling;
+    const vis = worst.visibility;
     const wxKey = wxWithCarry(d.taf.fcsts, seg).toUpperCase().replace(/\s+/g,' ').trim();
     return {
       seg,
@@ -1971,6 +1972,25 @@ function tafSegmentForTime(fcsts, targetMs){
   const future = ordered.find(f => f.timeFrom * 1000 > targetMs);
   return future || ordered[ordered.length - 1];
 }
+function tafWorstConditionsForTime(fcsts, targetMs){
+  if (!Array.isArray(fcsts) || !fcsts.length) return { ceiling: null, visibility: null, segments: [] };
+  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
+  const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs)].filter(Boolean);
+  let worstCeiling = null;
+  let worstVisibility = null;
+  segments.forEach(seg => {
+    const ceiling = ceilingWithCarry(ordered, seg);
+    if (ceiling !== null && ceiling !== undefined){
+      worstCeiling = worstCeiling === null ? ceiling : Math.min(worstCeiling, ceiling);
+    }
+    const vis = visibilityWithCarry(ordered, seg);
+    if (vis !== null && vis !== undefined){
+      worstVisibility = worstVisibility === null ? vis : Math.min(worstVisibility, vis);
+    }
+  });
+  return { ceiling: worstCeiling, visibility: worstVisibility, segments };
+}
 function formatZulu(ms){
   const d = new Date(ms);
   return d.toISOString().slice(0,16).replace('T',' ') + 'Z';
@@ -2112,8 +2132,9 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const source = useMetar ? 'METAR' : (tafSeg ? 'TAF' : 'METAR');
   const sourceDetail = source === 'TAF' && tafProbLabelText ? `${source} · ${tafProbLabelText}` : source;
   const probFlag = source === 'TAF' ? tafProbLabelText : '';
-  const ceiling = source === 'TAF' ? ceilingWithCarry(tafFcsts || [], segment) : extractCeilingFt(segment?.clouds, segment?.vertVis);
-  const vis = source === 'TAF' ? visibilityWithCarry(tafFcsts || [], segment) : parseVisibilityToSM(segment?.visib);
+  const tafWorst = source === 'TAF' ? tafWorstConditionsForTime(tafFcsts || [], targetMs) : null;
+  const ceiling = source === 'TAF' ? tafWorst.ceiling : extractCeilingFt(segment?.clouds, segment?.vertVis);
+  const vis = source === 'TAF' ? tafWorst.visibility : parseVisibilityToSM(segment?.visib);
   const rules = classifyFlightRules(ceiling, vis);
   const ils = ilsCategory(ceiling, vis);
   const skyClear = ceiling === null && hasSkyClear(segment);
@@ -2178,8 +2199,8 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources){
         </div>
       </div>
       <div class="wx-metric">
-        <div class="wx-box"><div class="label">Ceiling</div><div class="value">${escapeHtml(ceilTxt)}</div></div>
-        <div class="wx-box"><div class="label">Visibility</div><div class="value">${escapeHtml(visTxt)}</div></div>
+        <div class="wx-box"><div class="label">${labelWithInfo('Ceiling', INFO_COPY.weather.ceiling)}</div><div class="value">${escapeHtml(ceilTxt)}</div></div>
+        <div class="wx-box"><div class="label">${labelWithInfo('Visibility', INFO_COPY.weather.visibility)}</div><div class="value">${escapeHtml(visTxt)}</div></div>
         <div class="wx-box"><div class="label">ILS guidance</div><div class="value"><span class="ils-badge">${escapeHtml(a.ils.cat)}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(a.ils.reason)}</div></div></div>
         <div class="wx-box"><div class="label">Drivers</div><div class="value" style="font-size:14px;line-height:1.4">${escapeHtml(a.summary)}</div></div>
         <div class="wx-box"><div class="label">TAF decoders</div><div class="value">${renderDecoderIcons(a.tafIcons)}</div></div>
@@ -2295,6 +2316,10 @@ const INFO_COPY = {
     net: 'Gross VO pay reduced by the combined marginal federal and provincial rates.',
     marginalFed: 'Marginal federal tax rate based on the VO gross amount.',
     marginalProv: 'Marginal provincial/territorial tax rate based on the VO gross amount.'
+  },
+  weather: {
+    ceiling: 'Lowest ceiling across overlapping TAF segments at the selected time (TEMPO/PROB included).',
+    visibility: 'Lowest visibility across overlapping TAF segments at the selected time (TEMPO/PROB included).'
   },
   duty: {
     maxFdp: 'Maximum flight duty period based on FDP start time (YYZ local), planned sectors, and augmentation/rest facility limits (including 2 additional crew with Class 1 rest at 18 hours).',
