@@ -1864,13 +1864,34 @@ function hasSkyClear(segment){
   const raw = segment?.rawOb || segment?.raw_text || segment?.rawTAF || segment?.raw || '';
   return /\bSKC\b/.test(String(raw).toUpperCase());
 }
+function tafOrderedFcsts(fcsts){
+  return [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+}
+function tafFromCutoffTime(ordered, targetMs){
+  if (!Array.isArray(ordered) || !ordered.length) return null;
+  let cutoff = null;
+  ordered.forEach(seg => {
+    const segFrom = Number(seg?.timeFrom);
+    if (!Number.isFinite(segFrom) || segFrom * 1000 > targetMs) return;
+    const change = String(seg?.changeIndicator || '').toUpperCase();
+    const isFrom = change.startsWith('FM') || change.includes('FROM');
+    if (!isFrom) return;
+    if (cutoff === null || segFrom > cutoff) cutoff = segFrom;
+  });
+  return cutoff;
+}
+function tafScopedFcsts(ordered, targetMs){
+  const cutoff = tafFromCutoffTime(ordered, targetMs);
+  if (!Number.isFinite(cutoff)) return ordered;
+  return ordered.filter(seg => Number.isFinite(seg?.timeFrom) && seg.timeFrom >= cutoff);
+}
 function ceilingWithCarry(fcsts, seg){
   const direct = extractCeilingFt(seg?.clouds, seg?.vertVis);
   if (direct !== null && direct !== undefined) return direct;
   if (!Array.isArray(fcsts) || !seg) return null;
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return null;
-  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
   const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
   for (const candidate of prior){
     const ceiling = extractCeilingFt(candidate.clouds, candidate.vertVis);
@@ -1884,7 +1905,7 @@ function visibilityWithCarry(fcsts, seg){
   if (!Array.isArray(fcsts) || !seg) return null;
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return null;
-  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
   const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
   for (const candidate of prior){
     const vis = parseVisibilityToSM(candidate.visib);
@@ -1898,7 +1919,7 @@ function wxWithCarry(fcsts, seg){
   if (!Array.isArray(fcsts) || !seg) return '';
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return '';
-  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
   const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
   for (const candidate of prior){
     const wx = (candidate?.wxString || (Array.isArray(candidate?.weather) ? candidate.weather.join(' ') : '')).trim();
@@ -1939,7 +1960,7 @@ function tafIsProbSegment(seg){
 }
 function tafSegmentForTime(fcsts, targetMs){
   if (!Array.isArray(fcsts) || !fcsts.length) return null;
-  const ordered = [...fcsts].sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
   const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
   const chooseWorst = (segments) => {
     if (!segments.length) return null;
@@ -1974,7 +1995,7 @@ function tafSegmentForTime(fcsts, targetMs){
 }
 function tafWorstConditionsForTime(fcsts, targetMs){
   if (!Array.isArray(fcsts) || !fcsts.length) return { ceiling: null, visibility: null, segments: [] };
-  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
   const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
   const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs)].filter(Boolean);
   let worstCeiling = null;
@@ -2019,7 +2040,7 @@ function driverLabelForSegment(seg){
 }
 function buildTafDriversSummary(fcsts, targetMs, ceiling, visibility){
   if (!Array.isArray(fcsts) || !fcsts.length) return '';
-  const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
   const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
   const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs)].filter(Boolean);
   if (!segments.length) return '';
