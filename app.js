@@ -1046,7 +1046,8 @@ function setLegacyDutyTab(which){
   currentLegacyDutyTab = which;
   const tabs = [
     { btn: 'tabbtn-duty', pane: 'tab-duty', id: 'duty' },
-    { btn: 'tabbtn-rest', pane: 'tab-rest', id: 'rest' }
+    { btn: 'tabbtn-rest', pane: 'tab-rest', id: 'rest' },
+    { btn: 'tabbtn-time-converter', pane: 'tab-time-converter', id: 'time-converter' }
   ];
   tabs.forEach(({ btn, pane, id }) => {
     const b = document.getElementById(btn);
@@ -1101,7 +1102,7 @@ function setModernSubTab(which){
 
 function setModernDutyTab(which){
   currentModernDutyTab = which;
-  const tabs = ['modern-duty','modern-rest'];
+  const tabs = ['modern-duty','modern-rest','modern-time-converter'];
   tabs.forEach(id => {
     const btn = document.getElementById(`tabbtn-${id}`);
     const pane = document.getElementById(id);
@@ -1831,6 +1832,87 @@ async function computeFdpStartInYYZ(startTime, departureCode){
     localLabel: formatMinutesToTime(startMinutes),
     yyzLabel: formatMinutesToTime(yyzMinutes)
   };
+}
+
+function attachTimeConverter({ airportId, localId, utcId, noteId }){
+  const airportEl = document.getElementById(airportId);
+  const localEl = document.getElementById(localId);
+  const utcEl = document.getElementById(utcId);
+  const noteEl = noteId ? document.getElementById(noteId) : null;
+  if (!airportEl || !localEl || !utcEl) return;
+  const defaultNote = noteEl?.textContent || '';
+  let lastEdited = 'local';
+  let isUpdating = false;
+
+  const resetNote = () => {
+    if (noteEl) noteEl.textContent = defaultNote;
+  };
+
+  const setError = (err) => {
+    if (noteEl) noteEl.textContent = err?.message || 'Unable to convert time.';
+  };
+
+  const updateUtcFromLocal = async () => {
+    if (isUpdating) return;
+    isUpdating = true;
+    try {
+      const localMinutes = parseTimeToMinutes(localEl.value);
+      if (!Number.isFinite(localMinutes)){
+        utcEl.value = '';
+        resetNote();
+        return;
+      }
+      const tz = await resolveAirportTimeZone(airportEl.value, 'local');
+      const offsetMinutes = getTimeZoneOffsetMinutes(tz, new Date());
+      const utcMinutes = localMinutes - offsetMinutes;
+      utcEl.value = formatMinutesToTime(utcMinutes);
+      resetNote();
+    } catch (err) {
+      utcEl.value = '';
+      setError(err);
+    } finally {
+      isUpdating = false;
+    }
+  };
+
+  const updateLocalFromUtc = async () => {
+    if (isUpdating) return;
+    isUpdating = true;
+    try {
+      const utcMinutes = parseTimeToMinutes(utcEl.value);
+      if (!Number.isFinite(utcMinutes)){
+        localEl.value = '';
+        resetNote();
+        return;
+      }
+      const tz = await resolveAirportTimeZone(airportEl.value, 'local');
+      const offsetMinutes = getTimeZoneOffsetMinutes(tz, new Date());
+      const localMinutes = utcMinutes + offsetMinutes;
+      localEl.value = formatMinutesToTime(localMinutes);
+      resetNote();
+    } catch (err) {
+      localEl.value = '';
+      setError(err);
+    } finally {
+      isUpdating = false;
+    }
+  };
+
+  localEl.addEventListener('input', () => {
+    lastEdited = 'local';
+    updateUtcFromLocal();
+  });
+  utcEl.addEventListener('input', () => {
+    lastEdited = 'utc';
+    updateLocalFromUtc();
+  });
+  airportEl.addEventListener('input', () => {
+    if (lastEdited === 'utc') {
+      updateLocalFromUtc();
+    } else {
+      updateUtcFromLocal();
+    }
+  });
 }
 async function resolveAirportCode(input){
   const code = String(input || '').trim().toUpperCase();
@@ -3066,8 +3148,10 @@ function init(){
   document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
   document.getElementById('tabbtn-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('duty'); });
   document.getElementById('tabbtn-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('rest'); });
+  document.getElementById('tabbtn-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('time-converter'); });
   document.getElementById('tabbtn-modern-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-duty'); });
   document.getElementById('tabbtn-modern-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-rest'); });
+  document.getElementById('tabbtn-modern-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-converter'); });
   document.getElementById('ui-mode')?.addEventListener('change', (e)=>{ const v=e.target.value==='legacy'?'legacy':'modern'; switchUIMode(v); });
   // Dropdown behaviors
   document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
@@ -3142,6 +3226,8 @@ function init(){
   calcDutyModern();
   calcRestLegacy();
   calcRestModern();
+  attachTimeConverter({ airportId: 'time-airport', localId: 'time-local', utcId: 'time-utc', noteId: 'time-note' });
+  attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does
