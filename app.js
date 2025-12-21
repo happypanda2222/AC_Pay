@@ -1425,6 +1425,25 @@ function parseTafText(raw, icao){
     fcsts
   };
 }
+function extractTafRawFromText(raw, icao){
+  const cleaned = String(raw || '').trim();
+  if (!cleaned) return '';
+  if (/NO\s+DATA|NOT\s+AVAILABLE|NO\s+TAF|ERROR/i.test(cleaned)) return '';
+  const lines = cleaned.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (!lines.length) return '';
+  const icaoToken = icao ? String(icao).toUpperCase() : '';
+  const startIdx = lines.findIndex(line => {
+    const upper = line.toUpperCase();
+    return upper.startsWith('TAF') || (icaoToken && upper.includes(` ${icaoToken} `)) || upper.startsWith(icaoToken);
+  });
+  const selected = startIdx === -1 ? lines : lines.slice(startIdx);
+  return selected.join(' ').replace(/\s+/g, ' ').trim();
+}
+function decodeTafFromTextResponse(raw, icao, sourceLabel){
+  const rawTAF = extractTafRawFromText(raw, icao);
+  if (!rawTAF) return null;
+  return buildTafFromRaw(rawTAF, icao, sourceLabel) || parseTafText(rawTAF, icao);
+}
 function buildTafFromRaw(rawTAF, icao, sourceLabel){
   const cleaned = String(rawTAF || '').replace(/\s+/g, ' ').trim();
   if (!cleaned) return null;
@@ -1647,6 +1666,7 @@ function majorityVote(items, keyFn){
 }
 function tafConsensusForTime(decodes, targetMs){
   const decoderAvailable = decodes.map(d => Boolean(d && !d.unavailable));
+  const decoderUnknown = decodes.map(d => Boolean(d?.unavailable));
   const normalizeWxKey = (wx) => String(wx || '')
     .toUpperCase()
     .replace(/\bNSW\b/g, '')
@@ -1717,7 +1737,9 @@ function tafConsensusForTime(decodes, targetMs){
   if (!anySegments) {
     return {
       segment: null,
-      icons: decodes.map((d, idx) => (decoderAvailable[idx] ? Boolean(d?.taf) : null)),
+      icons: decodes.map((d, idx) => (
+        decoderUnknown[idx] ? 'unknown' : (decoderAvailable[idx] ? Boolean(d?.taf) : null)
+      )),
       probLabel: '',
       fcsts: null,
       disagreement: false
@@ -1727,14 +1749,18 @@ function tafConsensusForTime(decodes, targetMs){
   const disagreement = availableSegments.length >= 2
     && !availableSegments.every(seg => segmentsClose(seg, availableSegments[0]));
   const vote = majorityVote(segments, s => s?.normalizedKey ?? s?.key);
-  const icons = segments.map((s, idx) => (decoderAvailable[idx] ? Boolean(s) : null));
+  const icons = segments.map((s, idx) => (
+    decoderUnknown[idx] ? 'unknown' : (decoderAvailable[idx] ? Boolean(s) : null)
+  ));
   if (vote){
     const chosenIdx = vote.indexes[0];
     const chosenEntry = chosenIdx >= 0 ? segments[chosenIdx] : null;
     return {
       segment: chosenEntry?.seg || null,
       icons: segments.map((s, idx) => (
-        decoderAvailable[idx] ? (s && chosenEntry ? segmentsClose(s, chosenEntry) : false) : null
+        decoderUnknown[idx]
+          ? 'unknown'
+          : (decoderAvailable[idx] ? (s && chosenEntry ? segmentsClose(s, chosenEntry) : false) : null)
       )),
       probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '',
       fcsts: chosenEntry?.fcsts || null,
@@ -1745,7 +1771,9 @@ function tafConsensusForTime(decodes, targetMs){
   const chosen = selectWorstSegment(available);
   if (!chosen) return { segment: null, icons, probLabel: '', fcsts: null, disagreement };
   const fallbackIcons = segments.map((s, idx) => (
-    decoderAvailable[idx] ? (s ? segmentsClose(s, chosen) : false) : null
+    decoderUnknown[idx]
+      ? 'unknown'
+      : (decoderAvailable[idx] ? (s ? segmentsClose(s, chosen) : false) : null)
   ));
   const chosenProb = segments.find(s => s?.seg === chosen.seg)?.probLabel || '';
   return {
@@ -1759,6 +1787,7 @@ function tafConsensusForTime(decodes, targetMs){
 function renderDecoderIcons(flags){
   if (!Array.isArray(flags)) return '';
   return `<div class="decoder-row">${flags.map(ok => {
+    if (ok === 'unknown') return `<span class="decoder-unknown">?</span>`;
     if (ok === null) return `<span class="decoder-na">—</span>`;
     return `<span class="${ok ? 'decoder-ok' : 'decoder-bad'}">${ok ? '✔' : '✖'}</span>`;
   }).join('')}</div>`;
@@ -2290,17 +2319,21 @@ async function fetchTafDecoderAviationWeather(icao){
   const url = `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`;
   const payload = await fetchJsonWithCorsFallback(url, 'no-store');
   const record = pickFirstWeatherRecord(payload, ['tafs', 'data', 'results']);
-  return { taf: normalizeTafPayload(record, icao) };
+  if (!record) return { taf: null };
+  const normalized = normalizeTafPayload(record, icao);
+  if (normalized) return { taf: normalized };
+  const rawFallback = record.rawTAF || record.raw_text || record.taf || record.text || '';
+  return { taf: decodeTafFromTextResponse(rawFallback, icao, 'AviationWeather JSON') };
 }
 async function fetchTafDecoderNoaaText(icao){
   const url = `${WEATHER_API_ROOT}/taf?format=raw&ids=${icao}`;
   const raw = await fetchTextWithCorsFallback(url, 'no-store');
-  const taf = buildTafFromRaw(raw, icao, 'AviationWeather raw');
+  const taf = decodeTafFromTextResponse(raw, icao, 'AviationWeather raw');
   return { taf };
 }
 async function fetchTafDecoderNoaaTextFeed(icao){
   const raw = await fetchTextWithCorsFallback(TAF_TEXT_FALLBACK(icao), 'no-store');
-  return { taf: parseTafText(raw, icao) };
+  return { taf: decodeTafFromTextResponse(raw, icao, 'NOAA text feed') };
 }
 async function fetchTafDecoders(icao){
   const decoders = [
@@ -2313,7 +2346,7 @@ async function fetchTafDecoders(icao){
       return await fn(icao);
     } catch(err){
       console.warn(`TAF decoder ${idx + 1} failed for ${icao}`, err);
-      return { taf: null };
+      return { taf: null, unavailable: true };
     }
   }));
 }
