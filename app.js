@@ -1666,6 +1666,7 @@ function majorityVote(items, keyFn){
 }
 function tafConsensusForTime(decodes, targetMs){
   const decoderAvailable = decodes.map(d => Boolean(d && !d.unavailable));
+  const decoderUnknown = decodes.map(d => Boolean(d?.unavailable));
   const normalizeWxKey = (wx) => String(wx || '')
     .toUpperCase()
     .replace(/\bNSW\b/g, '')
@@ -1736,7 +1737,9 @@ function tafConsensusForTime(decodes, targetMs){
   if (!anySegments) {
     return {
       segment: null,
-      icons: decodes.map((d, idx) => (decoderAvailable[idx] ? Boolean(d?.taf) : null)),
+      icons: decodes.map((d, idx) => (
+        decoderUnknown[idx] ? 'unknown' : (decoderAvailable[idx] ? Boolean(d?.taf) : null)
+      )),
       probLabel: '',
       fcsts: null,
       disagreement: false
@@ -1746,14 +1749,18 @@ function tafConsensusForTime(decodes, targetMs){
   const disagreement = availableSegments.length >= 2
     && !availableSegments.every(seg => segmentsClose(seg, availableSegments[0]));
   const vote = majorityVote(segments, s => s?.normalizedKey ?? s?.key);
-  const icons = segments.map((s, idx) => (decoderAvailable[idx] ? Boolean(s) : null));
+  const icons = segments.map((s, idx) => (
+    decoderUnknown[idx] ? 'unknown' : (decoderAvailable[idx] ? Boolean(s) : null)
+  ));
   if (vote){
     const chosenIdx = vote.indexes[0];
     const chosenEntry = chosenIdx >= 0 ? segments[chosenIdx] : null;
     return {
       segment: chosenEntry?.seg || null,
       icons: segments.map((s, idx) => (
-        decoderAvailable[idx] ? (s && chosenEntry ? segmentsClose(s, chosenEntry) : false) : null
+        decoderUnknown[idx]
+          ? 'unknown'
+          : (decoderAvailable[idx] ? (s && chosenEntry ? segmentsClose(s, chosenEntry) : false) : null)
       )),
       probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '',
       fcsts: chosenEntry?.fcsts || null,
@@ -1764,7 +1771,9 @@ function tafConsensusForTime(decodes, targetMs){
   const chosen = selectWorstSegment(available);
   if (!chosen) return { segment: null, icons, probLabel: '', fcsts: null, disagreement };
   const fallbackIcons = segments.map((s, idx) => (
-    decoderAvailable[idx] ? (s ? segmentsClose(s, chosen) : false) : null
+    decoderUnknown[idx]
+      ? 'unknown'
+      : (decoderAvailable[idx] ? (s ? segmentsClose(s, chosen) : false) : null)
   ));
   const chosenProb = segments.find(s => s?.seg === chosen.seg)?.probLabel || '';
   return {
@@ -1778,6 +1787,7 @@ function tafConsensusForTime(decodes, targetMs){
 function renderDecoderIcons(flags){
   if (!Array.isArray(flags)) return '';
   return `<div class="decoder-row">${flags.map(ok => {
+    if (ok === 'unknown') return `<span class="decoder-unknown">?</span>`;
     if (ok === null) return `<span class="decoder-na">—</span>`;
     return `<span class="${ok ? 'decoder-ok' : 'decoder-bad'}">${ok ? '✔' : '✖'}</span>`;
   }).join('')}</div>`;
