@@ -838,6 +838,14 @@ function parseTimeToMinutes(value){
   return hh * 60 + mm;
 }
 
+function formatMinutesToTime(value){
+  if (!Number.isFinite(value)) return '--:--';
+  const total = ((Math.round(value) % 1440) + 1440) % 1440;
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
+  return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+}
+
 function formatHoursValue(value){
   const rounded = Math.round(value * 100) / 100;
   if (!Number.isFinite(rounded)) return '--';
@@ -872,16 +880,18 @@ function computeMaxDuty(params){
     };
   }
   const startMinutes = parseTimeToMinutes(params.startTime);
+  const startValue = Number.isFinite(params.startMinutes) ? params.startMinutes : startMinutes;
   const sectors = Number(params.sectors);
-  if (!Number.isFinite(startMinutes)) throw new Error('Enter an FDP start time in HH:MM.');
+  if (!Number.isFinite(startValue)) throw new Error('Enter an FDP start time in HH:MM.');
   if (!Number.isFinite(sectors) || sectors < 1 || sectors > 6) throw new Error('Planned sectors must be between 1 and 6.');
-  const row = FDP_MAX_TABLE.find(item => startMinutes >= item.start && startMinutes <= item.end);
+  const row = FDP_MAX_TABLE.find(item => startValue >= item.start && startValue <= item.end);
   if (!row) throw new Error('Start time is outside the FDP table range.');
   const maxFdp = sectors <= 4 ? row.max14 : row.max56;
   const sectorLabel = sectors <= 4 ? '1-4 sectors' : '5-6 sectors';
+  const conversionNote = params.conversionNote ? ` ${params.conversionNote}` : '';
   return {
     maxFdp,
-    detail: `Unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).`
+    detail: `Unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).${conversionNote}`
   };
 }
 
@@ -1747,11 +1757,11 @@ async function loadAirportTimezones(){
     });
   return airportTimezonePromise;
 }
-async function resolveAirportTimeZone(input){
+async function resolveAirportTimeZone(input, contextLabel = 'layover'){
   const code = String(input || '').trim().toUpperCase();
-  if (!code) throw new Error('Enter a layover airport code.');
+  if (!code) throw new Error(`Enter a ${contextLabel} airport code.`);
   if (code.length !== 3 && code.length !== 4){
-    throw new Error('Use a 3-letter IATA or 4-letter ICAO code for the layover airport.');
+    throw new Error(`Use a 3-letter IATA or 4-letter ICAO code for the ${contextLabel} airport.`);
   }
   const lookup = await loadAirportTimezones();
   if (lookup[code]) return lookup[code];
@@ -1786,12 +1796,31 @@ function getTimeZoneOffsetMinutes(timeZone, date){
   return (utcTime - date.getTime()) / 60000;
 }
 async function computeTimezoneDiffFromYYZ(input){
-  const layoverZone = await resolveAirportTimeZone(input);
+  const layoverZone = await resolveAirportTimeZone(input, 'layover');
   const now = new Date();
   const yyzOffset = getTimeZoneOffsetMinutes('America/Toronto', now);
   const layoverOffset = getTimeZoneOffsetMinutes(layoverZone, now);
   const diffHours = Math.abs((layoverOffset - yyzOffset) / 60);
   return Math.round(diffHours * 100) / 100;
+}
+
+async function computeFdpStartInYYZ(startTime, departureCode){
+  const startMinutes = parseTimeToMinutes(startTime);
+  if (!Number.isFinite(startMinutes)) throw new Error('Enter an FDP start time in HH:MM.');
+  const departure = normalizeAirportCode(departureCode);
+  if (!departure) throw new Error('Enter a departure airport code.');
+  const departureZone = await resolveAirportTimeZone(departure, 'departure');
+  const now = new Date();
+  const yyzOffset = getTimeZoneOffsetMinutes('America/Toronto', now);
+  const departureOffset = getTimeZoneOffsetMinutes(departureZone, now);
+  const diffMinutes = Math.round(yyzOffset - departureOffset);
+  const yyzMinutes = ((startMinutes + diffMinutes) % 1440 + 1440) % 1440;
+  return {
+    startMinutes: yyzMinutes,
+    departure,
+    localLabel: formatMinutesToTime(startMinutes),
+    yyzLabel: formatMinutesToTime(yyzMinutes)
+  };
 }
 async function resolveAirportCode(input){
   const code = String(input || '').trim().toUpperCase();
@@ -2428,7 +2457,7 @@ const INFO_COPY = {
     visibility: 'Lowest visibility across overlapping TAF segments at the selected time (TEMPO/PROB included).'
   },
   duty: {
-    maxFdp: 'Maximum flight duty period based on FDP start time (YYZ local), planned sectors, and augmentation/rest facility limits (including 2 additional crew with Class 1 rest at 18 hours).',
+    maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors, and augmentation/rest facility limits (including 2 additional crew with Class 1 rest at 18 hours).',
     basis: 'Rule bucket used to determine the maximum FDP from the tables.'
   },
   rest: {
@@ -2753,15 +2782,22 @@ function calcMonthly(){
   }
 }
 
-function calcDutyLegacy(){
+async function calcDutyLegacy(){
   try{
+    const dutyType = document.getElementById('duty-type')?.value;
     const params = {
-      dutyType: document.getElementById('duty-type')?.value,
-      startTime: document.getElementById('duty-start')?.value,
+      dutyType,
       sectors: document.getElementById('duty-sectors')?.value,
       additionalCrew: document.getElementById('duty-crew')?.value,
       restFacility: document.getElementById('duty-rest-facility')?.value
     };
+    if (dutyType === 'unaugmented'){
+      const startTime = document.getElementById('duty-start')?.value;
+      const departureCode = document.getElementById('duty-departure')?.value;
+      const conversion = await computeFdpStartInYYZ(startTime, departureCode);
+      params.startMinutes = conversion.startMinutes;
+      params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ.`;
+    }
     const res = computeMaxDuty(params);
     renderDutyResult(document.getElementById('duty-out'), res, false);
   } catch(err){
@@ -2771,15 +2807,22 @@ function calcDutyLegacy(){
   }
 }
 
-function calcDutyModern(){
+async function calcDutyModern(){
   try{
+    const dutyType = document.getElementById('modern-duty-type')?.value;
     const params = {
-      dutyType: document.getElementById('modern-duty-type')?.value,
-      startTime: document.getElementById('modern-duty-start')?.value,
+      dutyType,
       sectors: document.getElementById('modern-duty-sectors')?.value,
       additionalCrew: document.getElementById('modern-duty-crew')?.value,
       restFacility: document.getElementById('modern-duty-rest-facility')?.value
     };
+    if (dutyType === 'unaugmented'){
+      const startTime = document.getElementById('modern-duty-start')?.value;
+      const departureCode = document.getElementById('modern-duty-departure')?.value;
+      const conversion = await computeFdpStartInYYZ(startTime, departureCode);
+      params.startMinutes = conversion.startMinutes;
+      params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ.`;
+    }
     const res = computeMaxDuty(params);
     renderDutyResult(document.getElementById('modern-duty-out'), res, true);
   } catch(err){

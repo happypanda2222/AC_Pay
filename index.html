@@ -514,7 +514,7 @@
             <div class="modern-grid">
               <div class="modern-panel">
                 <h3>Max duty time</h3>
-                <div class="muted-note">Home base: YYZ (acclimatized). Start time uses YYZ local.</div>
+                <div class="muted-note">Home base: YYZ (acclimatized). Start time converts to YYZ local.</div>
                 <div class="stacked-fields">
                   <div>
                     <label>Duty type</label>
@@ -526,7 +526,11 @@
                 </div>
                 <div class="stacked-fields" id="modern-duty-unaug-fields">
                   <div>
-                    <label>FDP start time (YYZ local)</label>
+                    <label>Departure airport (IATA/ICAO)</label>
+                    <input id="modern-duty-departure" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LAX or KLAX">
+                  </div>
+                  <div>
+                    <label>FDP start time (local)</label>
                     <input id="modern-duty-start" type="time" value="07:00">
                   </div>
                   <div>
@@ -892,7 +896,7 @@
 
       <div id="tab-duty">
         <div class="sectionTitle">Max duty time</div>
-        <div class="muted-note">Home base: YYZ (acclimatized). Start time uses YYZ local.</div>
+        <div class="muted-note">Home base: YYZ (acclimatized). Start time converts to YYZ local.</div>
         <div class="row" style="margin-top:10px">
           <div>
             <label>Duty type</label>
@@ -902,21 +906,29 @@
             </select>
           </div>
         </div>
-        <div class="row" style="margin-top:10px" id="duty-unaug-fields">
-          <div>
-            <label>FDP start time (YYZ local)</label>
-            <input id="duty-start" type="time" value="07:00">
+        <div id="duty-unaug-fields">
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>Departure airport (IATA/ICAO)</label>
+              <input id="duty-departure" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LAX or KLAX">
+            </div>
+            <div>
+              <label>FDP start time (local)</label>
+              <input id="duty-start" type="time" value="07:00">
+            </div>
           </div>
-          <div>
-            <label>Planned flight sectors</label>
-            <select id="duty-sectors">
-              <option value="1">1</option>
-              <option value="2" selected>2</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
-              <option value="5">5</option>
-              <option value="6">6</option>
-            </select>
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>Planned flight sectors</label>
+              <select id="duty-sectors">
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+              </select>
+            </div>
           </div>
         </div>
         <div class="row hidden" style="margin-top:10px" id="duty-aug-fields">
