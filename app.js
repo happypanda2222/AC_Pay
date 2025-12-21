@@ -1447,10 +1447,21 @@ function parseTafFromNwsProduct(text, icao){
   const rawTAF = tafLines.join(' ').replace(/\s+/g, ' ').trim();
   return buildTafFromRaw(rawTAF, icao, 'NWS feed');
 }
-function icaoToNwsTafLocation(icao){
+async function resolveNwsTafLocation(icao){
   const code = String(icao || '').toUpperCase();
-  if (code.length === 3) return code;
-  if (code.length === 4 && code.startsWith('K')) return code.slice(1);
+  if (code.length === 4){
+    if (/^[KPT]/.test(code)) return code.slice(1);
+    return null;
+  }
+  if (code.length === 3){
+    const lookup = await loadAirportLookup();
+    const mapped = lookup[code];
+    if (mapped){
+      if (/^[KPT]/.test(mapped)) return mapped.slice(1);
+      return null;
+    }
+    return code;
+  }
   return null;
 }
 function parseTafRawForecasts(rawTAF){
@@ -2304,7 +2315,7 @@ async function fetchTafDecoderNoaaText(icao){
   return { taf };
 }
 async function fetchTafDecoderNws(icao){
-  const station = icaoToNwsTafLocation(icao);
+  const station = await resolveNwsTafLocation(icao);
   if (!station) return { taf: null, unavailable: true };
   const listUrl = `https://api.weather.gov/products/types/TAF/locations/${station}`;
   const listing = await fetchJsonWithCorsFallback(listUrl, 'no-store');
