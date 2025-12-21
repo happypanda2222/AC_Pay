@@ -77,13 +77,21 @@ const FDP_MAX_TABLE = [
   { start: 1320, end: 1379, label: '22:00-22:59', max14: 11, max56: 10 },
   { start: 1380, end: 1439, label: '23:00-23:59', max14: 10, max56: 9 }
 ];
+const FDP_MAX_TABLE_OUTSIDE = [
+  { start: 0, end: 239, label: '00:00-03:59', max: 9.25, deadhead: 12 },
+  { start: 240, end: 299, label: '04:00-04:59', max: 10, deadhead: 12 },
+  { start: 300, end: 359, label: '05:00-05:59', max: 11.25, deadhead: 14 },
+  { start: 360, end: 1169, label: '06:00-19:29', max: 12, deadhead: 14 },
+  { start: 1170, end: 1319, label: '19:30-21:59', max: 11, deadhead: 13 },
+  { start: 1320, end: 1439, label: '22:00-23:59', max: 10, deadhead: 12 }
+];
 const AUGMENTED_FDP_TABLE = [
-  { additional: 1, facility: 3, max: 14 },
-  { additional: 1, facility: 1, max: 15 },
-  { additional: 1, facility: 2, max: 15 },
-  { additional: 2, facility: 1, max: 18 },
-  { additional: 2, facility: 3, max: 15.25 },
-  { additional: 2, facility: 2, max: 16.5 }
+  { crew: 'basic+1', facility: 3, zone: 'inside', max: 14, deadhead: 16, facilityLabel: 'Class 3 seat' },
+  { crew: 'basic+1', facility: 3, zone: 'outside', max: 12, deadhead: 14, facilityLabel: 'Class 3 seat' },
+  { crew: 'basic+1', facility: 2, zone: 'any', max: 14, deadhead: 16, facilityLabel: 'Class 2 seat' },
+  { crew: 'basic+1', facility: 1, zone: 'any', max: 15, deadhead: 17, facilityLabel: 'Class 1 bunk' },
+  { crew: 'basic+2', facility: 1, zone: 'any', max: 18.25, deadhead: 18.25, facilityLabel: '2 Class 1 bunks' },
+  { crew: '2ca2fo', facility: 1, zone: 'any', max: 20, deadhead: 20, facilityLabel: '2 Class 1 bunks' }
 ];
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
 const WEATHER_MAX_ATTEMPTS = 5;
@@ -866,6 +874,25 @@ function normalizeAirportCode(code){
   return String(code || '').trim().toUpperCase();
 }
 
+function normalizeCrewType(value){
+  if (value === 'basic+1' || value === 'basic+2' || value === '2ca2fo') return value;
+  if (String(value) === '1') return 'basic+1';
+  if (String(value) === '2') return 'basic+2';
+  return null;
+}
+
+function crewTypeLabel(value){
+  const type = normalizeCrewType(value);
+  if (type === 'basic+1') return 'Basic +1 crew';
+  if (type === 'basic+2') return 'Basic +2 crew';
+  if (type === '2ca2fo') return '2CA 2FO crew';
+  return 'Augmented crew';
+}
+
+function zoneLabel(zone){
+  return zone === 'outside' ? 'Outside North American zone' : 'Inside North American zone';
+}
+
 function isHomeBaseCode(code){
   const normalized = normalizeAirportCode(code);
   return HOME_BASE_CODES.has(normalized);
@@ -873,19 +900,26 @@ function isHomeBaseCode(code){
 
 function computeMaxDuty(params){
   const dutyType = params.dutyType || 'unaugmented';
+  const zone = params.zone === 'outside' ? 'outside' : 'inside';
+  const deadhead = params.deadhead === 'yes';
   if (dutyType === 'augmented'){
-    const additional = Number(params.additionalCrew);
+    const crewType = normalizeCrewType(params.crewType);
     const facility = Number(params.restFacility);
-    if (!Number.isFinite(additional) || !Number.isFinite(facility)) {
-      throw new Error('Select the additional crew count and rest facility class.');
+    if (!crewType || !Number.isFinite(facility)) {
+      throw new Error('Select the crew complement and rest facility class.');
     }
-    const match = AUGMENTED_FDP_TABLE.find(row => row.additional === additional && row.facility === facility);
+    const match = AUGMENTED_FDP_TABLE.find(row =>
+      row.crew === crewType && row.facility === facility && (row.zone === zone || row.zone === 'any')
+    );
     if (!match) {
       return { maxFdp: null, detail: 'This augmentation/rest facility combination is not listed in the table.' };
     }
+    const maxFdp = deadhead && Number.isFinite(match.deadhead) ? match.deadhead : match.max;
+    const deadheadNote = deadhead ? ' Deadhead at end of duty day applied.' : '';
+    const zoneNote = ` ${zoneLabel(zone)}.`;
     return {
-      maxFdp: match.max,
-      detail: `Augmented FDP with ${additional} additional crew member${additional > 1 ? 's' : ''} and Class ${facility} rest facility.`
+      maxFdp,
+      detail: `${crewTypeLabel(crewType)} with ${match.facilityLabel}.${zoneNote}${deadheadNote}`
     };
   }
   const startMinutes = parseTimeToMinutes(params.startTime);
@@ -893,14 +927,27 @@ function computeMaxDuty(params){
   const sectors = Number(params.sectors);
   if (!Number.isFinite(startValue)) throw new Error('Enter an FDP start time in HH:MM.');
   if (!Number.isFinite(sectors) || sectors < 1 || sectors > 6) throw new Error('Planned sectors must be between 1 and 6.');
-  const row = FDP_MAX_TABLE.find(item => startValue >= item.start && startValue <= item.end);
+  if (zone === 'outside' && sectors > 2) throw new Error('Outside North American zone maximum planned legs is 2.');
+  const row = (zone === 'outside' ? FDP_MAX_TABLE_OUTSIDE : FDP_MAX_TABLE)
+    .find(item => startValue >= item.start && startValue <= item.end);
   if (!row) throw new Error('Start time is outside the FDP table range.');
-  const maxFdp = sectors <= 4 ? row.max14 : row.max56;
-  const sectorLabel = sectors <= 4 ? '1-4 sectors' : '5-6 sectors';
+  const baseMax = zone === 'outside'
+    ? row.max
+    : (sectors <= 4 ? row.max14 : row.max56);
+  const maxFdp = zone === 'outside'
+    ? (deadhead ? row.deadhead : row.max)
+    : (deadhead ? Math.min(baseMax + 3, 18) : baseMax);
+  const sectorLabel = zone === 'outside'
+    ? `${sectors} leg${sectors > 1 ? 's' : ''}`
+    : (sectors <= 4 ? '1-4 sectors' : '5-6 sectors');
   const conversionNote = params.conversionNote ? ` ${params.conversionNote}` : '';
+  const zoneNote = zone === 'outside' ? ' Table B (outside North American zone).' : ' Table A (inside North American zone).';
+  const deadheadNote = deadhead && zone === 'inside'
+    ? ' Deadhead at end of duty day adds up to 3 hours (cap 18).'
+    : (deadhead && zone === 'outside' ? ' Deadhead at end of duty day (Table D) applied.' : '');
   return {
     maxFdp,
-    detail: `Unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).${conversionNote}`
+    detail: `Unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).${zoneNote}${deadheadNote}${conversionNote}`
   };
 }
 
@@ -1163,6 +1210,24 @@ function toggleDutyFields(typeId, unaugId, augId){
     aug.querySelectorAll('input, select, textarea').forEach((field) => {
       field.disabled = !isAug;
     });
+  }
+}
+
+function updateAugmentedFacilityOptions(crewId, facilityId){
+  const crewEl = document.getElementById(crewId);
+  const facilityEl = document.getElementById(facilityId);
+  if (!crewEl || !facilityEl) return;
+  const crewType = normalizeCrewType(crewEl.value);
+  const allowed = crewType === 'basic+1' ? [1, 2, 3] : [1];
+  const current = Number(facilityEl.value);
+  facilityEl.querySelectorAll('option').forEach(option => {
+    const value = Number(option.value);
+    const enabled = allowed.includes(value);
+    option.disabled = !enabled;
+    option.hidden = !enabled;
+  });
+  if (!allowed.includes(current)) {
+    facilityEl.value = String(allowed[0]);
   }
 }
 
@@ -2639,12 +2704,12 @@ const INFO_COPY = {
     visibility: 'Lowest visibility across overlapping TAF segments at the selected time (TEMPO/PROB included).'
   },
   duty: {
-    maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors, and augmentation/rest facility limits (including 2 additional crew with Class 1 rest at 18 hours).',
+    maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors/legs, zone selection (inside/outside North American zone), and augmentation/rest facility limits from Tables A–C. Deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours).',
     endUtc: 'FDP end time in UTC using the calculated maximum FDP added to the departure local start time (day offset shown when crossing midnight UTC).',
-    basis: 'Rule bucket used to determine the maximum FDP from the tables.'
+    basis: 'Rule bucket used to determine the maximum FDP from the tables and whether deadhead rules were applied.'
   },
   rest: {
-    minimum: 'Minimum rest required based on home base/away status (inferred from the layover code; YYZ/CYYZ treated as home base), time zone differences (calculated from the layover location vs YYZ using today’s date), augmentation, and UOC/disruptive schedule rules.',
+    minimum: 'Minimum rest required based on home base/away status (inferred from the layover code; YYZ/CYYZ treated as home base), time zone differences (calculated from the layover location vs YYZ using today’s date), augmentation, and UOC/disruptive schedule rules. Enter the actual FDP duration, including any deadhead extension, to reflect Table D impacts.',
     basis: 'Rule bucket used to set the base rest requirement.',
     extras: 'Additional requirements such as disruptive schedule local night’s rest or UOC extensions.'
   }
@@ -2980,11 +3045,14 @@ function calcMonthly(){
 async function calcDutyLegacy(){
   try{
     const dutyType = document.getElementById('duty-type')?.value;
+    const zone = document.getElementById('duty-zone')?.value;
     const params = {
       dutyType,
+      zone,
       sectors: document.getElementById('duty-sectors')?.value,
-      additionalCrew: document.getElementById('duty-crew')?.value,
-      restFacility: document.getElementById('duty-rest-facility')?.value
+      crewType: document.getElementById('duty-crew')?.value,
+      restFacility: document.getElementById('duty-rest-facility')?.value,
+      deadhead: document.getElementById('duty-deadhead')?.value
     };
     if (dutyType === 'unaugmented'){
       const startTime = document.getElementById('duty-start')?.value;
@@ -3009,11 +3077,14 @@ async function calcDutyLegacy(){
 async function calcDutyModern(){
   try{
     const dutyType = document.getElementById('modern-duty-type')?.value;
+    const zone = document.getElementById('modern-duty-zone')?.value;
     const params = {
       dutyType,
+      zone,
       sectors: document.getElementById('modern-duty-sectors')?.value,
-      additionalCrew: document.getElementById('modern-duty-crew')?.value,
-      restFacility: document.getElementById('modern-duty-rest-facility')?.value
+      crewType: document.getElementById('modern-duty-crew')?.value,
+      restFacility: document.getElementById('modern-duty-rest-facility')?.value,
+      deadhead: document.getElementById('modern-duty-deadhead')?.value
     };
     if (dutyType === 'unaugmented'){
       const startTime = document.getElementById('modern-duty-start')?.value;
@@ -3273,6 +3344,8 @@ function init(){
   document.getElementById('modern-mon-step')?.addEventListener('change', ()=>tieYearStepFromStepModernMonthly());
   document.getElementById('duty-type')?.addEventListener('change', ()=>toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields'));
   document.getElementById('modern-duty-type')?.addEventListener('change', ()=>toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields'));
+  document.getElementById('duty-crew')?.addEventListener('change', ()=>updateAugmentedFacilityOptions('duty-crew','duty-rest-facility'));
+  document.getElementById('modern-duty-crew')?.addEventListener('change', ()=>updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility'));
   document.getElementById('rest-duty-type')?.addEventListener('change', ()=>toggleRestFields('rest-duty-type','rest-unaug-fields'));
   document.getElementById('modern-rest-duty-type')?.addEventListener('change', ()=>toggleRestFields('modern-rest-duty-type','modern-rest-unaug-fields'));
   // ESOP slider labels
@@ -3319,6 +3392,8 @@ function init(){
   tieYearStepFromYearModernMonthly();
   toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields');
   toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields');
+  updateAugmentedFacilityOptions('duty-crew','duty-rest-facility');
+  updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility');
   toggleRestFields('rest-duty-type','rest-unaug-fields');
   toggleRestFields('modern-rest-duty-type','modern-rest-unaug-fields');
   calcDutyLegacy();

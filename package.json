@@ -4,6 +4,7 @@
   "private": true,
   "description": "Static AC Pay calculator PWA.",
   "scripts": {
-    "test": "echo \"No automated tests; static site.\" && exit 0"
+    "test": "echo \"No automated tests; static site.\" && exit 0",
+    "lint": "echo \"No automated linters configured.\" && exit 0"
   }
 }

@@ -563,18 +563,35 @@
                 </div>
                 <div class="stacked-fields hidden" id="modern-duty-aug-fields">
                   <div>
-                    <label>Additional crew members</label>
+                    <label>Crew complement</label>
                     <select id="modern-duty-crew">
-                      <option value="1" selected>1</option>
-                      <option value="2">2</option>
+                      <option value="basic+1" selected>Basic +1 (3 pilots)</option>
+                      <option value="basic+2">Basic +2 (4 pilots)</option>
+                      <option value="2ca2fo">2CA 2FO (4 pilots)</option>
                     </select>
                   </div>
                   <div>
                     <label>Rest facility class</label>
                     <select id="modern-duty-rest-facility">
-                      <option value="1">Class 1</option>
-                      <option value="2">Class 2</option>
-                      <option value="3" selected>Class 3</option>
+                      <option value="1">Class 1 (bunk)</option>
+                      <option value="2">Class 2 (seat)</option>
+                      <option value="3" selected>Class 3 (seat)</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="stacked-fields">
+                  <div>
+                    <label>Operation zone</label>
+                    <select id="modern-duty-zone">
+                      <option value="inside" selected>Inside North American zone</option>
+                      <option value="outside">Outside North American zone</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Deadhead at end of duty day (Table D)</label>
+                    <select id="modern-duty-deadhead">
+                      <option value="no" selected>No</option>
+                      <option value="yes">Yes</option>
                     </select>
                   </div>
                 </div>
@@ -601,7 +618,12 @@
                     </select>
                   </div>
                   <div>
-                    <label>FDP duration (hours)</label>
+                    <label>FDP duration (hours)
+                      <span class="info-hover" tabindex="0" aria-label="Include any deadhead-at-end extension from Table D">
+                        <span class="info-icon" aria-hidden="true">i</span>
+                        <span class="tooltip">Include any deadhead-at-end extension from Table D.</span>
+                      </span>
+                    </label>
                     <input id="modern-rest-fdp-duration" type="number" min="0" step="0.25" value="10">
                   </div>
                   <div>
@@ -977,18 +999,35 @@
         </div>
         <div class="row hidden" style="margin-top:10px" id="duty-aug-fields">
           <div>
-            <label>Additional crew members</label>
+            <label>Crew complement</label>
             <select id="duty-crew">
-              <option value="1" selected>1</option>
-              <option value="2">2</option>
+              <option value="basic+1" selected>Basic +1 (3 pilots)</option>
+              <option value="basic+2">Basic +2 (4 pilots)</option>
+              <option value="2ca2fo">2CA 2FO (4 pilots)</option>
             </select>
           </div>
           <div>
             <label>Rest facility class</label>
             <select id="duty-rest-facility">
-              <option value="1">Class 1</option>
-              <option value="2">Class 2</option>
-              <option value="3" selected>Class 3</option>
+              <option value="1">Class 1 (bunk)</option>
+              <option value="2">Class 2 (seat)</option>
+              <option value="3" selected>Class 3 (seat)</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Operation zone</label>
+            <select id="duty-zone">
+              <option value="inside" selected>Inside North American zone</option>
+              <option value="outside">Outside North American zone</option>
+            </select>
+          </div>
+          <div>
+            <label>Deadhead at end of duty day (Table D)</label>
+            <select id="duty-deadhead">
+              <option value="no" selected>No</option>
+              <option value="yes">Yes</option>
             </select>
           </div>
         </div>
@@ -1012,7 +1051,12 @@
             </select>
           </div>
           <div>
-            <label>FDP duration (hours)</label>
+            <label>FDP duration (hours)
+              <span class="info-hover" tabindex="0" aria-label="Include any deadhead-at-end extension from Table D">
+                <span class="info-icon" aria-hidden="true">i</span>
+                <span class="tooltip">Include any deadhead-at-end extension from Table D.</span>
+              </span>
+            </label>
             <input id="rest-fdp-duration" type="number" min="0" step="0.25" value="10">
           </div>
         </div>
