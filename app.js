@@ -1117,6 +1117,35 @@ function setModernDutyTab(which){
   });
 }
 
+function extractUtcTimeValue(label){
+  const match = String(label || '').match(/(\d{2}:\d{2})/);
+  return match ? match[1] : '';
+}
+
+function convertFdpEndToTimeConverter(endUtcText, isModern){
+  const utcValue = extractUtcTimeValue(endUtcText);
+  if (!utcValue) return;
+  if (isModern){
+    setModernPrimaryTab('modern-duty-rest');
+    setModernDutyTab('modern-time-converter');
+    const utcEl = document.getElementById('modern-time-utc');
+    if (utcEl){
+      utcEl.value = utcValue;
+      utcEl.dispatchEvent(new Event('input', { bubbles: true }));
+      utcEl.focus();
+    }
+  } else {
+    setLegacyPrimaryTab('duty-rest');
+    setLegacyDutyTab('time-converter');
+    const utcEl = document.getElementById('time-utc');
+    if (utcEl){
+      utcEl.value = utcValue;
+      utcEl.dispatchEvent(new Event('input', { bubbles: true }));
+      utcEl.focus();
+    }
+  }
+}
+
 function toggleDutyFields(typeId, unaugId, augId){
   const typeEl = document.getElementById(typeId);
   const unaug = document.getElementById(unaugId);
@@ -2772,16 +2801,25 @@ function renderDutyResult(outEl, result, isModern){
     outEl.innerHTML = `
       <div class="metric-grid">
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Maximum FDP', INFO_COPY.duty.maxFdp)}</div><div class="metric-value">${maxText}</div></div>
-        ${endUtcText ? `<div class="metric-card"><div class="metric-label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="metric-value">${endUtcText}</div></div>` : ''}
+        ${endUtcText ? `<div class="metric-card"><div class="metric-label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="metric-value">${endUtcText}</div><button class="convert-btn" type="button" data-end-utc="${endUtcText}" data-ui="modern">Convert</button></div>` : ''}
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Rule basis', INFO_COPY.duty.basis)}</div><div class="metric-value" style="font-size:14px">${detailText}</div></div>
       </div>`;
   } else {
     outEl.innerHTML = `
       <div class="simple">
         <div class="block"><div class="label">${labelWithInfo('Maximum FDP', INFO_COPY.duty.maxFdp)}</div><div class="value">${maxText}</div></div>
-        ${endUtcText ? `<div class="block"><div class="label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="value">${endUtcText}</div></div>` : ''}
+        ${endUtcText ? `<div class="block"><div class="label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="value">${endUtcText}</div><button class="convert-btn" type="button" data-end-utc="${endUtcText}" data-ui="legacy">Convert</button></div>` : ''}
         <div class="block"><div class="label">${labelWithInfo('Rule basis', INFO_COPY.duty.basis)}</div><div class="value" style="font-size:14px">${detailText}</div></div>
       </div>`;
+  }
+  const convertBtn = outEl.querySelector('.convert-btn');
+  if (convertBtn){
+    convertBtn.addEventListener('click', (e) => {
+      hapticTap(e.currentTarget);
+      const endUtc = convertBtn.getAttribute('data-end-utc') || '';
+      const ui = convertBtn.getAttribute('data-ui') || 'legacy';
+      convertFdpEndToTimeConverter(endUtc, ui === 'modern');
+    });
   }
 }
 
