@@ -508,6 +508,7 @@
           <div class="tabs" id="modern-duty-rest-tabs">
             <button class="tabbtn active" data-tab="modern-duty" id="tabbtn-modern-duty">Duty</button>
             <button class="tabbtn" data-tab="modern-rest" id="tabbtn-modern-rest">Rest</button>
+            <button class="tabbtn" data-tab="modern-time-converter" id="tabbtn-modern-time-converter">Time Converter</button>
           </div>
 
           <div id="modern-duty" class="modern-tab">
@@ -625,6 +626,34 @@
                 <h3>Result</h3>
                 <div id="modern-rest-out"></div>
                 <div class="muted-note" id="modern-rest-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="modern-time-converter" class="modern-tab hidden">
+            <div class="modern-grid">
+              <div class="modern-panel">
+                <h3>Time converter</h3>
+                <div class="muted-note">Uses today’s date for time zone offsets (DST aware).</div>
+                <div class="stacked-fields">
+                  <div>
+                    <label>Local airport</label>
+                    <input id="modern-time-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
+                  </div>
+                  <div>
+                    <label>Local time</label>
+                    <input id="modern-time-local" type="time">
+                  </div>
+                  <div>
+                    <label>UTC time</label>
+                    <input id="modern-time-utc" type="time">
+                  </div>
+                </div>
+                <div class="muted-note" id="modern-time-note">Enter a local or UTC time to convert.</div>
+              </div>
+              <div class="modern-panel">
+                <h3>How to use</h3>
+                <div class="muted-note">Type a local airport code, then enter either local time or UTC to update the other field.</div>
               </div>
             </div>
           </div>
@@ -892,6 +921,7 @@
       <div class="tabs" id="legacy-duty-tabs">
         <button class="tabbtn active" data-tab="duty" id="tabbtn-duty">Duty</button>
         <button class="tabbtn" data-tab="rest" id="tabbtn-rest">Rest</button>
+        <button class="tabbtn" data-tab="time-converter" id="tabbtn-time-converter">Time Converter</button>
       </div>
 
       <div id="tab-duty">
@@ -1017,6 +1047,28 @@
         </div>
         <div id="rest-out"></div>
         <div class="muted-note" id="legacy-rest-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
+      </div>
+
+      <div id="tab-time-converter" class="hidden">
+        <div class="sectionTitle">Time converter</div>
+        <div class="muted-note">Uses today’s date for time zone offsets (DST aware).</div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Local airport</label>
+            <input id="time-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
+          </div>
+          <div>
+            <label>Local time</label>
+            <input id="time-local" type="time">
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>UTC time</label>
+            <input id="time-utc" type="time">
+          </div>
+        </div>
+        <div class="muted-note" id="time-note">Enter a local or UTC time to convert.</div>
       </div>
     </div>
 
