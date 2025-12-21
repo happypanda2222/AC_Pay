@@ -1437,33 +1437,6 @@ function buildTafFromRaw(rawTAF, icao, sourceLabel){
     fcsts
   };
 }
-function parseTafFromNwsProduct(text, icao){
-  if (!text) return null;
-  const cleaned = String(text).replace(/\r/g, '').trim();
-  if (!cleaned) return null;
-  const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
-  const startIdx = lines.findIndex(line => /\bTAF\b/.test(line));
-  const tafLines = startIdx === -1 ? lines : lines.slice(startIdx);
-  const rawTAF = tafLines.join(' ').replace(/\s+/g, ' ').trim();
-  return buildTafFromRaw(rawTAF, icao, 'NWS feed');
-}
-async function resolveNwsTafLocation(icao){
-  const code = String(icao || '').toUpperCase();
-  if (code.length === 4){
-    if (/^[KPT]/.test(code)) return code.slice(1);
-    return null;
-  }
-  if (code.length === 3){
-    const lookup = await loadAirportLookup();
-    const mapped = lookup[code];
-    if (mapped){
-      if (/^[KPT]/.test(mapped)) return mapped.slice(1);
-      return null;
-    }
-    return code;
-  }
-  return null;
-}
 function parseTafRawForecasts(rawTAF){
   if (!rawTAF) return [];
   const tokens = rawTAF.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
@@ -2314,29 +2287,15 @@ async function fetchTafDecoderNoaaText(icao){
   const taf = buildTafFromRaw(raw, icao, 'AviationWeather raw');
   return { taf };
 }
-async function fetchTafDecoderNws(icao){
-  const station = await resolveNwsTafLocation(icao);
-  if (!station) return { taf: null, unavailable: true };
-  const listUrl = `https://api.weather.gov/products/types/TAF/locations/${station}`;
-  const listing = await fetchJsonWithCorsFallback(listUrl, 'no-store');
-  const entries = Array.isArray(listing?.['@graph']) ? listing['@graph'] : [];
-  if (!entries.length) return { taf: null, unavailable: true };
-  const latest = entries.reduce((best, item) => {
-    if (!best) return item;
-    const bestTime = Date.parse(best.issuanceTime || '') || 0;
-    const itemTime = Date.parse(item.issuanceTime || '') || 0;
-    return itemTime > bestTime ? item : best;
-  }, null);
-  if (!latest?.id) return { taf: null };
-  const product = await fetchJsonWithCorsFallback(`https://api.weather.gov/products/${latest.id}`, 'no-store');
-  const productText = product?.productText || product?.text || '';
-  return { taf: parseTafFromNwsProduct(productText, icao) };
+async function fetchTafDecoderNoaaTextFeed(icao){
+  const raw = await fetchTextWithCorsFallback(TAF_TEXT_FALLBACK(icao), 'no-store');
+  return { taf: parseTafText(raw, icao) };
 }
 async function fetchTafDecoders(icao){
   const decoders = [
     fetchTafDecoderAviationWeather,
     fetchTafDecoderNoaaText,
-    fetchTafDecoderNws
+    fetchTafDecoderNoaaTextFeed
   ];
   return Promise.all(decoders.map(async (fn, idx) => {
     try {
