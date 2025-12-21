@@ -102,6 +102,7 @@ const METAR_TEXT_FALLBACKS = [
   (icao) => `https://metar.vatsim.net/${icao}`
 ];
 const TAF_TEXT_FALLBACK = (icao) => `https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`;
+const TAF_DECODER_MAX_ATTEMPTS = 10;
 const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
 const AIRPORT_TZ_LOOKUP_URL = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
 const CORS_PROXY_BUILDERS = [
@@ -2341,14 +2342,20 @@ async function fetchTafDecoders(icao){
     fetchTafDecoderNoaaText,
     fetchTafDecoderNoaaTextFeed
   ];
-  return Promise.all(decoders.map(async (fn, idx) => {
-    try {
-      return await fn(icao);
-    } catch(err){
-      console.warn(`TAF decoder ${idx + 1} failed for ${icao}`, err);
-      return { taf: null, unavailable: true };
+  const runDecoderWithRetry = async (fn, idx) => {
+    let lastError = null;
+    for (let attempt = 1; attempt <= TAF_DECODER_MAX_ATTEMPTS; attempt += 1){
+      try {
+        return await fn(icao);
+      } catch(err){
+        lastError = err;
+        console.warn(`TAF decoder ${idx + 1} failed for ${icao} (attempt ${attempt})`, err);
+      }
     }
-  }));
+    console.warn(`TAF decoder ${idx + 1} exhausted ${TAF_DECODER_MAX_ATTEMPTS} attempts for ${icao}`, lastError);
+    return { taf: null, unavailable: true };
+  };
+  return Promise.all(decoders.map((fn, idx) => runDecoderWithRetry(fn, idx)));
 }
 async function fetchWeatherForAirport(icao){
   const [metarJson, tafJson] = await Promise.all([
