@@ -1719,9 +1719,13 @@ function tafConsensusForTime(decodes, targetMs){
       segment: null,
       icons: decodes.map((d, idx) => (decoderAvailable[idx] ? Boolean(d?.taf) : null)),
       probLabel: '',
-      fcsts: null
+      fcsts: null,
+      disagreement: false
     };
   }
+  const availableSegments = segments.filter(Boolean);
+  const disagreement = availableSegments.length >= 2
+    && !availableSegments.every(seg => segmentsClose(seg, availableSegments[0]));
   const vote = majorityVote(segments, s => s?.normalizedKey ?? s?.key);
   const icons = segments.map((s, idx) => (decoderAvailable[idx] ? Boolean(s) : null));
   if (vote){
@@ -1733,17 +1737,24 @@ function tafConsensusForTime(decodes, targetMs){
         decoderAvailable[idx] ? (s && chosenEntry ? segmentsClose(s, chosenEntry) : false) : null
       )),
       probLabel: chosenIdx >= 0 ? (segments[chosenIdx]?.probLabel || '') : '',
-      fcsts: chosenEntry?.fcsts || null
+      fcsts: chosenEntry?.fcsts || null,
+      disagreement
     };
   }
   const available = segments.filter(Boolean);
   const chosen = selectWorstSegment(available);
-  if (!chosen) return { segment: null, icons, probLabel: '', fcsts: null };
+  if (!chosen) return { segment: null, icons, probLabel: '', fcsts: null, disagreement };
   const fallbackIcons = segments.map((s, idx) => (
     decoderAvailable[idx] ? (s ? segmentsClose(s, chosen) : false) : null
   ));
   const chosenProb = segments.find(s => s?.seg === chosen.seg)?.probLabel || '';
-  return { segment: chosen.seg, icons: fallbackIcons, probLabel: chosenProb, fcsts: chosen.fcsts || null };
+  return {
+    segment: chosen.seg,
+    icons: fallbackIcons,
+    probLabel: chosenProb,
+    fcsts: chosen.fcsts || null,
+    disagreement
+  };
 }
 function renderDecoderIcons(flags){
   if (!Array.isArray(flags)) return '';
@@ -2342,6 +2353,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   let tafSeg = null;
   let tafProbLabelText = '';
   let tafFcsts = null;
+  let tafDisagreement = false;
   if (!forceMetar || !hasMetar){
     try {
       const tafOutcome = tafConsensusForTime(airportData?.tafDecodes || [], targetMs);
@@ -2349,6 +2361,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
       tafIcons = tafOutcome.icons;
       tafProbLabelText = tafOutcome.probLabel || '';
       tafFcsts = tafOutcome.fcsts || null;
+      tafDisagreement = Boolean(tafOutcome.disagreement);
     } catch(err){
       console.warn(err?.message || err);
     }
@@ -2359,6 +2372,18 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     }
   } else {
     tafIcons = [null, null, null];
+  }
+  if (tafDisagreement){
+    return {
+      label,
+      icao: airportData?.icao || '',
+      name: airportData?.name || airportData?.icao || '',
+      targetMs,
+      targetText: formatZulu(targetMs),
+      noResults: true,
+      noResultsReason: 'TAF decoders disagree. No results shown for this airport.',
+      tafIcons
+    };
   }
   const metarMs = metarTimeMs(airportData.metar);
   const metarIsCurrent = metarMs ? Math.abs(targetMs - metarMs) <= 90 * 60000 : false;
@@ -2417,6 +2442,20 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources){
     return;
   }
   const cards = assessments.map(a => {
+    if (a.noResults){
+      return `<div class="weather-card">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">${escapeHtml(a.label)}</div>
+            <div style="font-weight:800;font-size:18px">${escapeHtml(a.name)} (${escapeHtml(a.icao)})</div>
+            <div class="wx-meta">
+              <span>${escapeHtml(a.targetText || '')}</span>
+            </div>
+          </div>
+        </div>
+        <div class="wx-error" style="margin-top:12px">${escapeHtml(a.noResultsReason || 'No results available for this airport.')}</div>
+      </div>`;
+    }
     const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined)
       ? `${a.ceiling} ft`
       : (a.skyClear ? 'SKC' : 'No ceiling');
