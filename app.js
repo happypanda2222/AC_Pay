@@ -67,15 +67,15 @@ const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
 const FDP_MAX_TABLE = [
-  { start: 0, end: 239, label: '00:00-03:59', max14: 9, max56: 9 },
-  { start: 240, end: 299, label: '04:00-04:59', max14: 10, max56: 9 },
-  { start: 300, end: 359, label: '05:00-05:59', max14: 11, max56: 10 },
-  { start: 360, end: 419, label: '06:00-06:59', max14: 12, max56: 11 },
-  { start: 420, end: 779, label: '07:00-12:59', max14: 13, max56: 12 },
-  { start: 780, end: 1019, label: '13:00-16:59', max14: 12.5, max56: 11.5 },
-  { start: 1020, end: 1319, label: '17:00-21:59', max14: 12, max56: 11 },
-  { start: 1320, end: 1379, label: '22:00-22:59', max14: 11, max56: 10 },
-  { start: 1380, end: 1439, label: '23:00-23:59', max14: 10, max56: 9 }
+  { start: 0, end: 239, label: '00:00-03:59', max14: 9, max56: 9, max14Over4: 8, max56Over4: 8 },
+  { start: 240, end: 299, label: '04:00-04:59', max14: 10, max56: 9, max14Over4: 9, max56Over4: 8 },
+  { start: 300, end: 359, label: '05:00-05:59', max14: 11, max56: 10, max14Over4: 10, max56Over4: 9 },
+  { start: 360, end: 419, label: '06:00-06:59', max14: 12, max56: 11, max14Over4: 11, max56Over4: 10 },
+  { start: 420, end: 779, label: '07:00-12:59', max14: 13, max56: 12, max14Over4: 12, max56Over4: 11 },
+  { start: 780, end: 1019, label: '13:00-16:59', max14: 12.5, max56: 11.5, max14Over4: 11.5, max56Over4: 10.5 },
+  { start: 1020, end: 1319, label: '17:00-21:59', max14: 12, max56: 11, max14Over4: 11, max56Over4: 10 },
+  { start: 1320, end: 1379, label: '22:00-22:59', max14: 11, max56: 10, max14Over4: 10, max56Over4: 9 },
+  { start: 1380, end: 1439, label: '23:00-23:59', max14: 10, max56: 9, max14Over4: 9, max56Over4: 8 }
 ];
 const FDP_MAX_TABLE_OUTSIDE = [
   { start: 0, end: 239, label: '00:00-03:59', max: 9.25, deadhead: 12 },
@@ -902,6 +902,8 @@ function computeMaxDuty(params){
   const dutyType = params.dutyType || 'unaugmented';
   const zone = params.zone === 'outside' ? 'outside' : 'inside';
   const deadhead = params.deadhead === 'yes';
+  const tzDiff = Math.abs(Number(params.timezoneDiff));
+  const tzOver4 = Number.isFinite(tzDiff) && tzDiff >= 4;
   if (dutyType === 'augmented'){
     const crewType = normalizeCrewType(params.crewType);
     const facility = Number(params.restFacility);
@@ -931,9 +933,12 @@ function computeMaxDuty(params){
   const row = (zone === 'outside' ? FDP_MAX_TABLE_OUTSIDE : FDP_MAX_TABLE)
     .find(item => startValue >= item.start && startValue <= item.end);
   if (!row) throw new Error('Start time is outside the FDP table range.');
+  if (!Number.isFinite(tzDiff) || tzDiff < 0) throw new Error('Time zone difference must be zero or greater.');
   const baseMax = zone === 'outside'
     ? row.max
-    : (sectors <= 4 ? row.max14 : row.max56);
+    : (sectors <= 4
+      ? (tzOver4 ? row.max14Over4 : row.max14)
+      : (tzOver4 ? row.max56Over4 : row.max56));
   const maxFdp = zone === 'outside'
     ? (deadhead ? row.deadhead : row.max)
     : (deadhead ? Math.min(baseMax + 3, 18) : baseMax);
@@ -942,12 +947,15 @@ function computeMaxDuty(params){
     : (sectors <= 4 ? '1-4 sectors' : '5-6 sectors');
   const conversionNote = params.conversionNote ? ` ${params.conversionNote}` : '';
   const zoneNote = zone === 'outside' ? ' Table B (outside North American zone).' : ' Table A (inside North American zone).';
+  const tzNote = Number.isFinite(tzDiff)
+    ? ` Time zone difference ${formatHoursValue(tzDiff)} hrs (${tzOver4 ? '≥4' : '<4'} column).`
+    : '';
   const deadheadNote = deadhead && zone === 'inside'
     ? ' Deadhead at end of duty day adds up to 3 hours (cap 18).'
     : (deadhead && zone === 'outside' ? ' Deadhead at end of duty day (Table D) applied.' : '');
   return {
     maxFdp,
-    detail: `Unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).${zoneNote}${deadheadNote}${conversionNote}`
+    detail: `Unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).${zoneNote}${tzNote}${deadheadNote}${conversionNote}`
   };
 }
 
@@ -1944,6 +1952,18 @@ async function computeTimezoneDiffFromYYZ(input){
   return Math.round(diffHours * 100) / 100;
 }
 
+async function computeTimezoneDiffBetweenAirports(departureInput, arrivalInput){
+  const [departureZone, arrivalZone] = await Promise.all([
+    resolveAirportTimeZone(departureInput, 'departure'),
+    resolveAirportTimeZone(arrivalInput, 'arrival')
+  ]);
+  const now = new Date();
+  const departureOffset = getTimeZoneOffsetMinutes(departureZone, now);
+  const arrivalOffset = getTimeZoneOffsetMinutes(arrivalZone, now);
+  const diffHours = Math.abs((arrivalOffset - departureOffset) / 60);
+  return Math.round(diffHours * 100) / 100;
+}
+
 async function computeFdpStartInYYZ(startTime, departureCode){
   const startMinutes = parseTimeToMinutes(startTime);
   if (!Number.isFinite(startMinutes)) throw new Error('Enter an FDP start time in HH:MM.');
@@ -2704,7 +2724,7 @@ const INFO_COPY = {
     visibility: 'Lowest visibility across overlapping TAF segments at the selected time (TEMPO/PROB included).'
   },
   duty: {
-    maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors/legs, zone selection (inside/outside North American zone), and augmentation/rest facility limits from Tables A–C. Deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours).',
+    maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors/legs, zone selection (inside/outside North American zone), the time zone difference between departure and arrival (<4 vs ≥4 column), and augmentation/rest facility limits from Tables A–C. Deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours).',
     endUtc: 'FDP end time in UTC using the calculated maximum FDP added to the departure local start time (day offset shown when crossing midnight UTC).',
     basis: 'Rule bucket used to determine the maximum FDP from the tables and whether deadhead rules were applied.'
   },
@@ -3057,10 +3077,13 @@ async function calcDutyLegacy(){
     if (dutyType === 'unaugmented'){
       const startTime = document.getElementById('duty-start')?.value;
       const departureCode = document.getElementById('duty-departure')?.value;
+      const arrivalCode = document.getElementById('duty-arrival')?.value;
       const conversion = await computeFdpStartInYYZ(startTime, departureCode);
+      const timezoneDiff = await computeTimezoneDiffBetweenAirports(departureCode, arrivalCode);
       params.startMinutes = conversion.startMinutes;
       params.startUtcMinutes = conversion.startUtcMinutes;
-      params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ.`;
+      params.timezoneDiff = timezoneDiff;
+      params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ. Arrival ${normalizeAirportCode(arrivalCode)} (${formatHoursValue(timezoneDiff)}h time zone difference).`;
     }
     const res = computeMaxDuty(params);
     if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
@@ -3089,10 +3112,13 @@ async function calcDutyModern(){
     if (dutyType === 'unaugmented'){
       const startTime = document.getElementById('modern-duty-start')?.value;
       const departureCode = document.getElementById('modern-duty-departure')?.value;
+      const arrivalCode = document.getElementById('modern-duty-arrival')?.value;
       const conversion = await computeFdpStartInYYZ(startTime, departureCode);
+      const timezoneDiff = await computeTimezoneDiffBetweenAirports(departureCode, arrivalCode);
       params.startMinutes = conversion.startMinutes;
       params.startUtcMinutes = conversion.startUtcMinutes;
-      params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ.`;
+      params.timezoneDiff = timezoneDiff;
+      params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ. Arrival ${normalizeAirportCode(arrivalCode)} (${formatHoursValue(timezoneDiff)}h time zone difference).`;
     }
     const res = computeMaxDuty(params);
     if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
