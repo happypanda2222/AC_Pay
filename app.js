@@ -2287,7 +2287,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources){
   const cards = assessments.map(a => {
     const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined)
       ? `${a.ceiling} ft`
-      : (a.skyClear ? 'SKC' : 'Not reported');
+      : (a.skyClear ? 'SKC' : 'No ceiling');
     const visTxt = formatVisSm(a.visibility);
     return `<div class="weather-card">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
