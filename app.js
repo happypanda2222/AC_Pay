@@ -870,6 +870,16 @@ function formatHoursValue(value){
   return String(rounded.toFixed(2)).replace(/0+$/,'').replace(/\.$/,'');
 }
 
+function formatHoursMinutes(value){
+  if (!Number.isFinite(value)) return '--';
+  const totalMinutes = Math.round(value * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = Math.abs(totalMinutes % 60);
+  const hoursLabel = `${hours} hour${hours === 1 ? '' : 's'}`;
+  if (!minutes) return hoursLabel;
+  return `${hoursLabel} ${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
 function normalizeAirportCode(code){
   return String(code || '').trim().toUpperCase();
 }
@@ -2940,7 +2950,7 @@ function renderDutyResult(outEl, result, isModern){
     outEl.innerHTML = `<div class="simple"><div class="block"><div class="label">Notice</div><div class="value">${escapeHtml(message)}</div></div></div>`;
     return;
   }
-  const maxText = `${formatHoursValue(result.maxFdp)} hours`;
+  const maxText = formatHoursMinutes(result.maxFdp);
   const detailText = escapeHtml(result.detail);
   const endUtcText = result.endUtc ? escapeHtml(result.endUtc) : null;
   if (isModern){
