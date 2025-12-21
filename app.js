@@ -846,6 +846,14 @@ function formatMinutesToTime(value){
   return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
 }
 
+function formatUtcMinutesWithDayOffset(value){
+  if (!Number.isFinite(value)) return '--:--Z';
+  const dayOffset = Math.floor(value / 1440);
+  const timeLabel = formatMinutesToTime(value);
+  const daySuffix = dayOffset === 0 ? '' : ` (${dayOffset > 0 ? `+${dayOffset}` : `${dayOffset}`}d)`;
+  return `${timeLabel}Z${daySuffix}`;
+}
+
 function formatHoursValue(value){
   const rounded = Math.round(value * 100) / 100;
   if (!Number.isFinite(rounded)) return '--';
@@ -1815,8 +1823,10 @@ async function computeFdpStartInYYZ(startTime, departureCode){
   const departureOffset = getTimeZoneOffsetMinutes(departureZone, now);
   const diffMinutes = Math.round(yyzOffset - departureOffset);
   const yyzMinutes = ((startMinutes + diffMinutes) % 1440 + 1440) % 1440;
+  const startUtcMinutes = startMinutes - departureOffset;
   return {
     startMinutes: yyzMinutes,
+    startUtcMinutes,
     departure,
     localLabel: formatMinutesToTime(startMinutes),
     yyzLabel: formatMinutesToTime(yyzMinutes)
@@ -2458,6 +2468,7 @@ const INFO_COPY = {
   },
   duty: {
     maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors, and augmentation/rest facility limits (including 2 additional crew with Class 1 rest at 18 hours).',
+    endUtc: 'FDP end time in UTC using the calculated maximum FDP added to the departure local start time (day offset shown when crossing midnight UTC).',
     basis: 'Rule bucket used to determine the maximum FDP from the tables.'
   },
   rest: {
@@ -2674,16 +2685,19 @@ function renderDutyResult(outEl, result, isModern){
   }
   const maxText = `${formatHoursValue(result.maxFdp)} hours`;
   const detailText = escapeHtml(result.detail);
+  const endUtcText = result.endUtc ? escapeHtml(result.endUtc) : null;
   if (isModern){
     outEl.innerHTML = `
       <div class="metric-grid">
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Maximum FDP', INFO_COPY.duty.maxFdp)}</div><div class="metric-value">${maxText}</div></div>
+        ${endUtcText ? `<div class="metric-card"><div class="metric-label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="metric-value">${endUtcText}</div></div>` : ''}
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Rule basis', INFO_COPY.duty.basis)}</div><div class="metric-value" style="font-size:14px">${detailText}</div></div>
       </div>`;
   } else {
     outEl.innerHTML = `
       <div class="simple">
         <div class="block"><div class="label">${labelWithInfo('Maximum FDP', INFO_COPY.duty.maxFdp)}</div><div class="value">${maxText}</div></div>
+        ${endUtcText ? `<div class="block"><div class="label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="value">${endUtcText}</div></div>` : ''}
         <div class="block"><div class="label">${labelWithInfo('Rule basis', INFO_COPY.duty.basis)}</div><div class="value" style="font-size:14px">${detailText}</div></div>
       </div>`;
   }
@@ -2796,9 +2810,13 @@ async function calcDutyLegacy(){
       const departureCode = document.getElementById('duty-departure')?.value;
       const conversion = await computeFdpStartInYYZ(startTime, departureCode);
       params.startMinutes = conversion.startMinutes;
+      params.startUtcMinutes = conversion.startUtcMinutes;
       params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ.`;
     }
     const res = computeMaxDuty(params);
+    if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
+      res.endUtc = formatUtcMinutesWithDayOffset(params.startUtcMinutes + (res.maxFdp * 60));
+    }
     renderDutyResult(document.getElementById('duty-out'), res, false);
   } catch(err){
     const out = document.getElementById('duty-out');
@@ -2821,9 +2839,13 @@ async function calcDutyModern(){
       const departureCode = document.getElementById('modern-duty-departure')?.value;
       const conversion = await computeFdpStartInYYZ(startTime, departureCode);
       params.startMinutes = conversion.startMinutes;
+      params.startUtcMinutes = conversion.startUtcMinutes;
       params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ.`;
     }
     const res = computeMaxDuty(params);
+    if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
+      res.endUtc = formatUtcMinutesWithDayOffset(params.startUtcMinutes + (res.maxFdp * 60));
+    }
     renderDutyResult(document.getElementById('modern-duty-out'), res, true);
   } catch(err){
     const out = document.getElementById('modern-duty-out');
