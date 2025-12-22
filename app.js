@@ -1179,7 +1179,7 @@ function finRangeLabel(row){
 function renderFinResult(outEl, finValue){
   if (!outEl) return;
   if (finValue === '' || finValue === null || finValue === undefined){
-    outEl.innerHTML = '<div class="muted-note">Enter a fin number to see configuration details.</div>';
+    outEl.innerHTML = '<div class="muted-note">Enter a fin to see configuration details.</div>';
     return;
   }
   const fin = Number(finValue);
@@ -1195,12 +1195,12 @@ function renderFinResult(outEl, finValue){
   const seats = `${row.j}/${row.o}/${row.y}`;
   const cards = [
     { label: 'Aircraft type', value: row.type },
-    { label: 'FD Jumps (FDJS)', value: row.fdjs },
-    { label: 'Cabin Jumps (CCJS)', value: row.ccjs },
+    { label: 'FD Jumps', value: row.fdjs },
+    { label: 'Cabin Jumps', value: row.ccjs },
     { label: 'Seats (J/O/Y)', value: seats }
   ];
   if (isWidebodyType(row.type)){
-    cards.push({ label: 'Bunks (OFCR)', value: row.ofcr });
+    cards.push({ label: 'Bunks', value: row.ofcr });
   }
   outEl.innerHTML = `
     <div class="metric-grid">
