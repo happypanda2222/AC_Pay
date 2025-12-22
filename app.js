@@ -834,7 +834,10 @@ function computeAnnual(params){
     xlrOn: !!params.xlrOn,
     avgMonthlyHours: +params.avgMonthlyHours
   });
-  const annualizedWithholdingTax = monthlyBreakdown.monthsGross.reduce((sum, monthGross, idx) => {
+  const withholdingAudit = [];
+  let annualizedWithholdingTax = 0;
+  let chequeIndex = 1;
+  monthlyBreakdown.monthsGross.forEach((monthGross, idx) => {
     const step = monthlyBreakdown.monthSteps[idx];
     const advanceGross = Math.min(monthGross, advanceGrossForSeatStep(seat, step));
     const secondGross = Math.max(0, monthGross - advanceGross);
@@ -853,9 +856,27 @@ function computeAnnual(params){
       province,
       chequesPerYear: 12
     }) : 0;
-    return sum + advanceTax + secondTax;
-  }, 0);
-  const tax_return = +((income_tax - annualizedWithholdingTax) + (income_tax - income_tax_rrsp)).toFixed(2);
+    annualizedWithholdingTax += advanceTax + secondTax;
+    withholdingAudit.push({
+      cheque: chequeIndex++,
+      month: idx + 1,
+      step,
+      type: 'Advance',
+      gross: advanceGross,
+      pension: 0,
+      tax: advanceTax
+    });
+    withholdingAudit.push({
+      cheque: chequeIndex++,
+      month: idx + 1,
+      step,
+      type: 'Second',
+      gross: secondGross,
+      pension: secondPension,
+      tax: secondTax
+    });
+  });
+  const tax_return = +((annualizedWithholdingTax - income_tax) + (income_tax - income_tax_rrsp)).toFixed(2);
 
   return {
     audit,
@@ -876,6 +897,7 @@ function computeAnnual(params){
     taxable_rrsp:+taxable_rrsp.toFixed(2),
     income_tax_rrsp:+income_tax_rrsp.toFixed(2),
     annualized_withholding_tax:+annualizedWithholdingTax.toFixed(2),
+    withholding_audit: withholdingAudit,
     cpp_full:+cpp_total_full.toFixed(2),
     ei_full:+eiPrem_full.toFixed(2)
   };
@@ -3174,9 +3196,9 @@ const INFO_COPY = {
     annualNet: 'Annual gross minus tax, CPP/QPP, EI, pension, union dues, health premiums and ESOP contributions, plus the after-tax employer ESOP match.',
     monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours.',
     monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match (no cheque split).',
-    taxReturn: 'Difference between annual tax owed and estimated withholdings across two monthly paycheques (fixed advance + remaining gross with step-based pension), plus RRSP tax savings.',
+    taxReturn: 'Estimated refund (positive) or balance owing (negative) based on annualized withholding across two monthly paycheques (fixed advance + remaining gross with step-based pension), plus RRSP tax savings.',
     hourlyRate: 'Pay table rate for each segment of the year (with XLR when toggled), including the progression date increase.',
-    incomeTax: 'Total annual federal and provincial income tax after pension and RRSP offsets.',
+    incomeTax: 'Total annual federal and provincial income tax after pension credits (RRSP savings are reflected in the tax return estimate).',
     cpp: 'Annual CPP/QPP contributions on employment income up to the yearly maximum.',
     ei: 'Annual EI premiums based on insurable earnings up to the yearly maximum.',
     pension: 'Employee pension contributions using the current pension rate applied to gross pay.',
@@ -3186,7 +3208,7 @@ const INFO_COPY = {
     health: 'Annualized health deduction at the monthly premium rate.'
   },
   advanced: {
-    returnEstimate: 'Estimated tax return using annual payroll withholding and the additional income, deductions, dividends and donation credits entered.',
+    returnEstimate: 'Estimated refund (positive) or balance owing (negative) using annual payroll withholding plus the additional income, deductions, dividends and donation credits entered.',
     adjustedTaxable: 'Taxable income after RRSP and other deductions, plus dividend gross-up and taxable capital gains.',
     taxLiability: 'Estimated federal and provincial income tax before comparing to payroll withholding.',
     withholding: 'Annualized tax withheld based on the advance/second pay split.',
@@ -3285,8 +3307,16 @@ function getAdvancedInputs(isModern){
     capitalGains: +document.getElementById(`${prefix}adv-capgains`)?.value || 0,
     donations: +document.getElementById(`${prefix}adv-donations`)?.value || 0,
     otherIncome: +document.getElementById(`${prefix}adv-other-income`)?.value || 0,
-    otherDeductions: +document.getElementById(`${prefix}adv-other-deductions`)?.value || 0
+    otherDeductions: +document.getElementById(`${prefix}adv-other-deductions`)?.value || 0,
+    rrsp: +document.getElementById(`${prefix}adv-rrsp`)?.value || 0
   };
+}
+
+function syncAdvancedRrsp(isModern){
+  const source = document.getElementById(isModern ? 'modern-rrsp' : 'rrsp');
+  const target = document.getElementById(isModern ? 'modern-adv-rrsp' : 'adv-rrsp');
+  if (!source || !target) return;
+  target.value = source.value || 0;
 }
 
 function normalizeAmount(value){
@@ -3304,7 +3334,7 @@ function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
   const grossUpEligible = eligibleDividends * DIVIDEND_GROSS_UP.eligible;
   const grossUpNonEligible = nonEligibleDividends * DIVIDEND_GROSS_UP.nonEligible;
   const capitalGainsTaxable = capitalGains * CAPITAL_GAINS_INCLUSION;
-  const rrsp = normalizeAmount(baseParams.rrsp);
+  const rrsp = normalizeAmount(advancedParams.rrsp || baseParams.rrsp);
 
   const adjustedTaxable = Math.max(
     0,
@@ -3321,7 +3351,7 @@ function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
 
   const donationCredit = donations * (fedLow + provLow);
   const taxAfterCredits = Math.max(0, taxBeforeCredits - donationCredit);
-  const returnEstimate = +(taxAfterCredits - baseResult.annualized_withholding_tax).toFixed(2);
+  const returnEstimate = +(baseResult.annualized_withholding_tax - taxAfterCredits).toFixed(2);
 
   return {
     eligibleDividends,
@@ -3339,7 +3369,8 @@ function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
     donationCredit,
     taxAfterCredits,
     withholding: baseResult.annualized_withholding_tax,
-    returnEstimate
+    returnEstimate,
+    rrsp
   };
 }
 
@@ -3374,7 +3405,7 @@ function renderAdvancedTaxReturn({ baseParams, baseResult, advancedResult, isMod
     ['Step (Jan 1)', baseParams.stepInput],
     ['Province/Territory', baseParams.province],
     ['Avg monthly credit hours', baseParams.avgMonthlyHours],
-    ['RRSP contributions', money(baseParams.rrsp)],
+    ['RRSP contributions', money(advancedResult.rrsp)],
     ['Annual gross', money(baseResult.gross)],
     ['Annual pension', money(baseResult.pension)],
     ['Base taxable', money(baseResult.taxable_pre)],
@@ -3397,7 +3428,21 @@ function renderAdvancedTaxReturn({ baseParams, baseResult, advancedResult, isMod
       </table>
     </details>`;
 
-  out.innerHTML = metricHTML + auditHTML;
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const chequeRows = (baseResult.withholding_audit || []).map((entry) => {
+    const monthLabel = monthNames[entry.month - 1] || entry.month;
+    return `<tr><td class="num">${entry.cheque}</td><td>${escapeHtml(String(monthLabel))}</td><td class="num">${entry.step}</td><td>${escapeHtml(entry.type)}</td><td class="num">${money(entry.gross)}</td><td class="num">${money(entry.pension)}</td><td class="num">${money(entry.tax)}</td></tr>`;
+  }).join('');
+
+  const advancedAuditHTML = `
+    <details class="drawer"><summary>Advanced Audit</summary>
+      <table>
+        <thead><tr><th class="num">Cheque</th><th>Month</th><th class="num">Step</th><th>Type</th><th class="num">Gross</th><th class="num">Pension</th><th class="num">Tax</th></tr></thead>
+        <tbody>${chequeRows}</tbody>
+      </table>
+    </details>`;
+
+  out.innerHTML = metricHTML + auditHTML + advancedAuditHTML;
 }
 
 function bindAdvancedReturnTriggers(container){
@@ -3877,6 +3922,7 @@ function calcAdvancedReturn(isModern){
 }
 
 function openAdvancedTaxTab(isModern){
+  syncAdvancedRrsp(isModern);
   if (isModern){
     setModernSubTab('modern-annual-advanced');
   } else {
@@ -4046,6 +4092,10 @@ function init(){
   document.getElementById('modern-step')?.addEventListener('change', ()=>tieYearStepFromStepModern());
   document.getElementById('modern-ot-step')?.addEventListener('change', ()=>tieYearStepFromStepModernVO());
   document.getElementById('modern-mon-step')?.addEventListener('change', ()=>tieYearStepFromStepModernMonthly());
+  document.getElementById('rrsp')?.addEventListener('input', ()=>syncAdvancedRrsp(false));
+  document.getElementById('rrsp')?.addEventListener('change', ()=>syncAdvancedRrsp(false));
+  document.getElementById('modern-rrsp')?.addEventListener('input', ()=>syncAdvancedRrsp(true));
+  document.getElementById('modern-rrsp')?.addEventListener('change', ()=>syncAdvancedRrsp(true));
   document.getElementById('duty-type')?.addEventListener('change', ()=>toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields'));
   document.getElementById('modern-duty-type')?.addEventListener('change', ()=>toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields'));
   document.getElementById('duty-crew')?.addEventListener('change', ()=>updateAugmentedFacilityOptions('duty-crew','duty-rest-facility'));
@@ -4117,6 +4167,8 @@ function init(){
   // lock the controls.  If tie checkboxes remain unchecked, this does
   // nothing beyond setting defaults.
   autoSelectDefaults();
+  syncAdvancedRrsp(false);
+  syncAdvancedRrsp(true);
   // Sensible placeholders for weather tab
   const depWx = document.getElementById('wx-dep'); if (depWx && !depWx.value) depWx.value = 'YWG';
   const arrWx = document.getElementById('wx-arr'); if (arrWx && !arrWx.value) arrWx.value = 'YYZ';
