@@ -848,7 +848,7 @@ function computeAnnual(params){
       pension: 0,
       year,
       province,
-      chequesPerYear: 12
+      chequesPerYear: 24
     }) : 0;
     const secondTax = secondGross > 0 ? computeChequeTax({
       gross: secondGross,
