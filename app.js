@@ -825,7 +825,8 @@ function computeAnnual(params){
 
   
   // Annual tax return: compare annual liability to estimated withholdings across two
-  // paycheques per month using fixed advance amounts and step-based pension deductions.
+  // paycheques per month using fixed advance amounts, second cheques annualized at 24,
+  // and pension based on the full month's gross.
   const monthlyBreakdown = computeMonthlyGrosses({
     year,
     seat,
@@ -841,13 +842,13 @@ function computeAnnual(params){
     const step = monthlyBreakdown.monthSteps[idx];
     const advanceGross = Math.min(monthGross, advanceGrossForSeatStep(seat, step));
     const secondGross = Math.max(0, monthGross - advanceGross);
-    const secondPension = secondGross * pensionRateForStep(step);
+    const secondPension = monthGross * pensionRateForStep(step);
     const advanceTax = advanceGross > 0 ? computeChequeTax({
       gross: advanceGross,
       pension: 0,
       year,
       province,
-      chequesPerYear: 12
+      chequesPerYear: 24
     }) : 0;
     const secondTax = secondGross > 0 ? computeChequeTax({
       gross: secondGross,
@@ -3196,7 +3197,7 @@ const INFO_COPY = {
     annualNet: 'Annual gross minus tax, CPP/QPP, EI, pension, union dues, health premiums and ESOP contributions, plus the after-tax employer ESOP match.',
     monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours.',
     monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match (no cheque split).',
-    taxReturn: 'Estimated refund (positive) or balance owing (negative) based on annualized withholding across two monthly paycheques (fixed advance + remaining gross with step-based pension), plus RRSP tax savings.',
+    taxReturn: 'Estimated refund (positive) or balance owing (negative) based on annualized withholding across two monthly paycheques (advance annualized at 12, second cheque annualized at 24, pension based on full month gross), plus RRSP tax savings.',
     hourlyRate: 'Pay table rate for each segment of the year (with XLR when toggled), including the progression date increase.',
     incomeTax: 'Total annual federal and provincial income tax after pension credits (RRSP savings are reflected in the tax return estimate).',
     cpp: 'Annual CPP/QPP contributions on employment income up to the yearly maximum.',
@@ -3211,7 +3212,7 @@ const INFO_COPY = {
     returnEstimate: 'Estimated refund (positive) or balance owing (negative) using annual payroll withholding plus the additional income, deductions, dividends and donation credits entered.',
     adjustedTaxable: 'Taxable income after RRSP and other deductions, plus dividend gross-up and taxable capital gains.',
     taxLiability: 'Estimated federal and provincial income tax before comparing to payroll withholding.',
-    withholding: 'Annualized tax withheld based on the advance/second pay split.',
+    withholding: 'Annualized tax withheld with advances annualized at 12 cheques, second cheques at 24 cheques, and pension based on full month gross.',
     donationCredit: 'Donation credit estimated using base federal and provincial credit rates.',
     dividendGrossUp: 'Dividend gross-up added to taxable income for eligible and non-eligible dividends.',
     capitalGainsTaxable: 'Taxable portion of capital gains (50% inclusion rate).'
