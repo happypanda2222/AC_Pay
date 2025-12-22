@@ -66,6 +66,8 @@ const PROGRESSION = {m:11, d:5};
 const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
+const DIVIDEND_GROSS_UP = { eligible: 1.38, nonEligible: 1.15 };
+const CAPITAL_GAINS_INCLUSION = 0.5;
 const FIN_CONFIGS = [
   { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A320 Jetz', finStart: 225, finEnd: 225, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
@@ -868,8 +870,33 @@ function computeAnnual(params){
     esop_match_after_tax:+esop_match_net.toFixed(2),
     monthly,
     step_jan1:stepJan1,
-    tax_return
+    tax_return,
+    taxable_pre:+taxable_pre.toFixed(2),
+    taxable_rrsp:+taxable_rrsp.toFixed(2),
+    income_tax_rrsp:+income_tax_rrsp.toFixed(2),
+    annualized_withholding_tax:+annualizedWithholdingTax.toFixed(2),
+    cpp_full:+cpp_total_full.toFixed(2),
+    ei_full:+eiPrem_full.toFixed(2)
   };
+}
+
+function getTaxDataForYear(year, province){
+  const fedData = (year <= 2025 ? FED : FED_2026);
+  const provMap = (year <= 2025 ? PROV : PROV_2026);
+  const p = provMap[province];
+  if (!p) throw new Error('Unsupported province '+province);
+  const fedLow = fedData.brackets[0][1];
+  const provLow = p.brackets[0][1];
+  return { fedData, provData: p, fedLow, provLow };
+}
+
+function computeIncomeTaxWithCredits({ taxable, year, province, cpp, ei }){
+  const { fedData, provData, fedLow, provLow } = getTaxDataForYear(year, province);
+  const fedGross = taxFromBrackets(taxable, fedData.brackets);
+  const provGross = taxFromBrackets(taxable, provData.brackets);
+  const fedTax = Math.max(0, fedGross - (fedLow * federalBPA(year, taxable) + 0.15 * (cpp + ei)));
+  const provTax = Math.max(0, provGross - (provLow * provincialBPA(year, taxable, province) + provLow * (cpp + ei)));
+  return { total: fedTax + provTax, fedLow, provLow };
 }
 
 
@@ -1337,17 +1364,18 @@ function setLegacySubTab(which){
   const tabs = [
     { btn: 'tabbtn-annual', pane: 'tab-annual', id: 'annual' },
     { btn: 'tabbtn-monthly', pane: 'tab-monthly', id: 'monthly' },
-    { btn: 'tabbtn-vo', pane: 'tab-vo', id: 'vo' }
+    { btn: 'tabbtn-vo', pane: 'tab-vo', id: 'vo' },
+    { btn: null, pane: 'tab-annual-advanced', id: 'annual-advanced' }
   ];
   tabs.forEach(({ btn, pane, id }) => {
-    const b = document.getElementById(btn);
+    const b = btn ? document.getElementById(btn) : null;
     const p = document.getElementById(pane);
-    if (!b || !p) return;
+    if (!p) return;
     if (which === id){
-      b.classList.add('active');
+      if (b) b.classList.add('active');
       p.classList.remove('hidden');
     } else {
-      b.classList.remove('active');
+      if (b) b.classList.remove('active');
       p.classList.add('hidden');
     }
   });
@@ -1401,16 +1429,21 @@ function setModernPrimaryTab(which){
 
 function setModernSubTab(which){
   currentModernSubTab = which;
-  const tabs = ['modern-annual','modern-monthly','modern-vo'];
-  tabs.forEach(id => {
-    const btn = document.getElementById(`tabbtn-${id}`);
+  const tabs = [
+    { id: 'modern-annual', btn: 'tabbtn-modern-annual' },
+    { id: 'modern-monthly', btn: 'tabbtn-modern-monthly' },
+    { id: 'modern-vo', btn: 'tabbtn-modern-vo' },
+    { id: 'modern-annual-advanced', btn: null }
+  ];
+  tabs.forEach(({ id, btn }) => {
+    const button = btn ? document.getElementById(btn) : null;
     const pane = document.getElementById(id);
-    if (!btn || !pane) return;
+    if (!pane) return;
     if (id === which){
-      btn.classList.add('active');
+      if (button) button.classList.add('active');
       pane.classList.remove('hidden');
     } else {
-      btn.classList.remove('active');
+      if (button) button.classList.remove('active');
       pane.classList.add('hidden');
     }
   });
@@ -2951,6 +2984,15 @@ const INFO_COPY = {
     union: 'Estimated annual union dues derived from monthly dues across all months.',
     health: 'Annualized health deduction at the monthly premium rate.'
   },
+  advanced: {
+    returnEstimate: 'Estimated tax return using annual payroll withholding and the additional income, deductions, dividends and donation credits entered.',
+    adjustedTaxable: 'Taxable income after RRSP and other deductions, plus dividend gross-up and taxable capital gains.',
+    taxLiability: 'Estimated federal and provincial income tax before comparing to payroll withholding.',
+    withholding: 'Annualized tax withheld based on the advance/second pay split.',
+    donationCredit: 'Donation credit estimated using base federal and provincial credit rates.',
+    dividendGrossUp: 'Dividend gross-up added to taxable income for eligible and non-eligible dividends.',
+    capitalGainsTaxable: 'Taxable portion of capital gains (50% inclusion rate).'
+  },
   monthly: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
     credits: 'Monthly credit hours plus minutes (converted to hours) paid at regular rate up to 85 hours.',
@@ -3005,6 +3047,168 @@ function labelWithInfo(title, desc){
   return `${title} ${infoBubble(desc)}`;
 }
 
+function getAnnualParams(isModern){
+  if (isModern){
+    return {
+      seat: document.getElementById('modern-seat').value,
+      ac: document.getElementById('modern-ac').value,
+      year: +document.getElementById('modern-year').value,
+      stepInput: +document.getElementById('modern-step').value,
+      tieOn: document.getElementById('modern-tie').checked,
+      xlrOn: document.getElementById('modern-xlr').checked,
+      avgMonthlyHours: +document.getElementById('modern-avgHrs').value,
+      province: document.getElementById('modern-prov').value,
+      esopPct: +document.getElementById('modern-esop').value,
+      rrsp: +document.getElementById('modern-rrsp').value
+    };
+  }
+  return {
+    seat: document.getElementById('seat').value,
+    ac: document.getElementById('ac').value,
+    year: +document.getElementById('year').value,
+    stepInput: +document.getElementById('step').value,
+    tieOn: document.getElementById('tie').checked,
+    xlrOn: document.getElementById('xlr').checked,
+    avgMonthlyHours: +document.getElementById('avgHrs').value,
+    province: document.getElementById('prov').value,
+    esopPct: +document.getElementById('esop').value,
+    rrsp: +document.getElementById('rrsp').value
+  };
+}
+
+function getAdvancedInputs(isModern){
+  const prefix = isModern ? 'modern-' : '';
+  return {
+    eligibleDividends: +document.getElementById(`${prefix}adv-div-eligible`)?.value || 0,
+    nonEligibleDividends: +document.getElementById(`${prefix}adv-div-noneligible`)?.value || 0,
+    capitalGains: +document.getElementById(`${prefix}adv-capgains`)?.value || 0,
+    donations: +document.getElementById(`${prefix}adv-donations`)?.value || 0,
+    otherIncome: +document.getElementById(`${prefix}adv-other-income`)?.value || 0,
+    otherDeductions: +document.getElementById(`${prefix}adv-other-deductions`)?.value || 0
+  };
+}
+
+function normalizeAmount(value){
+  return Math.max(0, +value || 0);
+}
+
+function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
+  const eligibleDividends = normalizeAmount(advancedParams.eligibleDividends);
+  const nonEligibleDividends = normalizeAmount(advancedParams.nonEligibleDividends);
+  const capitalGains = normalizeAmount(advancedParams.capitalGains);
+  const donations = normalizeAmount(advancedParams.donations);
+  const otherIncome = normalizeAmount(advancedParams.otherIncome);
+  const otherDeductions = normalizeAmount(advancedParams.otherDeductions);
+
+  const grossUpEligible = eligibleDividends * DIVIDEND_GROSS_UP.eligible;
+  const grossUpNonEligible = nonEligibleDividends * DIVIDEND_GROSS_UP.nonEligible;
+  const capitalGainsTaxable = capitalGains * CAPITAL_GAINS_INCLUSION;
+  const rrsp = normalizeAmount(baseParams.rrsp);
+
+  const adjustedTaxable = Math.max(
+    0,
+    baseResult.taxable_pre + otherIncome + grossUpEligible + grossUpNonEligible + capitalGainsTaxable - rrsp - otherDeductions
+  );
+
+  const { total: taxBeforeCredits, fedLow, provLow } = computeIncomeTaxWithCredits({
+    taxable: adjustedTaxable,
+    year: baseParams.year,
+    province: baseParams.province,
+    cpp: baseResult.cpp_full,
+    ei: baseResult.ei_full
+  });
+
+  const donationCredit = donations * (fedLow + provLow);
+  const taxAfterCredits = Math.max(0, taxBeforeCredits - donationCredit);
+  const returnEstimate = +(taxAfterCredits - baseResult.annualized_withholding_tax).toFixed(2);
+
+  return {
+    eligibleDividends,
+    nonEligibleDividends,
+    capitalGains,
+    donations,
+    otherIncome,
+    otherDeductions,
+    grossUpEligible,
+    grossUpNonEligible,
+    dividendGrossUp: grossUpEligible + grossUpNonEligible,
+    capitalGainsTaxable,
+    adjustedTaxable,
+    taxBeforeCredits,
+    donationCredit,
+    taxAfterCredits,
+    withholding: baseResult.annualized_withholding_tax,
+    returnEstimate
+  };
+}
+
+function renderAdvancedTaxReturn({ baseParams, baseResult, advancedResult, isModern }){
+  const out = document.getElementById(isModern ? 'modern-adv-out' : 'adv-out');
+  if (!out) return;
+  const metricHTML = isModern ? `
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Advanced tax return', INFO_COPY.advanced.returnEstimate)}</div><div class="metric-value">${money(advancedResult.returnEstimate)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Adjusted taxable', INFO_COPY.advanced.adjustedTaxable)}</div><div class="metric-value">${money(advancedResult.adjustedTaxable)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Tax liability', INFO_COPY.advanced.taxLiability)}</div><div class="metric-value">${money(advancedResult.taxAfterCredits)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Withholding', INFO_COPY.advanced.withholding)}</div><div class="metric-value">${money(advancedResult.withholding)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Donation credit', INFO_COPY.advanced.donationCredit)}</div><div class="metric-value">${money(advancedResult.donationCredit)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Dividend gross-up', INFO_COPY.advanced.dividendGrossUp)}</div><div class="metric-value">${money(advancedResult.dividendGrossUp)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Taxable capital gains', INFO_COPY.advanced.capitalGainsTaxable)}</div><div class="metric-value">${money(advancedResult.capitalGainsTaxable)}</div></div>
+    </div>`
+    : `
+    <div class="simple">
+      <div class="block"><div class="label">${labelWithInfo('Advanced tax return', INFO_COPY.advanced.returnEstimate)}</div><div class="value">${money(advancedResult.returnEstimate)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Adjusted taxable', INFO_COPY.advanced.adjustedTaxable)}</div><div class="value">${money(advancedResult.adjustedTaxable)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Tax liability', INFO_COPY.advanced.taxLiability)}</div><div class="value">${money(advancedResult.taxAfterCredits)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Withholding', INFO_COPY.advanced.withholding)}</div><div class="value">${money(advancedResult.withholding)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Donation credit', INFO_COPY.advanced.donationCredit)}</div><div class="value">${money(advancedResult.donationCredit)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Dividend gross-up', INFO_COPY.advanced.dividendGrossUp)}</div><div class="value">${money(advancedResult.dividendGrossUp)}</div></div>
+      <div class="block"><div class="label">${labelWithInfo('Taxable capital gains', INFO_COPY.advanced.capitalGainsTaxable)}</div><div class="value">${money(advancedResult.capitalGainsTaxable)}</div></div>
+    </div>`;
+
+  const auditRows = [
+    ['Seat', baseParams.seat],
+    ['Aircraft', baseParams.ac],
+    ['Year', baseParams.year],
+    ['Step (Jan 1)', baseParams.stepInput],
+    ['Province/Territory', baseParams.province],
+    ['Avg monthly credit hours', baseParams.avgMonthlyHours],
+    ['RRSP contributions', money(baseParams.rrsp)],
+    ['Annual gross', money(baseResult.gross)],
+    ['Annual pension', money(baseResult.pension)],
+    ['Base taxable', money(baseResult.taxable_pre)],
+    ['CPP/QPP (annual)', money(baseResult.cpp_full)],
+    ['EI (annual)', money(baseResult.ei_full)],
+    ['Withholding tax', money(baseResult.annualized_withholding_tax)],
+    ['Eligible dividends', money(advancedResult.eligibleDividends)],
+    ['Non-eligible dividends', money(advancedResult.nonEligibleDividends)],
+    ['Capital gains', money(advancedResult.capitalGains)],
+    ['Donations', money(advancedResult.donations)],
+    ['Other income', money(advancedResult.otherIncome)],
+    ['Other deductions', money(advancedResult.otherDeductions)]
+  ].map(([label, value]) => `<tr><td>${escapeHtml(String(label))}</td><td class="num">${escapeHtml(String(value))}</td></tr>`).join('');
+
+  const auditHTML = `
+    <details class="drawer"><summary>Audit data</summary>
+      <table>
+        <thead><tr><th>Item</th><th class="num">Value</th></tr></thead>
+        <tbody>${auditRows}</tbody>
+      </table>
+    </details>`;
+
+  out.innerHTML = metricHTML + auditHTML;
+}
+
+function bindAdvancedReturnTriggers(container){
+  if (!container) return;
+  container.querySelectorAll('[data-advanced-target]').forEach((btn) => {
+    btn.onclick = () => {
+      const target = btn.getAttribute('data-advanced-target');
+      openAdvancedTaxTab(target === 'modern');
+    };
+  });
+}
+
 function renderAnnualModern(res, params){
   const out = document.getElementById('modern-out');
   if (!out) return;
@@ -3021,7 +3225,7 @@ function renderAnnualModern(res, params){
   const deductions = `
     <details class="drawer"><summary>See taxes & deductions</summary>
       <div class="metric-grid">
-        <div class="metric-card"><div class="metric-label">${labelWithInfo('Tax Return (est.)', INFO_COPY.annual.taxReturn)}</div><div class="metric-value">${money(res.tax_return)}</div></div>
+        <button class="metric-card actionable" type="button" data-advanced-target="modern"><div class="metric-label">${labelWithInfo('Tax Return (est.)', INFO_COPY.annual.taxReturn)}</div><div class="metric-value">${money(res.tax_return)}</div></button>
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Income Tax', INFO_COPY.annual.incomeTax)}</div><div class="metric-value">${money(res.tax)}</div></div>
         <div class="metric-card"><div class="metric-label">${labelWithInfo('CPP/QPP', INFO_COPY.annual.cpp)}</div><div class="metric-value">${money(res.cpp)}</div></div>
         <div class="metric-card"><div class="metric-label">${labelWithInfo('EI', INFO_COPY.annual.ei)}</div><div class="metric-value">${money(res.ei)}</div></div>
@@ -3046,6 +3250,7 @@ function renderAnnualModern(res, params){
     </details>`;
 
   out.innerHTML = metricHTML + deductions + auditHTML;
+  bindAdvancedReturnTriggers(out);
 }
 
 function renderMonthlyModern(res){
@@ -3126,7 +3331,7 @@ function renderAnnual(res, params){
   const taxHTML = `
     <details class="drawer"><summary>Tax return</summary>
       <div class="simple">
-        <div class="block"><div class="label">${labelWithInfo('Tax Return', INFO_COPY.annual.taxReturn)}</div><div class="value">${money(res.tax_return)}</div></div>
+        <button class="block actionable" type="button" data-advanced-target="legacy"><div class="label">${labelWithInfo('Tax Return', INFO_COPY.annual.taxReturn)}</div><div class="value">${money(res.tax_return)}</div></button>
       </div>
     </details>`;
   const auditRows = res.audit.map(seg=>{
@@ -3154,6 +3359,7 @@ function renderAnnual(res, params){
       </table>
     </div>`;
   out.innerHTML = simpleHTML + taxHTML + auditHTML;
+  bindAdvancedReturnTriggers(out);
 }
 function renderVO(res, params){
   const out = document.getElementById('ot-out');
@@ -3261,18 +3467,7 @@ function renderRestResult(outEl, result, isModern){
 // --- Actions ---
 function calcAnnual(){
   try{
-    const params = {
-      seat: document.getElementById('seat').value,
-      ac: document.getElementById('ac').value,
-      year: +document.getElementById('year').value,
-      stepInput: +document.getElementById('step').value,
-      tieOn: document.getElementById('tie').checked,
-      xlrOn: document.getElementById('xlr').checked,
-      avgMonthlyHours: +document.getElementById('avgHrs').value,
-      province: document.getElementById('prov').value,
-      esopPct: +document.getElementById('esop').value,
-      rrsp: +document.getElementById('rrsp').value
-    };
+    const params = getAnnualParams(false);
     const res = computeAnnual(params);
     renderAnnual(res, params);
   } catch(err){
@@ -3456,18 +3651,7 @@ async function calcRestModern(){
 
 function calcAnnualModern(){
   try{
-    const params = {
-      seat: document.getElementById('modern-seat').value,
-      ac: document.getElementById('modern-ac').value,
-      year: +document.getElementById('modern-year').value,
-      stepInput: +document.getElementById('modern-step').value,
-      tieOn: document.getElementById('modern-tie').checked,
-      xlrOn: document.getElementById('modern-xlr').checked,
-      avgMonthlyHours: +document.getElementById('modern-avgHrs').value,
-      province: document.getElementById('modern-prov').value,
-      esopPct: +document.getElementById('modern-esop').value,
-      rrsp: +document.getElementById('modern-rrsp').value
-    };
+    const params = getAnnualParams(true);
     const res = computeAnnual(params);
     renderAnnualModern(res, params);
   } catch(err){
@@ -3475,6 +3659,29 @@ function calcAnnualModern(){
     if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
     console.error(err);
   }
+}
+
+function calcAdvancedReturn(isModern){
+  try{
+    const baseParams = getAnnualParams(isModern);
+    const baseResult = computeAnnual(baseParams);
+    const advancedParams = getAdvancedInputs(isModern);
+    const advancedResult = computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams });
+    renderAdvancedTaxReturn({ baseParams, baseResult, advancedResult, isModern });
+  } catch(err){
+    const out = document.getElementById(isModern ? 'modern-adv-out' : 'adv-out');
+    if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
+    console.error(err);
+  }
+}
+
+function openAdvancedTaxTab(isModern){
+  if (isModern){
+    setModernSubTab('modern-annual-advanced');
+  } else {
+    setLegacySubTab('annual-advanced');
+  }
+  calcAdvancedReturn(isModern);
 }
 
 function calcMonthlyModern(){
@@ -3655,9 +3862,13 @@ function init(){
   if (newMonEsopEl && newMonEsopPct){ newMonEsopEl.addEventListener('input', ()=>{ newMonEsopPct.textContent = newMonEsopEl.value+'%'; }); }
   // Buttons
   document.getElementById('calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnual(); });
+  document.getElementById('adv-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAdvancedReturn(false); });
+  document.getElementById('adv-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('annual'); });
   document.getElementById('ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVO(); });
   document.getElementById('mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthly(); });
   document.getElementById('modern-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
+  document.getElementById('modern-adv-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAdvancedReturn(true); });
+  document.getElementById('modern-adv-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
   document.getElementById('modern-ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
   document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
   document.getElementById('duty-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcDutyLegacy(); });

@@ -112,6 +112,27 @@
     .simple .block{margin-bottom:16px}
     .simple .label{font-size:13px;color:var(--muted);margin-bottom:4px;display:flex;align-items:center;gap:6px}
     .simple .value{font-size:22px;font-weight:800;letter-spacing:.2px}
+    button.block{
+      display:block;
+      width:100%;
+      text-align:left;
+      font:inherit;
+      color:inherit;
+      background:none;
+      border:none;
+      padding:0;
+    }
+    .block.actionable{
+      border:1px solid #2a2f3b;
+      border-radius:12px;
+      padding:8px 10px;
+      background:#0f1218;
+      cursor:pointer;
+      transition:border-color .15s ease, transform .1s ease;
+    }
+    .block.actionable:hover{border-color:var(--acc)}
+    .block.actionable:active{transform:translateY(1px)}
+    .block.actionable:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
     .hidden{display:none !important}
     @keyframes tapPulse {
   0% { transform: scale(1); }
@@ -188,6 +209,18 @@
     .metric-card{background:#0c101a;border:1px solid #1f2633;border-radius:12px;padding:12px}
     .metric-label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-bottom:4px}
     .metric-value{font-size:22px;font-weight:900;letter-spacing:.2px}
+    button.metric-card{
+      display:block;
+      width:100%;
+      text-align:left;
+      font:inherit;
+      color:inherit;
+      appearance:none;
+      -webkit-appearance:none;
+      cursor:pointer;
+    }
+    button.metric-card.actionable:hover{border-color:var(--acc)}
+    button.metric-card.actionable:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
     .drawer{margin-top:12px;border:1px solid #1f2633;border-radius:12px;padding:10px;background:#0d111c}
     .drawer summary{cursor:pointer;font-weight:800;color:var(--txt);list-style:none}
     .drawer summary::-webkit-details-marker{display:none}
@@ -330,6 +363,48 @@
               <div>
                 <h3>Highlights</h3>
                 <div id="modern-out"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="modern-annual-advanced" class="modern-tab hidden">
+            <div class="modern-grid">
+              <div>
+                <h3>Advanced tax return</h3>
+                <div class="stacked-fields">
+                  <div>
+                    <label>Eligible dividends</label>
+                    <input id="modern-adv-div-eligible" type="number" min="0" step="100" value="0">
+                  </div>
+                  <div>
+                    <label>Non-eligible dividends</label>
+                    <input id="modern-adv-div-noneligible" type="number" min="0" step="100" value="0">
+                  </div>
+                  <div>
+                    <label>Capital gains</label>
+                    <input id="modern-adv-capgains" type="number" min="0" step="100" value="0">
+                  </div>
+                  <div>
+                    <label>Donations</label>
+                    <input id="modern-adv-donations" type="number" min="0" step="50" value="0">
+                  </div>
+                  <div>
+                    <label>Other income</label>
+                    <input id="modern-adv-other-income" type="number" min="0" step="100" value="0">
+                  </div>
+                  <div>
+                    <label>Other deductions</label>
+                    <input id="modern-adv-other-deductions" type="number" min="0" step="100" value="0">
+                  </div>
+                </div>
+                <div class="modern-controls">
+                  <button id="modern-adv-back" class="convert-btn" type="button">Back to annual</button>
+                </div>
+                <div class="modern-cta"><button id="modern-adv-calc" class="btn-primary" type="button">Calculate advanced return</button></div>
+              </div>
+              <div>
+                <h3>Advanced results</h3>
+                <div id="modern-adv-out"></div>
               </div>
             </div>
           </div>
@@ -817,6 +892,44 @@
         </div>
       </div>
       <div id="out"></div>
+    </div>
+
+    <div class="card hidden" id="tab-annual-advanced">
+      <div class="row-4">
+        <div>
+          <label>Eligible dividends</label>
+          <input id="adv-div-eligible" type="number" min="0" step="100" value="0">
+        </div>
+        <div>
+          <label>Non-eligible dividends</label>
+          <input id="adv-div-noneligible" type="number" min="0" step="100" value="0">
+        </div>
+        <div>
+          <label>Capital gains</label>
+          <input id="adv-capgains" type="number" min="0" step="100" value="0">
+        </div>
+        <div>
+          <label>Donations</label>
+          <input id="adv-donations" type="number" min="0" step="50" value="0">
+        </div>
+      </div>
+      <div class="row-4" style="margin-top:10px">
+        <div>
+          <label>Other income</label>
+          <input id="adv-other-income" type="number" min="0" step="100" value="0">
+        </div>
+        <div>
+          <label>Other deductions</label>
+          <input id="adv-other-deductions" type="number" min="0" step="100" value="0">
+        </div>
+        <div>
+          <button id="adv-back" class="btn" type="button">Back to annual</button>
+        </div>
+        <div>
+          <button id="adv-calc" class="btn" type="button">Calculate advanced return</button>
+        </div>
+      </div>
+      <div id="adv-out"></div>
     </div>
 
     <!-- Monthly Tab -->
