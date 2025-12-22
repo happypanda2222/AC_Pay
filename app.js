@@ -1462,6 +1462,73 @@ function upsertCustomFinConfig(config, targetFin){
   return normalized;
 }
 
+function removeCustomFinConfig(fin){
+  if (!Number.isFinite(fin)) return false;
+  const next = customFinConfigs.filter(row => !(fin >= row.finStart && fin <= row.finEnd));
+  if (next.length === customFinConfigs.length) return false;
+  saveCustomFinConfigs(next);
+  return true;
+}
+
+const finDeleteState = { fin: null, outEl: null };
+
+function getFinDeleteOverlay(){
+  let overlay = document.getElementById('fin-delete-overlay');
+  if (overlay) return overlay;
+  overlay = document.createElement('div');
+  overlay.id = 'fin-delete-overlay';
+  overlay.className = 'fin-confirm-overlay hidden';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = `
+    <div class="fin-confirm-dialog" role="document">
+      <h4>Delete fin</h4>
+      <p data-fin-delete-message></p>
+      <div class="fin-confirm-actions">
+        <button type="button" class="btn btn-secondary" data-fin-delete-cancel>Cancel</button>
+        <button type="button" class="btn btn-danger" data-fin-delete-confirm>Delete fin</button>
+      </div>
+    </div>
+  `;
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay){
+      closeFinDeleteOverlay();
+    }
+  });
+  overlay.querySelector('[data-fin-delete-cancel]').addEventListener('click', closeFinDeleteOverlay);
+  overlay.querySelector('[data-fin-delete-confirm]').addEventListener('click', () => {
+    const fin = finDeleteState.fin;
+    const outEl = finDeleteState.outEl;
+    if (removeCustomFinConfig(fin) && outEl){
+      renderFinResult(outEl, fin);
+    }
+    closeFinDeleteOverlay();
+  });
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function openFinDeleteOverlay(fin, outEl){
+  const overlay = getFinDeleteOverlay();
+  const message = overlay.querySelector('[data-fin-delete-message]');
+  finDeleteState.fin = fin;
+  finDeleteState.outEl = outEl;
+  if (message){
+    message.textContent = `Are you sure you want to delete fin ${fin}?`;
+  }
+  overlay.classList.remove('hidden');
+  overlay.querySelector('[data-fin-delete-cancel]')?.focus();
+}
+
+function closeFinDeleteOverlay(){
+  const overlay = document.getElementById('fin-delete-overlay');
+  if (overlay){
+    overlay.classList.add('hidden');
+  }
+  finDeleteState.fin = null;
+  finDeleteState.outEl = null;
+}
+
 function renderFinResult(outEl, finValue){
   if (!outEl) return;
   if (finValue === '' || finValue === null || finValue === undefined){
@@ -1494,6 +1561,7 @@ function renderFinResult(outEl, finValue){
   if (isWidebodyType(row.type)){
     cards.push({ label: 'Bunks', value: row.ofcr });
   }
+  const isCustom = Boolean(findCustomFinConfig(fin));
   outEl.innerHTML = `
     <div class="metric-grid">
       ${cards.map(card => `
@@ -1506,6 +1574,7 @@ function renderFinResult(outEl, finValue){
     <div class="muted-note">Fin range: ${finRangeLabel(row)}</div>
     <div class="fin-actions">
       <button type="button" class="btn" data-fin-action="edit">Edit fin</button>
+      ${isCustom ? '<button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete">Delete fin</button>' : ''}
     </div>
     ${renderFinForm(finFormValuesFromRow(row, fin))}
   `;
@@ -1532,6 +1601,12 @@ function attachFinLookup({ inputId, outId }){
       if (errorEl) errorEl.classList.add('hidden');
       if (action === 'add' || action === 'edit'){
         form.classList.remove('hidden');
+        return;
+      }
+      if (action === 'delete'){
+        if (findCustomFinConfig(fin)){
+          openFinDeleteOverlay(fin, out);
+        }
         return;
       }
       if (action === 'save'){
