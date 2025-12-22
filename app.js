@@ -68,6 +68,7 @@ const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
 const DIVIDEND_GROSS_UP = { eligible: 1.38, nonEligible: 1.15 };
 const CAPITAL_GAINS_INCLUSION = 0.5;
+const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
 const FIN_CONFIGS = [
   { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A320 Jetz', finStart: 225, finEnd: 225, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
@@ -1269,13 +1270,173 @@ function isWidebodyType(type){
   return /^(B767|777|787|A330)/.test(type);
 }
 
+function loadCustomFinConfigs(){
+  try {
+    const raw = localStorage.getItem(FIN_CUSTOM_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizeFinConfig)
+      .filter(Boolean);
+  } catch (err){
+    console.warn('Failed to load custom fin configs', err);
+    return [];
+  }
+}
+
+let customFinConfigs = loadCustomFinConfigs();
+
+function saveCustomFinConfigs(next){
+  customFinConfigs = next;
+  try {
+    localStorage.setItem(FIN_CUSTOM_STORAGE_KEY, JSON.stringify(next));
+  } catch (err){
+    console.warn('Failed to save custom fin configs', err);
+  }
+}
+
+function normalizeFinConfig(config){
+  if (!config) return null;
+  const type = String(config.type ?? '').trim();
+  const finStart = Number(config.finStart);
+  const finEnd = Number(config.finEnd);
+  const j = Number(config.j);
+  const o = Number(config.o);
+  const y = Number(config.y);
+  const fdjs = Number(config.fdjs);
+  const ofcr = Number(config.ofcr);
+  const ccjs = Number(config.ccjs);
+  if (!type) return null;
+  const numbers = [finStart, finEnd, j, o, y, fdjs, ofcr, ccjs];
+  if (numbers.some(n => !Number.isFinite(n))) return null;
+  return { type, finStart, finEnd, j, o, y, fdjs, ofcr, ccjs };
+}
+
+function getFinConfigs(){
+  return [...customFinConfigs, ...FIN_CONFIGS];
+}
+
+function findCustomFinConfig(fin){
+  if (!Number.isFinite(fin)) return null;
+  return customFinConfigs.find(row => fin >= row.finStart && fin <= row.finEnd) || null;
+}
+
 function findFinConfig(fin){
   if (!Number.isFinite(fin)) return null;
-  return FIN_CONFIGS.find(row => fin >= row.finStart && fin <= row.finEnd) || null;
+  return getFinConfigs().find(row => fin >= row.finStart && fin <= row.finEnd) || null;
 }
 
 function finRangeLabel(row){
   return row.finStart === row.finEnd ? `${row.finStart}` : `${row.finStart}-${row.finEnd}`;
+}
+
+function escapeHtml(value){
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function finFormValuesFromRow(row, fin){
+  return {
+    type: row?.type ?? '',
+    finStart: Number.isFinite(row?.finStart) ? row.finStart : fin,
+    finEnd: Number.isFinite(row?.finEnd) ? row.finEnd : fin,
+    j: Number.isFinite(row?.j) ? row.j : 0,
+    o: Number.isFinite(row?.o) ? row.o : 0,
+    y: Number.isFinite(row?.y) ? row.y : 0,
+    fdjs: Number.isFinite(row?.fdjs) ? row.fdjs : 0,
+    ofcr: Number.isFinite(row?.ofcr) ? row.ofcr : 0,
+    ccjs: Number.isFinite(row?.ccjs) ? row.ccjs : 0
+  };
+}
+
+function renderFinForm(values){
+  return `
+    <div class="fin-form hidden" data-fin-form>
+      <div class="fin-form-grid">
+        <div>
+          <label>Aircraft type</label>
+          <input type="text" inputmode="text" data-fin-field="type" value="${escapeHtml(values.type)}">
+        </div>
+        <div>
+          <label>Fin start</label>
+          <input type="number" min="1" inputmode="numeric" data-fin-field="finStart" value="${values.finStart}">
+        </div>
+        <div>
+          <label>Fin end</label>
+          <input type="number" min="1" inputmode="numeric" data-fin-field="finEnd" value="${values.finEnd}">
+        </div>
+        <div>
+          <label>J seats</label>
+          <input type="number" min="0" inputmode="numeric" data-fin-field="j" value="${values.j}">
+        </div>
+        <div>
+          <label>O seats</label>
+          <input type="number" min="0" inputmode="numeric" data-fin-field="o" value="${values.o}">
+        </div>
+        <div>
+          <label>Y seats</label>
+          <input type="number" min="0" inputmode="numeric" data-fin-field="y" value="${values.y}">
+        </div>
+        <div>
+          <label>FD jumps</label>
+          <input type="number" min="0" inputmode="numeric" data-fin-field="fdjs" value="${values.fdjs}">
+        </div>
+        <div>
+          <label>Bunks</label>
+          <input type="number" min="0" inputmode="numeric" data-fin-field="ofcr" value="${values.ofcr}">
+        </div>
+        <div>
+          <label>Cabin jumps</label>
+          <input type="number" min="0" inputmode="numeric" data-fin-field="ccjs" value="${values.ccjs}">
+        </div>
+      </div>
+      <div class="fin-form-actions">
+        <button type="button" class="btn" data-fin-action="save">Save fin</button>
+      </div>
+      <div class="wx-error hidden" data-fin-error></div>
+    </div>
+  `;
+}
+
+function getFinFormData(form){
+  const getValue = (field) => form.querySelector(`[data-fin-field="${field}"]`)?.value ?? '';
+  return {
+    type: getValue('type'),
+    finStart: Number(getValue('finStart')),
+    finEnd: Number(getValue('finEnd')),
+    j: Number(getValue('j')),
+    o: Number(getValue('o')),
+    y: Number(getValue('y')),
+    fdjs: Number(getValue('fdjs')),
+    ofcr: Number(getValue('ofcr')),
+    ccjs: Number(getValue('ccjs'))
+  };
+}
+
+function validateFinConfig(config){
+  if (!String(config.type ?? '').trim()) return 'Enter an aircraft type.';
+  if (!Number.isFinite(config.finStart) || !Number.isFinite(config.finEnd)) return 'Enter a valid fin range.';
+  if (config.finStart > config.finEnd) return 'Fin start must be less than or equal to fin end.';
+  const numericFields = ['j', 'o', 'y', 'fdjs', 'ofcr', 'ccjs'];
+  for (const field of numericFields){
+    if (!Number.isFinite(config[field])) return 'Enter numeric values for all fields.';
+  }
+  return null;
+}
+
+function upsertCustomFinConfig(config, targetFin){
+  const normalized = normalizeFinConfig(config);
+  if (!normalized) return null;
+  const fin = Number(targetFin);
+  const next = customFinConfigs.filter(row => !Number.isFinite(fin) || !(fin >= row.finStart && fin <= row.finEnd));
+  next.push(normalized);
+  saveCustomFinConfigs(next);
+  return normalized;
 }
 
 function renderFinResult(outEl, finValue){
@@ -1291,7 +1452,13 @@ function renderFinResult(outEl, finValue){
   }
   const row = findFinConfig(fin);
   if (!row){
-    outEl.innerHTML = '<div class="wx-error">No configuration found for that fin.</div>';
+    outEl.innerHTML = `
+      <div class="wx-error">No configuration found for that fin.</div>
+      <div class="fin-actions">
+        <button type="button" class="btn" data-fin-action="add">Add fin</button>
+      </div>
+      ${renderFinForm(finFormValuesFromRow(null, fin))}
+    `;
     return;
   }
   const seats = `${row.j}/${row.o}/${row.y}`;
@@ -1314,6 +1481,10 @@ function renderFinResult(outEl, finValue){
       `).join('')}
     </div>
     <div class="muted-note">Fin range: ${finRangeLabel(row)}</div>
+    <div class="fin-actions">
+      <button type="button" class="btn" data-fin-action="edit">Edit fin</button>
+    </div>
+    ${renderFinForm(finFormValuesFromRow(row, fin))}
   `;
 }
 
@@ -1325,6 +1496,36 @@ function attachFinLookup({ inputId, outId }){
   if (input){
     input.addEventListener('input', update);
     input.addEventListener('change', update);
+  }
+  if (!out.dataset.finBound){
+    out.addEventListener('click', (event) => {
+      const action = event.target?.closest('[data-fin-action]')?.dataset?.finAction;
+      if (!action) return;
+      const finValue = input?.value?.trim() ?? '';
+      const fin = Number(finValue);
+      const form = out.querySelector('[data-fin-form]');
+      if (!form) return;
+      const errorEl = form.querySelector('[data-fin-error]');
+      if (errorEl) errorEl.classList.add('hidden');
+      if (action === 'add' || action === 'edit'){
+        form.classList.remove('hidden');
+        return;
+      }
+      if (action === 'save'){
+        const data = getFinFormData(form);
+        const error = validateFinConfig(data);
+        if (error){
+          if (errorEl){
+            errorEl.textContent = error;
+            errorEl.classList.remove('hidden');
+          }
+          return;
+        }
+        upsertCustomFinConfig(data, fin);
+        renderFinResult(out, finValue);
+      }
+    });
+    out.dataset.finBound = 'true';
   }
   update();
 }
