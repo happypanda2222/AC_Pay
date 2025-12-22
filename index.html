@@ -254,6 +254,7 @@
           <button class="tabbtn active" data-tab="modern-pay" id="tabbtn-modern-pay">Pay</button>
           <button class="tabbtn" data-tab="modern-weather" id="tabbtn-modern-weather">Weather</button>
           <button class="tabbtn" data-tab="modern-duty-rest" id="tabbtn-modern-duty-rest">Duty/Rest</button>
+          <button class="tabbtn" data-tab="modern-fin" id="tabbtn-modern-fin">Fin QRH</button>
         </div>
 
         <div id="modern-pay">
@@ -699,6 +700,25 @@
             </div>
           </div>
         </div>
+
+        <div id="modern-fin" class="modern-tab hidden">
+          <div class="modern-grid">
+            <div class="modern-panel">
+              <h3>Fin QRH lookup</h3>
+              <div class="stacked-fields">
+                <div>
+                  <label>Fin number</label>
+                  <input id="modern-fin-input" type="number" min="1" inputmode="numeric" placeholder="e.g., 241">
+                </div>
+              </div>
+              <div class="muted-note">Enter a fin to return the aircraft configuration and jumpseat counts.</div>
+            </div>
+            <div class="modern-panel">
+              <h3>Configuration</h3>
+              <div id="modern-fin-out"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -712,6 +732,9 @@
       </button>
       <button class="tabbtn" data-tab="duty-rest" id="tabbtn-duty-rest">
         Duty/Rest
+      </button>
+      <button class="tabbtn" data-tab="fin" id="tabbtn-fin">
+        Fin QRH
       </button>
     </div>
 
@@ -1142,6 +1165,18 @@
         </div>
         <div class="muted-note" id="time-note">Enter a local or UTC time to convert.</div>
       </div>
+    </div>
+
+    <div class="card hidden" id="tab-fin">
+      <div class="sectionTitle">Fin QRH lookup</div>
+      <div class="row">
+        <div>
+          <label for="fin-input">Fin number</label>
+          <input id="fin-input" type="number" min="1" inputmode="numeric" placeholder="e.g., 241">
+        </div>
+      </div>
+      <div class="muted-note">Enter a fin to return the aircraft configuration and jumpseat counts.</div>
+      <div id="fin-out" class="simple"></div>
     </div>
 
     <!-- Weather Tab -->
