@@ -855,7 +855,7 @@ function computeAnnual(params){
       pension: secondPension,
       year,
       province,
-      chequesPerYear: 12
+      chequesPerYear: 24
     }) : 0;
     annualizedWithholdingTax += advanceTax + secondTax;
     withholdingAudit.push({
