@@ -78,7 +78,7 @@
     }
     .card{background:var(--card);border-radius:14px;padding:12px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);}
     label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
-    select,input[type=number]{width:100%;padding:12px;border-radius:10px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt)}
+    select,input[type=number],input[type=text]{width:100%;padding:12px;border-radius:10px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt)}
     .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .row-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
     @media (max-width:760px){.row,.row-4{grid-template-columns:1fr}}
@@ -260,6 +260,10 @@
     .decoder-unknown{color:#f59e0b}
     .note-list{margin:8px 0 0 18px;padding:0;color:var(--muted);font-size:13px}
     .note-list li{margin:4px 0}
+    .fin-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+    .fin-form{margin-top:12px}
+    .fin-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+    .fin-form-actions{margin-top:10px}
   </style>
 </head>
 <body data-ui="modern">
