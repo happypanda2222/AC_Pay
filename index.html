@@ -264,6 +264,30 @@
     .fin-form{margin-top:12px}
     .fin-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
     .fin-form-actions{margin-top:10px}
+    .btn-secondary{background:#0f1218;color:var(--txt);border:1px solid #2a2f3b}
+    .btn-danger{background:#ff453a;color:#fff}
+    .fin-confirm-overlay{
+      position:fixed;
+      inset:0;
+      background:rgba(5,7,12,0.7);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:20px;
+      z-index:50;
+    }
+    .fin-confirm-dialog{
+      width:100%;
+      max-width:360px;
+      background:var(--card);
+      border:1px solid #2a2f3b;
+      border-radius:14px;
+      padding:16px;
+      box-shadow:0 12px 30px rgba(0,0,0,.35);
+    }
+    .fin-confirm-dialog h4{margin:0 0 8px 0;font-size:16px}
+    .fin-confirm-dialog p{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
+    .fin-confirm-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
   </style>
 </head>
 <body data-ui="modern">
