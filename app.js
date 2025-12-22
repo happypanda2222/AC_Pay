@@ -66,6 +66,107 @@ const PROGRESSION = {m:11, d:5};
 const SWITCH = {m:9, d:30};
 const AIRCRAFT_ORDER = ["777","787","330","767","320","737","220"];
 const HEALTH_MO = 58.80;
+const FIN_CONFIGS = [
+  { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
+  { type: 'A320 Jetz', finStart: 225, finEnd: 225, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320 Jetz', finStart: 226, finEnd: 226, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320 Jetz', finStart: 232, finEnd: 232, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320', finStart: 235, finEnd: 235, j: 14, o: 0, y: 132, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320', finStart: 236, finEnd: 236, j: 14, o: 0, y: 132, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320', finStart: 237, finEnd: 237, j: 14, o: 0, y: 132, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320', finStart: 238, finEnd: 238, j: 14, o: 0, y: 132, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320', finStart: 239, finEnd: 239, j: 14, o: 0, y: 132, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320', finStart: 240, finEnd: 240, j: 14, o: 0, y: 132, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'A320', finStart: 241, finEnd: 241, j: 14, o: 0, y: 132, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 242, finEnd: 242, j: 14, o: 0, y: 132, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320 Rouge', finStart: 243, finEnd: 243, j: 12, o: 0, y: 156, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A320 Rouge', finStart: 244, finEnd: 244, j: 12, o: 0, y: 156, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A320 Rouge', finStart: 245, finEnd: 245, j: 12, o: 0, y: 156, fdjs: 2, ofcr: 0, ccjs: 4 },
+  { type: 'A320 Rouge', finStart: 246, finEnd: 246, j: 12, o: 0, y: 156, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A320 Rouge', finStart: 247, finEnd: 247, j: 12, o: 0, y: 156, fdjs: 2, ofcr: 0, ccjs: 4 },
+  { type: 'A319', finStart: 251, finEnd: 251, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319', finStart: 252, finEnd: 252, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 255, finEnd: 255, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 256, finEnd: 256, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 257, finEnd: 257, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319', finStart: 258, finEnd: 258, j: 14, o: 0, y: 120, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 259, finEnd: 259, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319', finStart: 260, finEnd: 260, j: 14, o: 0, y: 120, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 262, finEnd: 262, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 263, finEnd: 263, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 272, finEnd: 272, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 273, finEnd: 273, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 276, finEnd: 276, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 277, finEnd: 277, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 278, finEnd: 278, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 279, finEnd: 279, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319', finStart: 280, finEnd: 280, j: 14, o: 0, y: 106, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 281, finEnd: 281, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 283, finEnd: 283, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 284, finEnd: 284, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 286, finEnd: 286, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 287, finEnd: 287, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A319 Rouge', finStart: 290, finEnd: 290, j: 12, o: 0, y: 124, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'A320', finStart: 401, finEnd: 401, j: 14, o: 0, y: 132, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 402, finEnd: 402, j: 14, o: 0, y: 132, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 405, finEnd: 405, j: 14, o: 0, y: 132, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 415, finEnd: 415, j: 14, o: 0, y: 132, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320 Jetz', finStart: 416, finEnd: 416, j: 70, o: 0, y: 0, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 417, finEnd: 417, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 418, finEnd: 418, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 419, finEnd: 419, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 420, finEnd: 420, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 421, finEnd: 421, j: 8, o: 0, y: 150, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 422, finEnd: 422, j: 8, o: 0, y: 150, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 451, finEnd: 451, j: 16, o: 0, y: 180, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 452, finEnd: 452, j: 16, o: 0, y: 174, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 453, finEnd: 453, j: 16, o: 0, y: 180, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 454, finEnd: 454, j: 16, o: 0, y: 180, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 455, finEnd: 455, j: 16, o: 0, y: 174, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 456, finEnd: 456, j: 16, o: 0, y: 180, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 457, finEnd: 457, j: 16, o: 0, y: 180, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 458, finEnd: 458, j: 16, o: 0, y: 174, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 459, finEnd: 459, j: 16, o: 0, y: 180, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 460, finEnd: 460, j: 16, o: 0, y: 180, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 461, finEnd: 461, j: 16, o: 0, y: 174, fdjs: 1, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 462, finEnd: 462, j: 16, o: 0, y: 174, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 463, finEnd: 463, j: 16, o: 0, y: 180, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 464, finEnd: 464, j: 16, o: 0, y: 180, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A321', finStart: 465, finEnd: 465, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
+  { type: 'A321', finStart: 466, finEnd: 466, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
+  { type: 'A321', finStart: 467, finEnd: 467, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
+  { type: 'A321', finStart: 468, finEnd: 468, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 469, finEnd: 469, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 470, finEnd: 470, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 471, finEnd: 471, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 472, finEnd: 472, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321', finStart: 473, finEnd: 473, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
+  { type: 'A321 Rouge', finStart: 474, finEnd: 474, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 475, finEnd: 475, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 476, finEnd: 476, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 477, finEnd: 477, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 478, finEnd: 478, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 479, finEnd: 479, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 480, finEnd: 480, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 481, finEnd: 481, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 482, finEnd: 482, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321', finStart: 483, finEnd: 483, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
+  { type: 'A321', finStart: 484, finEnd: 484, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
+  { type: 'B737', finStart: 501, finEnd: 540, j: 16, o: 0, y: 153, fdjs: 1, ofcr: 0, ccjs: 4 },
+  { type: 'B737', finStart: 571, finEnd: 578, j: 0, o: 0, y: 189, fdjs: 1, ofcr: 0, ccjs: 5 },
+  { type: 'B767F', finStart: 637, finEnd: 639, j: 0, o: 0, y: 0, fdjs: 4, ofcr: 0, ccjs: 0 },
+  { type: 'B767F', finStart: 646, finEnd: 646, j: 0, o: 0, y: 0, fdjs: 4, ofcr: 0, ccjs: 0 },
+  { type: 'B767F', finStart: 660, finEnd: 663, j: 0, o: 0, y: 0, fdjs: 4, ofcr: 0, ccjs: 0 },
+  { type: '777-200LR', finStart: 701, finEnd: 706, j: 40, o: 24, y: 236, fdjs: 2, ofcr: 2, ccjs: 15 },
+  { type: '777-300', finStart: 731, finEnd: 742, j: 40, o: 24, y: 336, fdjs: 2, ofcr: 2, ccjs: 16 },
+  { type: '777-300HD', finStart: 743, finEnd: 749, j: 28, o: 24, y: 398, fdjs: 2, ofcr: 2, ccjs: 16 },
+  { type: '787-8', finStart: 801, finEnd: 808, j: 20, o: 21, y: 214, fdjs: 2, ofcr: 1, ccjs: 9 },
+  { type: '787-9', finStart: 831, finEnd: 862, j: 30, o: 21, y: 247, fdjs: 2, ofcr: 1, ccjs: 11 },
+  { type: 'A330 Dream', finStart: 931, finEnd: 945, j: 32, o: 24, y: 241, fdjs: 2, ofcr: 0, ccjs: 11 },
+  { type: 'A330 TAP', finStart: 946, finEnd: 946, j: 30, o: 0, y: 255, fdjs: 2, ofcr: 0, ccjs: 13 },
+  { type: 'A330 Dream', finStart: 947, finEnd: 947, j: 32, o: 24, y: 241, fdjs: 2, ofcr: 0, ccjs: 11 },
+  { type: 'A330 TAP', finStart: 948, finEnd: 950, j: 30, o: 0, y: 255, fdjs: 2, ofcr: 0, ccjs: 13 }
+];
 const FDP_MAX_TABLE = [
   { start: 0, end: 239, label: '00:00-03:59', max14: 9, max56: 9, max14Over4: 8, max56Over4: 8 },
   { start: 240, end: 299, label: '04:00-04:59', max14: 10, max56: 9, max14Over4: 9, max56Over4: 8 },
@@ -1062,6 +1163,70 @@ function updateAircraftOptions(seatValue, selectEl){
   }
 }
 
+function isWidebodyType(type){
+  return /^(B767|777|787|A330)/.test(type);
+}
+
+function findFinConfig(fin){
+  if (!Number.isFinite(fin)) return null;
+  return FIN_CONFIGS.find(row => fin >= row.finStart && fin <= row.finEnd) || null;
+}
+
+function finRangeLabel(row){
+  return row.finStart === row.finEnd ? `${row.finStart}` : `${row.finStart}-${row.finEnd}`;
+}
+
+function renderFinResult(outEl, finValue){
+  if (!outEl) return;
+  if (finValue === '' || finValue === null || finValue === undefined){
+    outEl.innerHTML = '<div class="muted-note">Enter a fin number to see configuration details.</div>';
+    return;
+  }
+  const fin = Number(finValue);
+  if (!Number.isFinite(fin)){
+    outEl.innerHTML = '<div class="wx-error">Enter a valid fin number.</div>';
+    return;
+  }
+  const row = findFinConfig(fin);
+  if (!row){
+    outEl.innerHTML = '<div class="wx-error">No configuration found for that fin.</div>';
+    return;
+  }
+  const seats = `${row.j}/${row.o}/${row.y}`;
+  const cards = [
+    { label: 'Aircraft type', value: row.type },
+    { label: 'FD Jumps (FDJS)', value: row.fdjs },
+    { label: 'Cabin Jumps (CCJS)', value: row.ccjs },
+    { label: 'Seats (J/O/Y)', value: seats }
+  ];
+  if (isWidebodyType(row.type)){
+    cards.push({ label: 'Bunks (OFCR)', value: row.ofcr });
+  }
+  outEl.innerHTML = `
+    <div class="metric-grid">
+      ${cards.map(card => `
+        <div class="metric-card">
+          <div class="metric-label">${card.label}</div>
+          <div class="metric-value">${card.value}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="muted-note">Fin range: ${finRangeLabel(row)}</div>
+  `;
+}
+
+function attachFinLookup({ inputId, outId }){
+  const input = document.getElementById(inputId);
+  const out = document.getElementById(outId);
+  if (!out) return;
+  const update = () => renderFinResult(out, input?.value?.trim() ?? '');
+  if (input){
+    input.addEventListener('input', update);
+    input.addEventListener('change', update);
+  }
+  update();
+}
+
 let currentLegacySubTab = 'annual';
 let currentModernSubTab = 'modern-annual';
 let currentLegacyDutyTab = 'duty';
@@ -1071,18 +1236,23 @@ function setLegacyPrimaryTab(which){
   const payBtn = document.getElementById('tabbtn-pay');
   const weatherBtn = document.getElementById('tabbtn-weather');
   const dutyBtn = document.getElementById('tabbtn-duty-rest');
+  const finBtn = document.getElementById('tabbtn-fin');
   const payPane = document.getElementById('legacy-pay');
   const weatherPane = document.getElementById('tab-weather');
   const dutyPane = document.getElementById('tab-duty-rest');
+  const finPane = document.getElementById('tab-fin');
   const showPay = which === 'pay';
   const showWeather = which === 'weather';
   const showDuty = which === 'duty-rest';
+  const showFin = which === 'fin';
   payBtn?.classList.toggle('active', showPay);
   weatherBtn?.classList.toggle('active', showWeather);
   dutyBtn?.classList.toggle('active', showDuty);
+  finBtn?.classList.toggle('active', showFin);
   payPane?.classList.toggle('hidden', !showPay);
   weatherPane?.classList.toggle('hidden', !showWeather);
   dutyPane?.classList.toggle('hidden', !showDuty);
+  finPane?.classList.toggle('hidden', !showFin);
   if (showPay) setLegacySubTab(currentLegacySubTab);
   if (showDuty) setLegacyDutyTab(currentLegacyDutyTab);
 }
@@ -1133,18 +1303,23 @@ function setModernPrimaryTab(which){
   const payBtn = document.getElementById('tabbtn-modern-pay');
   const weatherBtn = document.getElementById('tabbtn-modern-weather');
   const dutyBtn = document.getElementById('tabbtn-modern-duty-rest');
+  const finBtn = document.getElementById('tabbtn-modern-fin');
   const payPane = document.getElementById('modern-pay');
   const weatherPane = document.getElementById('modern-weather');
   const dutyPane = document.getElementById('modern-duty-rest');
+  const finPane = document.getElementById('modern-fin');
   const showPay = which === 'modern-pay';
   const showWeather = which === 'modern-weather';
   const showDuty = which === 'modern-duty-rest';
+  const showFin = which === 'modern-fin';
   payBtn?.classList.toggle('active', showPay);
   weatherBtn?.classList.toggle('active', showWeather);
   dutyBtn?.classList.toggle('active', showDuty);
+  finBtn?.classList.toggle('active', showFin);
   payPane?.classList.toggle('hidden', !showPay);
   weatherPane?.classList.toggle('hidden', !showWeather);
   dutyPane?.classList.toggle('hidden', !showDuty);
+  finPane?.classList.toggle('hidden', !showFin);
   if (showPay) setModernSubTab(currentModernSubTab);
   if (showDuty) setModernDutyTab(currentModernDutyTab);
 }
@@ -3343,12 +3518,14 @@ function init(){
   document.getElementById('tabbtn-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('pay'); });
   document.getElementById('tabbtn-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('weather'); });
   document.getElementById('tabbtn-duty-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('duty-rest'); });
+  document.getElementById('tabbtn-fin')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('fin'); });
   document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('annual'); });
   document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('monthly'); });
   document.getElementById('tabbtn-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('vo'); });
   document.getElementById('tabbtn-modern-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-pay'); });
   document.getElementById('tabbtn-modern-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-weather'); });
   document.getElementById('tabbtn-modern-duty-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-duty-rest'); });
+  document.getElementById('tabbtn-modern-fin')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-fin'); });
   document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
   document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
   document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
@@ -3438,6 +3615,8 @@ function init(){
   calcRestModern();
   attachTimeConverter({ airportId: 'time-airport', localId: 'time-local', utcId: 'time-utc', noteId: 'time-note' });
   attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
+  attachFinLookup({ inputId: 'fin-input', outId: 'fin-out' });
+  attachFinLookup({ inputId: 'modern-fin-input', outId: 'modern-fin-out' });
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does
