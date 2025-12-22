@@ -451,7 +451,7 @@ const FED = { brackets:[[57375,0.145],[114750,0.205],[177882,0.26],[253414,0.29]
 const PROV = {
   AB:{brackets:[[60000,0.08],[151234,0.10],[181481,0.12],[241974,0.13],[362961,0.14],[Infinity,0.15]], bpa:22323},
   BC:{brackets:[[49279,0.0506],[98560,0.077],[113158,0.105],[137407,0.1229],[186306,0.147],[259829,0.168],[Infinity,0.205]], bpa:12932},
-  MB:{brackets:[[47000,0.108],[100000,0.1275],[Infinity,0.174]], bpa:15780},
+  MB:{brackets:[[47000,0.108],[100000,0.1275],[Infinity,0.174]], bpa:15780, bpa_phase_out_start:200000, bpa_phase_out_end:400000},
   NB:{brackets:[[51306,0.094],[102614,0.14],[190060,0.16],[Infinity,0.195]], bpa:13261},
   NL:{brackets:[[44192,0.087],[88382,0.145],[157792,0.158],[220910,0.178],[282214,0.198],[564429,0.208],[1128858,0.213],[Infinity,0.218]], bpa:10882},
   NS:{brackets:[[30507,0.0879],[61015,0.1495],[95883,0.1667],[154650,0.175],[Infinity,0.21]], bpa:8841},
@@ -471,7 +471,7 @@ const FED_2026 = { brackets:[[58523,0.14],[117045,0.205],[181440,0.26],[258482,0
 const PROV_2026 = {
   AB:{brackets:[[61200,0.08],[154259,0.10],[185111,0.12],[246813,0.13],[370220,0.14],[Infinity,0.15]], bpa:22769},
   BC:{brackets:[[50363,0.0506],[100728,0.077],[115648,0.105],[140430,0.1229],[190405,0.147],[265545,0.168],[Infinity,0.205]], bpa:13216},
-  MB:{brackets:[[47000,0.108],[100000,0.1275],[Infinity,0.174]], bpa:15780},
+  MB:{brackets:[[47000,0.108],[100000,0.1275],[Infinity,0.174]], bpa:15780, bpa_phase_out_start:200000, bpa_phase_out_end:400000},
   NB:{brackets:[[52333,0.094],[104666,0.14],[193861,0.16],[Infinity,0.195]], bpa:13261},
   NL:{brackets:[[44678,0.087],[89355,0.145],[154639,0.158],[215913,0.178],[275999,0.198],[551999,0.208],[1103999,0.213],[Infinity,0.218]], bpa:10882},
   NS:{brackets:[[30995,0.0879],[61991,0.1495],[97417,0.1667],[157124,0.175],[Infinity,0.21]], bpa:8841},
@@ -509,6 +509,19 @@ function federalBPA(year, income){
   return b.bpa_base + addl;
 }
 
+function provincialBPA(year, income, province){
+  const provMap = (year <= 2025 ? PROV : PROV_2026);
+  const p = provMap[province];
+  if (!p) throw new Error('Unsupported province '+province);
+  if (p.bpa_phase_out_start && p.bpa_phase_out_end){
+    if (income <= p.bpa_phase_out_start) return p.bpa;
+    if (income >= p.bpa_phase_out_end) return 0;
+    const frac = (p.bpa_phase_out_end - income) / (p.bpa_phase_out_end - p.bpa_phase_out_start);
+    return p.bpa * Math.max(0, Math.min(1, frac));
+  }
+  return p.bpa;
+}
+
 function taxFromBrackets(taxable, brackets){
   let tax=0,last=0;
   for (let i=0;i<brackets.length;i++){
@@ -524,6 +537,19 @@ function marginalRate(amount, brackets){
   return brackets[brackets.length-1][1];
 }
 function pensionRateOnDate(d){ const years=(d-DOH)/(365.2425*24*3600*1000); if (years<2) return 0.06; if (years<5) return 0.065; return 0.07; }
+function pensionRateForStep(step){
+  const s = clampStep(step);
+  if (s <= 2) return 0.06;
+  if (s <= 5) return 0.065;
+  return 0.07;
+}
+function advanceGrossForSeatStep(seat, step){
+  const s = clampStep(step);
+  if (seat === 'CA') return 6500;
+  if (seat === 'RP') return s <= 2 ? 3250 : 4000;
+  if (seat === 'FO') return s <= 2 ? 3250 : 5000;
+  return 0;
+}
 function stepOnJan1(selectedStep, tieOn, year){ return tieOn ? clampStep((year-2025)+1) : clampStep(selectedStep); }
 function rateFor(seat, ac, year, step, xlr){
   const table = PAY_TABLES[year] && PAY_TABLES[year][seat];
@@ -654,6 +680,34 @@ function computeUnionDuesMonthly({ year, seat, ac, stepJan1, xlrOn, avgMonthlyHo
   return { duesByMonth, annual, avgMonthly };
 }
 
+function segmentForDate(day, segs, year, stepJan1){
+  for (const s of segs) {
+    if (day >= s.start && day <= s.end) return s;
+  }
+  return { payYear: year, step: stepJan1 };
+}
+
+function computeMonthlyGrosses({ year, seat, ac, stepJan1, xlrOn, avgMonthlyHours }){
+  const segs = yearSegments(year, stepJan1);
+  const dailyHours = avgMonthlyHours * 12 / 365.2425;
+  const monthsGross = new Array(12).fill(0);
+  const monthSteps = new Array(12).fill(stepJan1);
+
+  for (let m = 0; m < 12; m++) {
+    const monthDate = new Date(Date.UTC(year, m, 1));
+    monthSteps[m] = segmentForDate(monthDate, segs, year, stepJan1).step;
+  }
+
+  for (let t = Date.UTC(year,0,1); t <= Date.UTC(year,11,31); t += 86400000) {
+    const day = new Date(t);
+    const seg = segmentForDate(day, segs, year, stepJan1);
+    const rate = rateFor(seat, ac, seg.payYear, seg.step, !!xlrOn);
+    monthsGross[day.getUTCMonth()] += dailyHours * rate;
+  }
+
+  return { monthsGross, monthSteps };
+}
+
 // --- Annual computation ---
 function computeAnnual(params){
   const seat=params.seat, ac=params.ac, year=+params.year, province=params.province;
@@ -710,7 +764,7 @@ function computeAnnual(params){
   const fed_low = fedData.brackets[0][1];
   const prov_low = p.brackets[0][1];
   const fed_tax_pre  = Math.max(0, fed_gross_pre - (fed_low * federalBPA(year, taxable_pre) + 0.15 * (cpp_total_full + eiPrem_full)));
-  const prov_tax_pre = Math.max(0, prov_gross_pre - (prov_low * p.bpa + prov_low * (cpp_total_full + eiPrem_full)));
+  const prov_tax_pre = Math.max(0, prov_gross_pre - (prov_low * provincialBPA(year, taxable_pre, province) + prov_low * (cpp_total_full + eiPrem_full)));
   const income_tax_pre = fed_tax_pre + prov_tax_pre;
 
   // ESOP contribution based on gross
@@ -721,7 +775,7 @@ function computeAnnual(params){
   const fed_gross_rrsp  = taxFromBrackets(taxable_rrsp, fedData.brackets);
   const prov_gross_rrsp = taxFromBrackets(taxable_rrsp, p.brackets);
   const fed_tax_rrsp  = Math.max(0, fed_gross_rrsp - (fed_low * federalBPA(year, taxable_rrsp) + 0.15 * (cpp_total_full + eiPrem_full)));
-  const prov_tax_rrsp = Math.max(0, prov_gross_rrsp - (prov_low * p.bpa + prov_low * (cpp_total_full + eiPrem_full)));
+  const prov_tax_rrsp = Math.max(0, prov_gross_rrsp - (prov_low * provincialBPA(year, taxable_rrsp, province) + prov_low * (cpp_total_full + eiPrem_full)));
   // Taxes on income after RRSP contributions are used only to compute the tax return
   const income_tax_rrsp = fed_tax_rrsp + prov_tax_rrsp;
 
@@ -767,16 +821,37 @@ function computeAnnual(params){
   };
 
   
-  // Annual tax return: compare annual liability to estimated withholdings on a single
-  // monthly paycheque (without an advance/second split) and add RRSP-related tax savings.
-  const monthlyGross = monthly.gross;
-  const paychequeTax = computeChequeTax({
-    gross: monthlyGross,
-    pension: monthly.pension,
+  // Annual tax return: compare annual liability to estimated withholdings across two
+  // paycheques per month using fixed advance amounts and step-based pension deductions.
+  const monthlyBreakdown = computeMonthlyGrosses({
     year,
-    province
+    seat,
+    ac,
+    stepJan1,
+    xlrOn: !!params.xlrOn,
+    avgMonthlyHours: +params.avgMonthlyHours
   });
-  const annualizedWithholdingTax = paychequeTax * 12;
+  const annualizedWithholdingTax = monthlyBreakdown.monthsGross.reduce((sum, monthGross, idx) => {
+    const step = monthlyBreakdown.monthSteps[idx];
+    const advanceGross = Math.min(monthGross, advanceGrossForSeatStep(seat, step));
+    const secondGross = Math.max(0, monthGross - advanceGross);
+    const secondPension = secondGross * pensionRateForStep(step);
+    const advanceTax = advanceGross > 0 ? computeChequeTax({
+      gross: advanceGross,
+      pension: 0,
+      year,
+      province,
+      chequesPerYear: 12
+    }) : 0;
+    const secondTax = secondGross > 0 ? computeChequeTax({
+      gross: secondGross,
+      pension: secondPension,
+      year,
+      province,
+      chequesPerYear: 12
+    }) : 0;
+    return sum + advanceTax + secondTax;
+  }, 0);
   const tax_return = +((income_tax - annualizedWithholdingTax) + (income_tax - income_tax_rrsp)).toFixed(2);
 
   return {
@@ -815,7 +890,7 @@ function computeChequeTax({ gross, pension, year, province, chequesPerYear = 12 
   const provLow = p.brackets[0][1];
 
   const fedTax = Math.max(0, fedGross - fedLow * federalBPA(year, annualized));
-  const provTax = Math.max(0, provGross - provLow * p.bpa);
+  const provTax = Math.max(0, provGross - provLow * provincialBPA(year, annualized, province));
 
   return (fedTax + provTax) / chequesPerYear;
 }
@@ -2865,7 +2940,7 @@ const INFO_COPY = {
     annualNet: 'Annual gross minus tax, CPP/QPP, EI, pension, union dues, health premiums and ESOP contributions, plus the after-tax employer ESOP match.',
     monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours.',
     monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match (no cheque split).',
-    taxReturn: 'Difference between annual tax owed and estimated withholdings on a single monthly paycheque, plus RRSP tax savings.',
+    taxReturn: 'Difference between annual tax owed and estimated withholdings across two monthly paycheques (fixed advance + remaining gross with step-based pension), plus RRSP tax savings.',
     hourlyRate: 'Pay table rate for each segment of the year (with XLR when toggled), including the progression date increase.',
     incomeTax: 'Total annual federal and provincial income tax after pension and RRSP offsets.',
     cpp: 'Annual CPP/QPP contributions on employment income up to the yearly maximum.',
