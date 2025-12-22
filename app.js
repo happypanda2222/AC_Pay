@@ -3215,7 +3215,7 @@ const INFO_COPY = {
     withholding: 'Annualized tax withheld with advances annualized at 12 cheques, second cheques at 24 cheques, and pension based on full month gross.',
     donationCredit: 'Donation credit estimated using base federal and provincial credit rates.',
     dividendGrossUp: 'Dividend gross-up added to taxable income for eligible and non-eligible dividends.',
-    capitalGainsTaxable: 'Taxable portion of capital gains (50% inclusion rate).'
+    capitalGainsTaxable: 'Taxable portion of net capital gains after capital losses (50% inclusion rate).'
   },
   monthly: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
@@ -3306,6 +3306,7 @@ function getAdvancedInputs(isModern){
     eligibleDividends: +document.getElementById(`${prefix}adv-div-eligible`)?.value || 0,
     nonEligibleDividends: +document.getElementById(`${prefix}adv-div-noneligible`)?.value || 0,
     capitalGains: +document.getElementById(`${prefix}adv-capgains`)?.value || 0,
+    capitalLosses: +document.getElementById(`${prefix}adv-caploss`)?.value || 0,
     donations: +document.getElementById(`${prefix}adv-donations`)?.value || 0,
     otherIncome: +document.getElementById(`${prefix}adv-other-income`)?.value || 0,
     otherDeductions: +document.getElementById(`${prefix}adv-other-deductions`)?.value || 0,
@@ -3328,13 +3329,15 @@ function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
   const eligibleDividends = normalizeAmount(advancedParams.eligibleDividends);
   const nonEligibleDividends = normalizeAmount(advancedParams.nonEligibleDividends);
   const capitalGains = normalizeAmount(advancedParams.capitalGains);
+  const capitalLosses = normalizeAmount(advancedParams.capitalLosses);
   const donations = normalizeAmount(advancedParams.donations);
   const otherIncome = normalizeAmount(advancedParams.otherIncome);
   const otherDeductions = normalizeAmount(advancedParams.otherDeductions);
 
   const grossUpEligible = eligibleDividends * DIVIDEND_GROSS_UP.eligible;
   const grossUpNonEligible = nonEligibleDividends * DIVIDEND_GROSS_UP.nonEligible;
-  const capitalGainsTaxable = capitalGains * CAPITAL_GAINS_INCLUSION;
+  const netCapitalGains = Math.max(0, capitalGains - capitalLosses);
+  const capitalGainsTaxable = netCapitalGains * CAPITAL_GAINS_INCLUSION;
   const rrsp = normalizeAmount(advancedParams.rrsp || baseParams.rrsp);
 
   const adjustedTaxable = Math.max(
@@ -3358,6 +3361,8 @@ function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
     eligibleDividends,
     nonEligibleDividends,
     capitalGains,
+    capitalLosses,
+    netCapitalGains,
     donations,
     otherIncome,
     otherDeductions,
@@ -3416,6 +3421,7 @@ function renderAdvancedTaxReturn({ baseParams, baseResult, advancedResult, isMod
     ['Eligible dividends', money(advancedResult.eligibleDividends)],
     ['Non-eligible dividends', money(advancedResult.nonEligibleDividends)],
     ['Capital gains', money(advancedResult.capitalGains)],
+    ['Capital losses', money(advancedResult.capitalLosses)],
     ['Donations', money(advancedResult.donations)],
     ['Other income', money(advancedResult.otherIncome)],
     ['Other deductions', money(advancedResult.otherDeductions)]
