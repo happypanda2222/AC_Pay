@@ -2911,6 +2911,7 @@ const INFO_COPY = {
   duty: {
     maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors/legs, zone selection (inside/outside North American zone), the time zone difference between departure and arrival (<4 vs ≥4 column), and augmentation/rest facility limits from Tables A–C. Table values can include 15-minute increments, and deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours).',
     endUtc: 'FDP end time in UTC using the calculated maximum FDP added to the departure local start time (day offset shown when crossing midnight UTC).',
+    brakesSet: 'Brakes set time in UTC calculated as FDP end minus 15 minutes (day offset shown when crossing midnight UTC).',
     basis: 'Rule bucket used to determine the maximum FDP from the tables and whether deadhead rules were applied.'
   },
   rest: {
@@ -3128,30 +3129,33 @@ function renderDutyResult(outEl, result, isModern){
   const maxText = formatHoursMinutes(result.maxFdp);
   const detailText = escapeHtml(result.detail);
   const endUtcText = result.endUtc ? escapeHtml(result.endUtc) : null;
+  const brakesSetText = result.brakesSetUtc ? escapeHtml(result.brakesSetUtc) : null;
   if (isModern){
     outEl.innerHTML = `
       <div class="metric-grid">
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Maximum FDP', INFO_COPY.duty.maxFdp)}</div><div class="metric-value">${maxText}</div></div>
-        ${endUtcText ? `<div class="metric-card"><div class="metric-label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="metric-value">${endUtcText}</div><button class="convert-btn" type="button" data-end-utc="${endUtcText}" data-ui="modern">Convert</button></div>` : ''}
+        ${endUtcText ? `<div class="metric-card"><div class="metric-label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="metric-value">${endUtcText}</div><button class="convert-btn" type="button" data-utc-time="${endUtcText}" data-ui="modern">Convert</button></div>` : ''}
+        ${brakesSetText ? `<div class="metric-card"><div class="metric-label">${labelWithInfo('Brakes set (UTC)', INFO_COPY.duty.brakesSet)}</div><div class="metric-value">${brakesSetText}</div><button class="convert-btn" type="button" data-utc-time="${brakesSetText}" data-ui="modern">Convert</button></div>` : ''}
         <div class="metric-card"><div class="metric-label">${labelWithInfo('Rule basis', INFO_COPY.duty.basis)}</div><div class="metric-value" style="font-size:14px">${detailText}</div></div>
       </div>`;
   } else {
     outEl.innerHTML = `
       <div class="simple">
         <div class="block"><div class="label">${labelWithInfo('Maximum FDP', INFO_COPY.duty.maxFdp)}</div><div class="value">${maxText}</div></div>
-        ${endUtcText ? `<div class="block"><div class="label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="value">${endUtcText}</div><button class="convert-btn" type="button" data-end-utc="${endUtcText}" data-ui="legacy">Convert</button></div>` : ''}
+        ${endUtcText ? `<div class="block"><div class="label">${labelWithInfo('FDP end (UTC)', INFO_COPY.duty.endUtc)}</div><div class="value">${endUtcText}</div><button class="convert-btn" type="button" data-utc-time="${endUtcText}" data-ui="legacy">Convert</button></div>` : ''}
+        ${brakesSetText ? `<div class="block"><div class="label">${labelWithInfo('Brakes set (UTC)', INFO_COPY.duty.brakesSet)}</div><div class="value">${brakesSetText}</div><button class="convert-btn" type="button" data-utc-time="${brakesSetText}" data-ui="legacy">Convert</button></div>` : ''}
         <div class="block"><div class="label">${labelWithInfo('Rule basis', INFO_COPY.duty.basis)}</div><div class="value" style="font-size:14px">${detailText}</div></div>
       </div>`;
   }
-  const convertBtn = outEl.querySelector('.convert-btn');
-  if (convertBtn){
+  const convertButtons = outEl.querySelectorAll('.convert-btn');
+  convertButtons.forEach((convertBtn) => {
     convertBtn.addEventListener('click', (e) => {
       hapticTap(e.currentTarget);
-      const endUtc = convertBtn.getAttribute('data-end-utc') || '';
+      const utcTime = convertBtn.getAttribute('data-utc-time') || '';
       const ui = convertBtn.getAttribute('data-ui') || 'legacy';
-      convertFdpEndToTimeConverter(endUtc, ui === 'modern');
+      convertFdpEndToTimeConverter(utcTime, ui === 'modern');
     });
-  }
+  });
 }
 
 function renderRestResult(outEl, result, isModern){
@@ -3272,7 +3276,9 @@ async function calcDutyLegacy(){
     }
     const res = computeMaxDuty(params);
     if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
-      res.endUtc = formatUtcMinutesWithDayOffset(params.startUtcMinutes + (res.maxFdp * 60));
+      const endUtcMinutes = params.startUtcMinutes + (res.maxFdp * 60);
+      res.endUtc = formatUtcMinutesWithDayOffset(endUtcMinutes);
+      res.brakesSetUtc = formatUtcMinutesWithDayOffset(endUtcMinutes - 15);
     }
     renderDutyResult(document.getElementById('duty-out'), res, false);
   } catch(err){
@@ -3307,7 +3313,9 @@ async function calcDutyModern(){
     }
     const res = computeMaxDuty(params);
     if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
-      res.endUtc = formatUtcMinutesWithDayOffset(params.startUtcMinutes + (res.maxFdp * 60));
+      const endUtcMinutes = params.startUtcMinutes + (res.maxFdp * 60);
+      res.endUtc = formatUtcMinutesWithDayOffset(endUtcMinutes);
+      res.brakesSetUtc = formatUtcMinutesWithDayOffset(endUtcMinutes - 15);
     }
     renderDutyResult(document.getElementById('modern-duty-out'), res, true);
   } catch(err){
