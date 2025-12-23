@@ -1,10 +1,11 @@
 // sw.js
-const CACHE = 'acpay-v125'; // ⬅️ bump this (v2, v3, ...) whenever you change assets
+const CACHE = 'acpay-v126'; // ⬅️ bump this (v2, v3, ...) whenever you change assets
 const ASSETS = [
   './',
   './index.html',
   './app.js',
   './manifest.webmanifest',
+  './air-canada-a321.jpg',
   './icons/icon-192-red.png',
   './icons/icon-512-red.png',
   './icons/apple-touch-icon-180-red.png',
