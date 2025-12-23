@@ -192,9 +192,28 @@
 
     /* Modern UI styling */
     body[data-ui="modern"]{--bg:#05070c;--card:#0f121d;--acc:#6dd3ff;--muted:#9fb1c5;--txt:#f7f9fc;}
-    .modern-hero{background:linear-gradient(135deg,#0a84ff 0%,#6dd3ff 40%,#1c1f2b 100%);border-radius:16px;padding:18px 18px;margin-bottom:14px;color:#0c1022;box-shadow:0 12px 40px rgba(0,0,0,.35);display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .modern-hero{background:linear-gradient(135deg,#0a84ff 0%,#6dd3ff 40%,#1c1f2b 100%);border-radius:16px;padding:18px 18px;margin-bottom:14px;color:#0c1022;box-shadow:0 12px 40px rgba(0,0,0,.35);display:flex;justify-content:space-between;align-items:center;gap:10px;position:relative;overflow:hidden;cursor:pointer}
     .modern-hero h2{margin:0;font-size:20px;color:#0c1022}
     .modern-hero p{margin:4px 0 0 0;color:#0c1022;font-weight:600}
+    .modern-hero-content{position:relative;z-index:2}
+    .rouge-plane{
+      position:absolute;
+      left:-30%;
+      top:55%;
+      width:clamp(110px, 22vw, 200px);
+      height:auto;
+      opacity:0;
+      pointer-events:none;
+      z-index:1;
+      filter:drop-shadow(0 8px 12px rgba(12,16,34,0.35));
+    }
+    .modern-hero.easter-egg-active .rouge-plane{animation:rougeTakeoff 2.6s ease-in-out forwards}
+    @keyframes rougeTakeoff{
+      0%{transform:translateX(0) translateY(8px) rotate(2deg);opacity:0}
+      12%{opacity:1}
+      60%{transform:translateX(70vw) translateY(-12px) rotate(6deg);opacity:1}
+      100%{transform:translateX(120vw) translateY(-32px) rotate(8deg);opacity:0}
+    }
     .badge-pill{background:rgba(0,0,0,0.12);color:#0c1022;border-radius:999px;padding:6px 10px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;font-size:11px}
     .modern-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:12px}
     @media(max-width:960px){.modern-grid{grid-template-columns:1fr}}
@@ -304,10 +323,19 @@
     </div>
 
     <div id="modern-ui">
-      <div class="modern-hero">
-        <div>
+      <div class="modern-hero" id="modern-hero-banner" role="button" tabindex="0" aria-label="Hidden flight animation">
+        <div class="modern-hero-content">
           <h2>AC Tools</h2>
         </div>
+        <svg class="rouge-plane" viewBox="0 0 240 80" role="img" aria-hidden="true">
+          <path d="M10 40 C18 30 45 22 78 20 L170 20 C202 20 224 26 232 40 C224 54 202 60 170 60 L78 60 C45 58 18 50 10 40 Z" fill="#d62828"/>
+          <rect x="62" y="36" width="92" height="6" rx="3" fill="#f8fafc" opacity="0.9"/>
+          <path d="M156 22 L192 8 L188 26 Z" fill="#b91c1c"/>
+          <path d="M104 46 L66 70 L122 58 Z" fill="#c71f27"/>
+          <path d="M66 70 L58 58 L74 64 Z" fill="#f8fafc"/>
+          <path d="M136 44 L168 64 L124 56 Z" fill="#b91c1c" opacity="0.9"/>
+          <path d="M168 64 L176 52 L160 58 Z" fill="#f8fafc"/>
+        </svg>
       </div>
 
       <div class="modern-panel" id="modern-tabs">
