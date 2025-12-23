@@ -2394,7 +2394,7 @@ function tafConsensusForTime(decodes, targetMs){
   };
   const segments = decodes.map((d, idx) => {
     if (!decoderAvailable[idx] || !d?.taf) return null;
-    const seg = tafSegmentForTime(d.taf.fcsts, targetMs);
+    const seg = tafSegmentForTime(d.taf.fcsts, targetMs, { excludeProb: true });
     if (!seg) return null;
     const worst = tafWorstConditionsForTime(d.taf.fcsts, targetMs);
     const ceiling = worst.ceiling;
@@ -2408,7 +2408,7 @@ function tafConsensusForTime(decodes, targetMs){
       key: `${ceiling ?? 'X'}|${vis ?? 'X'}|${wxKey}`,
       normalizedKey: `${normalizeCeiling(ceiling) ?? 'X'}|${normalizeVis(vis) ?? 'X'}|${normalizeWxKey(wxKey) || 'NONE'}`,
       wxKey,
-      probLabel: tafProbLabel(seg)
+      probLabel: tafProbLabelForTime(d.taf.fcsts, targetMs)
     };
   });
   const anySegments = segments.some(Boolean);
@@ -3029,10 +3029,23 @@ function tafProbLabel(seg){
 function tafIsProbSegment(seg){
   return Boolean(tafProbLabel(seg));
 }
-function tafSegmentForTime(fcsts, targetMs){
-  if (!Array.isArray(fcsts) || !fcsts.length) return null;
+function tafProbLabelForTime(fcsts, targetMs){
+  if (!Array.isArray(fcsts) || !fcsts.length) return '';
   const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
   const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
+  const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs)].filter(Boolean);
+  const labels = segments.map(tafProbLabel).filter(Boolean);
+  if (labels.includes('PROB40')) return 'PROB40';
+  if (labels.includes('PROB30')) return 'PROB30';
+  return '';
+}
+function tafSegmentForTime(fcsts, targetMs, options = {}){
+  if (!Array.isArray(fcsts) || !fcsts.length) return null;
+  const excludeProb = Boolean(options.excludeProb);
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
+  const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
+  const nonProbMatches = excludeProb ? matches.filter(seg => !tafIsProbSegment(seg)) : matches;
+  const primaryMatches = nonProbMatches.length ? nonProbMatches : matches;
   const chooseWorst = (segments) => {
     if (!segments.length) return null;
     return segments.reduce((worst, seg) => {
@@ -3056,19 +3069,27 @@ function tafSegmentForTime(fcsts, targetMs){
       return seg;
     }, null);
   };
-  if (matches.length){
-    return chooseWorst(matches);
+  if (primaryMatches.length){
+    return chooseWorst(primaryMatches);
   }
-  const prior = [...ordered].reverse().find(f => f.timeFrom * 1000 <= targetMs);
+  const findPrior = (list) => [...list].reverse().find(f => f.timeFrom * 1000 <= targetMs);
+  const findFuture = (list) => list.find(f => f.timeFrom * 1000 > targetMs);
+  const nonProbOrdered = excludeProb ? ordered.filter(seg => !tafIsProbSegment(seg)) : ordered;
+  const prior = findPrior(nonProbOrdered);
   if (prior) return prior;
-  const future = ordered.find(f => f.timeFrom * 1000 > targetMs);
-  return future || ordered[ordered.length - 1];
+  if (excludeProb){
+    const priorAny = findPrior(ordered);
+    if (priorAny) return priorAny;
+  }
+  const future = findFuture(nonProbOrdered);
+  if (future) return future;
+  if (excludeProb){
+    const futureAny = findFuture(ordered);
+    if (futureAny) return futureAny;
+  }
+  return ordered[ordered.length - 1];
 }
-function tafWorstConditionsForTime(fcsts, targetMs){
-  if (!Array.isArray(fcsts) || !fcsts.length) return { ceiling: null, visibility: null, wind: null, obstruction: null, segments: [] };
-  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
-  const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
-  const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs)].filter(Boolean);
+function worstConditionsFromSegments(ordered, segments){
   let worstCeiling = null;
   let worstVisibility = null;
   let worstWind = null;
@@ -3093,7 +3114,39 @@ function tafWorstConditionsForTime(fcsts, targetMs){
         : obstruction;
     }
   });
-  return { ceiling: worstCeiling, visibility: worstVisibility, wind: worstWind, obstruction: worstObstruction, segments };
+  return { ceiling: worstCeiling, visibility: worstVisibility, wind: worstWind, obstruction: worstObstruction };
+}
+function tafWorstConditionsForTime(fcsts, targetMs){
+  if (!Array.isArray(fcsts) || !fcsts.length) {
+    return {
+      ceiling: null,
+      visibility: null,
+      wind: null,
+      obstruction: null,
+      prob: { ceiling: null, visibility: null, wind: null, obstruction: null, skyClear: false },
+      segments: []
+    };
+  }
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
+  const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
+  const nonProbMatches = matches.filter(seg => !tafIsProbSegment(seg));
+  const segments = nonProbMatches.length
+    ? nonProbMatches
+    : (matches.length ? matches : [tafSegmentForTime(ordered, targetMs, { excludeProb: true })].filter(Boolean));
+  const probSegments = matches.filter(seg => tafIsProbSegment(seg));
+  const worst = worstConditionsFromSegments(ordered, segments);
+  const probWorst = probSegments.length ? worstConditionsFromSegments(ordered, probSegments) : {
+    ceiling: null,
+    visibility: null,
+    wind: null,
+    obstruction: null
+  };
+  const probSkyClear = probSegments.some(seg => hasSkyClear(seg));
+  return {
+    ...worst,
+    prob: { ...probWorst, skyClear: probSkyClear },
+    segments
+  };
 }
 function formatZulu(ms){
   const d = new Date(ms);
@@ -3125,8 +3178,10 @@ function buildTafDriversSummary(fcsts, targetMs, ceiling, visibility){
   if (!Array.isArray(fcsts) || !fcsts.length) return '';
   const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
   const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
-  const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs)].filter(Boolean);
-  if (!segments.length) return '';
+  const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs, { excludeProb: true })].filter(Boolean);
+  const baseSegments = segments.filter(seg => !tafIsProbSegment(seg));
+  const driverSegments = baseSegments.length ? baseSegments : segments;
+  if (!driverSegments.length) return '';
   const drivers = [];
   const addDriver = (seg, valueText) => {
     if (!seg || !valueText) return;
@@ -3143,14 +3198,14 @@ function buildTafDriversSummary(fcsts, targetMs, ceiling, visibility){
     }
   };
   if (ceiling !== null && ceiling !== undefined){
-    const ceilingSeg = segments.find(seg => {
+    const ceilingSeg = driverSegments.find(seg => {
       const segCeiling = ceilingWithCarry(ordered, seg);
       return segCeiling !== null && segCeiling !== undefined && segCeiling === ceiling;
     });
     addDriver(ceilingSeg, `${ceiling}FT`);
   }
   if (visibility !== null && visibility !== undefined){
-    const visSeg = segments.find(seg => {
+    const visSeg = driverSegments.find(seg => {
       const segVis = visibilityWithCarry(ordered, seg);
       return segVis !== null && segVis !== undefined && segVis === visibility;
     });
@@ -3301,8 +3356,8 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
       console.warn(err?.message || err);
     }
     if (!tafSeg){
-      tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs);
-      tafProbLabelText = tafProbLabel(tafSeg);
+      tafSeg = tafSegmentForTime(airportData?.taf?.fcsts, targetMs, { excludeProb: true });
+      tafProbLabelText = tafProbLabelForTime(airportData?.taf?.fcsts, targetMs);
       tafFcsts = airportData?.taf?.fcsts || null;
     }
   } else {
@@ -3328,6 +3383,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const sourceDetail = source === 'TAF' && tafProbLabelText ? `${source} · ${tafProbLabelText}` : source;
   const probFlag = source === 'TAF' ? tafProbLabelText : '';
   const tafWorst = source === 'TAF' ? tafWorstConditionsForTime(tafFcsts || [], targetMs) : null;
+  const tafProbConditions = source === 'TAF' ? tafWorst?.prob || null : null;
   const ceiling = source === 'TAF' ? tafWorst.ceiling : extractCeilingFt(segment?.clouds, segment?.vertVis);
   const vis = source === 'TAF' ? tafWorst.visibility : parseVisibilityToSM(segment?.visib);
   const wind = source === 'TAF' ? tafWorst.wind : extractWindFromSegment(segment);
@@ -3371,6 +3427,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     skyClear,
     wx,
     probFlag,
+    probConditions: tafProbConditions,
     tafIcons,
     summary: driversSummary || reasonBits.join(' · ') || 'No significant weather decoded'
   };
@@ -3398,12 +3455,26 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         <div class="wx-error" style="margin-top:12px">${escapeHtml(a.noResultsReason || 'No results available for this airport.')}</div>
       </div>`;
     }
+    const prob = a.probConditions || {};
+    const probCeilingText = (prob.ceiling !== null && prob.ceiling !== undefined)
+      ? `${prob.ceiling} ft`
+      : (prob.skyClear ? 'SKC' : '');
+    const probVisText = (prob.visibility !== null && prob.visibility !== undefined)
+      ? formatVisSm(prob.visibility)
+      : '';
+    const probWindText = prob.wind ? formatWind(prob.wind) : '';
+    const probObstructionText = prob.obstruction?.token ? prob.obstruction.token : '';
+    const withProbSuffix = (baseText, probText) => probText ? `${baseText} (${probText})` : baseText;
     const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined)
       ? `${a.ceiling} ft`
       : (a.skyClear ? 'SKC' : 'No ceiling');
     const visTxt = formatVisSm(a.visibility);
     const windTxt = formatWind(a.wind);
     const obstructionTxt = a.obstruction?.token ? a.obstruction.token : 'None reported';
+    const ceilDisplay = withProbSuffix(ceilTxt, probCeilingText);
+    const visDisplay = withProbSuffix(visTxt, probVisText);
+    const windDisplay = withProbSuffix(windTxt, probWindText);
+    const obstructionDisplay = withProbSuffix(obstructionTxt, probObstructionText);
     return `<div class="weather-card">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <div>
@@ -3412,18 +3483,18 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
           <div class="wx-meta">
             <span>${escapeHtml(a.targetText)}</span>
             <span>${escapeHtml(a.sourceDetail || a.source)} · ${escapeHtml(a.windowText)}</span>
-            ${a.probFlag ? `<span class="prob-flag">${escapeHtml(a.probFlag)}</span>` : ''}
           </div>
         </div>
         <div class="status-row">
           <span class="status-badge ${a.rules.className}">${escapeHtml(a.rules.label)}</span>
+          ${a.probFlag ? `<span class="prob-flag ${a.rules.className}">${escapeHtml(a.probFlag)}</span>` : ''}
         </div>
       </div>
       <div class="wx-metric">
-        <div class="wx-box"><div class="label">${labelWithInfo('Ceiling', INFO_COPY.weather.ceiling)}</div><div class="value">${escapeHtml(ceilTxt)}</div></div>
-        <div class="wx-box"><div class="label">${labelWithInfo('Visibility', INFO_COPY.weather.visibility)}</div><div class="value">${escapeHtml(visTxt)}</div></div>
-        <div class="wx-box"><div class="label">${labelWithInfo('Wind', INFO_COPY.weather.wind)}</div><div class="value">${escapeHtml(windTxt)}</div></div>
-        <div class="wx-box"><div class="label">${labelWithInfo('Precip/Obstruction', INFO_COPY.weather.obstruction)}</div><div class="value">${escapeHtml(obstructionTxt)}</div></div>
+        <div class="wx-box"><div class="label">${labelWithInfo('Ceiling', INFO_COPY.weather.ceiling)}</div><div class="value">${escapeHtml(ceilDisplay)}</div></div>
+        <div class="wx-box"><div class="label">${labelWithInfo('Visibility', INFO_COPY.weather.visibility)}</div><div class="value">${escapeHtml(visDisplay)}</div></div>
+        <div class="wx-box"><div class="label">${labelWithInfo('Wind', INFO_COPY.weather.wind)}</div><div class="value">${escapeHtml(windDisplay)}</div></div>
+        <div class="wx-box"><div class="label">${labelWithInfo('Precip/Obstruction', INFO_COPY.weather.obstruction)}</div><div class="value">${escapeHtml(obstructionDisplay)}</div></div>
         <div class="wx-box"><div class="label">ILS guidance</div><div class="value"><span class="ils-badge">${escapeHtml(a.ils.cat)}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(a.ils.reason)}</div></div></div>
         <div class="wx-box"><div class="label">Drivers</div><div class="value" style="font-size:14px;line-height:1.4">${escapeHtml(a.summary)}</div></div>
         ${showDecoders ? `<div class="wx-box"><div class="label">TAF decoders</div><div class="value">${renderDecoderIcons(a.tafIcons)}</div></div>` : ''}
@@ -3552,10 +3623,10 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on the VO gross amount.'
   },
   weather: {
-    ceiling: 'Lowest ceiling across overlapping TAF segments at the selected time (TEMPO/PROB included).',
-    visibility: 'Lowest visibility across overlapping TAF segments at the selected time (TEMPO/PROB included).',
-    wind: 'Strongest sustained wind or gust across overlapping TAF segments at the selected time (TEMPO/PROB included).',
-    obstruction: 'Worst precipitation or visibility obstruction token across overlapping TAF segments at the selected time (TEMPO/PROB included).'
+    ceiling: 'Lowest ceiling across overlapping non-PROB TAF segments at the selected time. PROB30/40 ceilings appear in brackets.',
+    visibility: 'Lowest visibility across overlapping non-PROB TAF segments at the selected time. PROB30/40 visibility appears in brackets.',
+    wind: 'Strongest sustained wind or gust across overlapping non-PROB TAF segments at the selected time. PROB30/40 winds appear in brackets.',
+    obstruction: 'Worst precipitation or visibility obstruction token across overlapping non-PROB TAF segments at the selected time. PROB30/40 tokens appear in brackets.'
   },
   duty: {
     maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors/legs, zone selection (inside/outside North American zone), the time zone difference between departure and arrival (<4 vs ≥4 column), and augmentation/rest facility limits from Tables A–C. Table values can include 15-minute increments, and deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours).',
