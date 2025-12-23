@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 280" role="img" aria-label="Air Canada Rouge plane">
+  <defs>
+    <linearGradient id="fuselage" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#f7f9fc"/>
+      <stop offset="100%" stop-color="#e1e7f0"/>
+    </linearGradient>
+    <linearGradient id="tail" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#e01b24"/>
+      <stop offset="100%" stop-color="#b60f16"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" fill-rule="evenodd">
+    <path fill="url(#fuselage)" d="M40 150c10-14 30-22 52-22h408c40 0 82 8 122 24l140 56c10 4 18 12 20 22 2 12-6 24-20 28l-188 48c-26 6-52 6-78 0l-96-24-178 28c-16 2-32-4-42-16l-60-74c-6-8-10-18-10-28 0-6 2-12 4-18z"/>
+    <path fill="#1c1f2b" d="M252 132h198l14 18-236 36-22-28c-6-8 0-22 10-26 10-4 22-2 36 0z" opacity="0.1"/>
+    <path fill="url(#tail)" d="M670 96l92 36c18 8 28 24 26 40-2 16-16 30-34 36l-46 14-30-92z"/>
+    <path fill="#c4cddd" d="M190 208l34 44-36 6-42-52z"/>
+    <path fill="#c4cddd" d="M318 232l38 48-46 8-50-62z"/>
+    <circle cx="118" cy="154" r="10" fill="#c7cedb"/>
+    <circle cx="164" cy="150" r="6" fill="#c7cedb"/>
+    <circle cx="214" cy="146" r="6" fill="#c7cedb"/>
+  </g>
+</svg>
