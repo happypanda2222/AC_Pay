@@ -214,8 +214,6 @@ const METAR_TEXT_FALLBACKS = [
   (icao) => `https://metar.vatsim.net/${icao}`
 ];
 const TAF_TEXT_FALLBACK = (icao) => `https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`;
-const TAF_DECODER_MAX_ATTEMPTS = 10;
-const WEATHER_TAF_MODE_STORAGE_KEY = 'acpay.weather.tafMode';
 const IATA_LOOKUP_URL = 'https://raw.githubusercontent.com/algolia/datasets/master/airports/airports.json';
 const AIRPORT_TZ_LOOKUP_URL = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
 const CORS_PROXY_BUILDERS = [
@@ -3231,24 +3229,6 @@ function pickFirstWeatherRecord(payload, arrayKeys){
   }
   return null;
 }
-function normalizeWeatherTafMode(value){
-  return value === 'new' ? 'new' : 'old';
-}
-function getWeatherTafMode(){
-  const legacy = document.getElementById('wx-taf-mode');
-  const modern = document.getElementById('modern-wx-taf-mode');
-  const raw = legacy?.value || modern?.value || localStorage.getItem(WEATHER_TAF_MODE_STORAGE_KEY) || 'old';
-  return normalizeWeatherTafMode(raw);
-}
-function setWeatherTafMode(value){
-  const mode = normalizeWeatherTafMode(value);
-  localStorage.setItem(WEATHER_TAF_MODE_STORAGE_KEY, mode);
-  ['wx-taf-mode', 'modern-wx-taf-mode'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el && el.value !== mode) el.value = mode;
-  });
-  return mode;
-}
 async function fetchJsonWeatherRecord(builders, icao, label, keys){
   for (const buildUrl of builders){
     const url = buildUrl(icao);
@@ -3262,48 +3242,7 @@ async function fetchJsonWeatherRecord(builders, icao, label, keys){
   }
   return null;
 }
-async function fetchTafDecoderAviationWeather(icao){
-  const url = `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`;
-  const payload = await fetchJsonWithCorsFallback(url, 'no-store');
-  const record = pickFirstWeatherRecord(payload, ['tafs', 'data', 'results']);
-  if (!record) return { taf: null };
-  const normalized = normalizeTafPayload(record, icao);
-  if (normalized) return { taf: normalized };
-  const rawFallback = record.rawTAF || record.raw_text || record.taf || record.text || '';
-  return { taf: decodeTafFromTextResponse(rawFallback, icao, 'AviationWeather JSON') };
-}
-async function fetchTafDecoderNoaaText(icao){
-  const url = `${WEATHER_API_ROOT}/taf?format=raw&ids=${icao}`;
-  const raw = await fetchTextWithCorsFallback(url, 'no-store');
-  const taf = decodeTafFromTextResponse(raw, icao, 'AviationWeather raw');
-  return { taf };
-}
-async function fetchTafDecoderNoaaTextFeed(icao){
-  const raw = await fetchTextWithCorsFallback(TAF_TEXT_FALLBACK(icao), 'no-store');
-  return { taf: decodeTafFromTextResponse(raw, icao, 'NOAA text feed') };
-}
-async function fetchTafDecoders(icao){
-  const decoders = [
-    fetchTafDecoderAviationWeather,
-    fetchTafDecoderNoaaText,
-    fetchTafDecoderNoaaTextFeed
-  ];
-  const runDecoderWithRetry = async (fn, idx) => {
-    let lastError = null;
-    for (let attempt = 1; attempt <= TAF_DECODER_MAX_ATTEMPTS; attempt += 1){
-      try {
-        return await fn(icao);
-      } catch(err){
-        lastError = err;
-        console.warn(`TAF decoder ${idx + 1} failed for ${icao} (attempt ${attempt})`, err);
-      }
-    }
-    console.warn(`TAF decoder ${idx + 1} exhausted ${TAF_DECODER_MAX_ATTEMPTS} attempts for ${icao}`, lastError);
-    return { taf: null, unavailable: true };
-  };
-  return Promise.all(decoders.map((fn, idx) => runDecoderWithRetry(fn, idx)));
-}
-async function fetchWeatherForAirport(icao, options = {}){
+async function fetchWeatherForAirport(icao){
   const [metarJson, tafJson] = await Promise.all([
     fetchJsonWeatherRecord(METAR_JSON_ENDPOINTS, icao, 'METAR', ['metars', 'data', 'results'])
       .catch(() => null),
@@ -3320,12 +3259,10 @@ async function fetchWeatherForAirport(icao, options = {}){
   const finalMetar = metarJson || metarFromText;
   const finalTaf = tafJson || tafTxt;
   let name = finalMetar?.name || finalTaf?.name || icao;
-  const tafMode = normalizeWeatherTafMode(options.tafMode);
-  const tafDecodes = tafMode === 'old' ? await fetchTafDecoders(icao) : [];
   const weatherWarning = (!finalMetar && !finalTaf)
     ? `No METAR/TAF found for ${icao}. Check the airport code or try again later.`
     : '';
-  return { icao, name, metar: finalMetar, taf: finalTaf, tafDecodes, weatherWarning, tafMode };
+  return { icao, name, metar: finalMetar, taf: finalTaf, weatherWarning };
 }
 function metarTimeMs(metar){
   if (!metar) return null;
@@ -3521,8 +3458,7 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
   const outEl = document.getElementById(outId);
   const rawEl = document.getElementById(rawId);
   const rawDetails = rawEl?.closest('details');
-  const tafMode = getWeatherTafMode();
-  const useDecoders = tafMode === 'old';
+  const useDecoders = false;
   const attemptMsg = attempt === 1
     ? 'Fetching METAR/TAF and decoding…'
     : `Retrying weather fetch (attempt ${attempt}/${WEATHER_MAX_ATTEMPTS})…`;
@@ -3540,7 +3476,7 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
     const uniqueIcao = Array.from(new Set([depIcao, arrIcao]));
     const weatherMap = {};
     for (const icao of uniqueIcao){
-      weatherMap[icao] = await fetchWeatherForAirport(icao, { tafMode });
+      weatherMap[icao] = await fetchWeatherForAirport(icao);
     }
     const now = Date.now();
     const assessments = [
@@ -4459,8 +4395,6 @@ function init(){
   document.getElementById('tabbtn-modern-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-rest'); });
   document.getElementById('tabbtn-modern-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-converter'); });
   document.getElementById('ui-mode')?.addEventListener('change', (e)=>{ const v=e.target.value==='legacy'?'legacy':'modern'; switchUIMode(v); });
-  document.getElementById('wx-taf-mode')?.addEventListener('change', (e)=>{ setWeatherTafMode(e.target.value); });
-  document.getElementById('modern-wx-taf-mode')?.addEventListener('change', (e)=>{ setWeatherTafMode(e.target.value); });
   // Dropdown behaviors
   document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
   document.getElementById('ot-seat')?.addEventListener('change', ()=>onSeatChange(true));
@@ -4557,7 +4491,6 @@ function init(){
   autoSelectDefaults();
   syncAdvancedRrsp(false);
   syncAdvancedRrsp(true);
-  setWeatherTafMode(localStorage.getItem(WEATHER_TAF_MODE_STORAGE_KEY) || 'old');
   // Sensible placeholders for weather tab
   const depWx = document.getElementById('wx-dep'); if (depWx && !depWx.value) depWx.value = 'YWG';
   const arrWx = document.getElementById('wx-arr'); if (arrWx && !arrWx.value) arrWx.value = 'YYZ';
