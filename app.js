@@ -4555,12 +4555,18 @@ function init(){
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
     const plane = heroBanner.querySelector('.rouge-plane');
+    let lastEasterEgg = 0;
     const triggerFlight = () => {
+      const now = Date.now();
+      if (now - lastEasterEgg < 350) return;
+      lastEasterEgg = now;
       heroBanner.classList.remove('easter-egg-active');
       void heroBanner.offsetWidth;
       heroBanner.classList.add('easter-egg-active');
     };
     heroBanner.addEventListener('click', triggerFlight);
+    heroBanner.addEventListener('pointerup', triggerFlight);
+    heroBanner.addEventListener('touchend', triggerFlight);
     heroBanner.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' '){
         e.preventDefault();
