@@ -189,6 +189,17 @@ const FDP_MAX_TABLE_OUTSIDE = [
   { start: 1170, end: 1319, label: '19:30-21:59', max: 11, deadhead: 13 },
   { start: 1320, end: 1439, label: '22:00-23:59', max: 10, deadhead: 12 }
 ];
+const FOM_FDP_TABLE = [
+  { start: 0, end: 239, label: '00:00-03:59', max14: 9, max56: 9 },
+  { start: 240, end: 299, label: '04:00-04:59', max14: 10, max56: 9 },
+  { start: 300, end: 359, label: '05:00-05:59', max14: 11, max56: 10 },
+  { start: 360, end: 419, label: '06:00-06:59', max14: 12, max56: 11 },
+  { start: 420, end: 779, label: '07:00-12:59', max14: 13, max56: 12 },
+  { start: 780, end: 1019, label: '13:00-16:59', max14: 12.5, max56: 11.5 },
+  { start: 1020, end: 1319, label: '17:00-21:59', max14: 12, max56: 11 },
+  { start: 1320, end: 1379, label: '22:00-22:59', max14: 11, max56: 10 },
+  { start: 1380, end: 1439, label: '23:00-23:59', max14: 10, max56: 9 }
+];
 const AUGMENTED_FDP_TABLE = [
   { crew: 'basic+1', facility: 3, zone: 'inside', max: 14, deadhead: 16, facilityLabel: 'Class 3 seat' },
   { crew: 'basic+1', facility: 3, zone: 'outside', max: 12, deadhead: 14, facilityLabel: 'Class 3 seat' },
@@ -196,6 +207,14 @@ const AUGMENTED_FDP_TABLE = [
   { crew: 'basic+1', facility: 1, zone: 'any', max: 15, deadhead: 17, facilityLabel: 'Class 1 bunk' },
   { crew: 'basic+2', facility: 1, zone: 'any', max: 18.25, deadhead: 18.25, facilityLabel: '2 Class 1 bunks' },
   { crew: '2ca2fo', facility: 1, zone: 'any', max: 20, deadhead: 20, facilityLabel: '2 Class 1 bunks' }
+];
+const FOM_AUGMENTED_FDP_TABLE = [
+  { additionalCrew: 1, facility: 3, max: 14 },
+  { additionalCrew: 1, facility: 2, max: 15 },
+  { additionalCrew: 1, facility: 1, max: 15 },
+  { additionalCrew: 2, facility: 3, max: 15.25 },
+  { additionalCrew: 2, facility: 2, max: 16.5 },
+  { additionalCrew: 2, facility: 1, max: 18 }
 ];
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
 const WEATHER_MAX_ATTEMPTS = 5;
@@ -1125,6 +1144,20 @@ function crewTypeLabel(value){
   return 'Augmented crew';
 }
 
+function additionalCrewCount(value){
+  const type = normalizeCrewType(value);
+  if (type === 'basic+1') return 1;
+  if (type === 'basic+2' || type === '2ca2fo') return 2;
+  return null;
+}
+
+function fomFacilityLabel(value){
+  if (value === 1) return 'Class 1 rest facility';
+  if (value === 2) return 'Class 2 rest facility';
+  if (value === 3) return 'Class 3 rest facility';
+  return 'rest facility';
+}
+
 function zoneLabel(zone){
   return zone === 'outside' ? 'Outside North American zone' : 'Inside North American zone';
 }
@@ -1135,7 +1168,39 @@ function isHomeBaseCode(code){
 }
 
 function computeMaxDuty(params){
+  const dutyMode = params.dutyMode === 'fom' ? 'fom' : 'alpa';
   const dutyType = params.dutyType || 'unaugmented';
+  if (dutyMode === 'fom'){
+    if (dutyType === 'augmented'){
+      const additionalCrew = additionalCrewCount(params.crewType);
+      const facility = Number(params.restFacility);
+      if (!Number.isFinite(additionalCrew) || !Number.isFinite(facility)) {
+        throw new Error('Select the crew complement and rest facility class.');
+      }
+      const match = FOM_AUGMENTED_FDP_TABLE.find(row => row.additionalCrew === additionalCrew && row.facility === facility);
+      if (!match) {
+        return { maxFdp: null, detail: 'This augmentation/rest facility combination is not listed in the FOM table.' };
+      }
+      const crewLabel = `${additionalCrew} additional crew member${additionalCrew > 1 ? 's' : ''}`;
+      return {
+        maxFdp: match.max,
+        detail: `FOM augmented FDP: ${crewLabel} with ${fomFacilityLabel(facility)}.`
+      };
+    }
+    const startMinutes = parseTimeToMinutes(params.startTime);
+    const startValue = Number.isFinite(params.startMinutes) ? params.startMinutes : startMinutes;
+    const sectors = Number(params.sectors);
+    if (!Number.isFinite(startValue)) throw new Error('Enter an FDP start time in HH:MM.');
+    if (!Number.isFinite(sectors) || sectors < 1 || sectors > 6) throw new Error('Planned sectors must be between 1 and 6.');
+    const row = FOM_FDP_TABLE.find(item => startValue >= item.start && startValue <= item.end);
+    if (!row) throw new Error('Start time is outside the FOM FDP table range.');
+    const maxFdp = sectors <= 4 ? row.max14 : row.max56;
+    const sectorLabel = sectors <= 4 ? '1-4 sectors' : '5-6 sectors';
+    return {
+      maxFdp,
+      detail: `FOM unaugmented FDP: ${sectorLabel}, start time ${row.label}.`
+    };
+  }
   const zone = params.zone === 'outside' ? 'outside' : 'inside';
   const deadhead = params.deadhead === 'yes';
   const tzDiff = Math.abs(Number(params.timezoneDiff));
@@ -1157,7 +1222,7 @@ function computeMaxDuty(params){
     const zoneNote = ` ${zoneLabel(zone)}.`;
     return {
       maxFdp,
-      detail: `${crewTypeLabel(crewType)} with ${match.facilityLabel}.${zoneNote}${deadheadNote}`
+      detail: `ALPA ${crewTypeLabel(crewType)} with ${match.facilityLabel}.${zoneNote}${deadheadNote}`
     };
   }
   const startMinutes = parseTimeToMinutes(params.startTime);
@@ -1191,7 +1256,7 @@ function computeMaxDuty(params){
     : (deadhead && zone === 'outside' ? ' Deadhead at end of duty day (Table D) applied.' : '');
   return {
     maxFdp,
-    detail: `Unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).${zoneNote}${tzNote}${deadheadNote}${conversionNote}`
+    detail: `ALPA unaugmented FDP, ${sectorLabel}, start time ${row.label} (YYZ local).${zoneNote}${tzNote}${deadheadNote}${conversionNote}`
   };
 }
 
@@ -1812,12 +1877,27 @@ function toggleDutyFields(typeId, unaugId, augId){
   }
 }
 
+function toggleDutyModeFields(modeId, scopeId){
+  const modeEl = document.getElementById(modeId);
+  const scopeEl = scopeId ? document.getElementById(scopeId) : document;
+  if (!modeEl || !scopeEl) return;
+  const isFom = modeEl.value === 'fom';
+  scopeEl.querySelectorAll('[data-duty-mode="alpa"]').forEach((el) => {
+    el.classList.toggle('hidden', isFom);
+    el.setAttribute('aria-hidden', String(isFom));
+  });
+}
+
 function updateAugmentedFacilityOptions(crewId, facilityId){
   const crewEl = document.getElementById(crewId);
   const facilityEl = document.getElementById(facilityId);
   if (!crewEl || !facilityEl) return;
   const crewType = normalizeCrewType(crewEl.value);
-  const allowed = crewType === 'basic+1' ? [1, 2, 3] : [1];
+  const modeEl = crewId.startsWith('modern')
+    ? document.getElementById('modern-duty-mode')
+    : document.getElementById('duty-mode');
+  const dutyMode = modeEl?.value === 'fom' ? 'fom' : 'alpa';
+  const allowed = dutyMode === 'fom' ? [1, 2, 3] : (crewType === 'basic+1' ? [1, 2, 3] : [1]);
   const current = Number(facilityEl.value);
   facilityEl.querySelectorAll('option').forEach(option => {
     const value = Number(option.value);
@@ -3565,7 +3645,7 @@ const INFO_COPY = {
     obstruction: 'Worst precipitation or visibility obstruction token across overlapping non-PROB TAF segments at the selected time. PROB30/40 tokens appear in brackets.'
   },
   duty: {
-    maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors/legs, zone selection (inside/outside North American zone), the time zone difference between departure and arrival (<4 vs ≥4 column), and augmentation/rest facility limits from Tables A–C. Table values can include 15-minute increments, and deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours).',
+    maxFdp: 'Maximum flight duty period based on the selected rule set (ALPA or FOM). ALPA uses the FDP start time converted to YYZ local, planned sectors/legs, zone selection, time zone difference between departure and arrival (<4 vs ≥4 column), and augmentation/rest facility limits from Tables A–C; deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours). FOM uses the published FDP tables for unaugmented/augmented limits without zone or time-zone adjustments.',
     endUtc: 'FDP end time in UTC using the calculated maximum FDP added to the departure local start time (day offset shown when crossing midnight UTC).',
     brakesSet: 'Brakes set time in UTC calculated as FDP end minus 15 minutes (day offset shown when crossing midnight UTC).',
     basis: 'Rule bucket used to determine the maximum FDP from the tables and whether deadhead rules were applied.'
@@ -4093,9 +4173,11 @@ async function calcDutyLegacy(){
   try{
     const dutyType = document.getElementById('duty-type')?.value;
     const zone = document.getElementById('duty-zone')?.value;
+    const dutyMode = document.getElementById('duty-mode')?.value;
     const params = {
       dutyType,
       zone,
+      dutyMode,
       sectors: document.getElementById('duty-sectors')?.value,
       crewType: document.getElementById('duty-crew')?.value,
       restFacility: document.getElementById('duty-rest-facility')?.value,
@@ -4104,13 +4186,19 @@ async function calcDutyLegacy(){
     if (dutyType === 'unaugmented'){
       const startTime = document.getElementById('duty-start')?.value;
       const departureCode = document.getElementById('duty-departure')?.value;
-      const arrivalCode = document.getElementById('duty-arrival')?.value;
-      const conversion = await computeFdpStartInYYZ(startTime, departureCode);
-      const timezoneDiff = await computeTimezoneDiffBetweenAirports(departureCode, arrivalCode);
-      params.startMinutes = conversion.startMinutes;
-      params.startUtcMinutes = conversion.startUtcMinutes;
-      params.timezoneDiff = timezoneDiff;
-      params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ. Arrival ${normalizeAirportCode(arrivalCode)} (${formatHoursValue(timezoneDiff)}h time zone difference).`;
+      if (dutyMode === 'fom'){
+        const conversion = await computeFdpStartInYYZ(startTime, departureCode);
+        params.startTime = startTime;
+        params.startUtcMinutes = conversion.startUtcMinutes;
+      } else {
+        const arrivalCode = document.getElementById('duty-arrival')?.value;
+        const conversion = await computeFdpStartInYYZ(startTime, departureCode);
+        const timezoneDiff = await computeTimezoneDiffBetweenAirports(departureCode, arrivalCode);
+        params.startMinutes = conversion.startMinutes;
+        params.startUtcMinutes = conversion.startUtcMinutes;
+        params.timezoneDiff = timezoneDiff;
+        params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ. Arrival ${normalizeAirportCode(arrivalCode)} (${formatHoursValue(timezoneDiff)}h time zone difference).`;
+      }
     }
     const res = computeMaxDuty(params);
     if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
@@ -4130,9 +4218,11 @@ async function calcDutyModern(){
   try{
     const dutyType = document.getElementById('modern-duty-type')?.value;
     const zone = document.getElementById('modern-duty-zone')?.value;
+    const dutyMode = document.getElementById('modern-duty-mode')?.value;
     const params = {
       dutyType,
       zone,
+      dutyMode,
       sectors: document.getElementById('modern-duty-sectors')?.value,
       crewType: document.getElementById('modern-duty-crew')?.value,
       restFacility: document.getElementById('modern-duty-rest-facility')?.value,
@@ -4141,13 +4231,19 @@ async function calcDutyModern(){
     if (dutyType === 'unaugmented'){
       const startTime = document.getElementById('modern-duty-start')?.value;
       const departureCode = document.getElementById('modern-duty-departure')?.value;
-      const arrivalCode = document.getElementById('modern-duty-arrival')?.value;
-      const conversion = await computeFdpStartInYYZ(startTime, departureCode);
-      const timezoneDiff = await computeTimezoneDiffBetweenAirports(departureCode, arrivalCode);
-      params.startMinutes = conversion.startMinutes;
-      params.startUtcMinutes = conversion.startUtcMinutes;
-      params.timezoneDiff = timezoneDiff;
-      params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ. Arrival ${normalizeAirportCode(arrivalCode)} (${formatHoursValue(timezoneDiff)}h time zone difference).`;
+      if (dutyMode === 'fom'){
+        const conversion = await computeFdpStartInYYZ(startTime, departureCode);
+        params.startTime = startTime;
+        params.startUtcMinutes = conversion.startUtcMinutes;
+      } else {
+        const arrivalCode = document.getElementById('modern-duty-arrival')?.value;
+        const conversion = await computeFdpStartInYYZ(startTime, departureCode);
+        const timezoneDiff = await computeTimezoneDiffBetweenAirports(departureCode, arrivalCode);
+        params.startMinutes = conversion.startMinutes;
+        params.startUtcMinutes = conversion.startUtcMinutes;
+        params.timezoneDiff = timezoneDiff;
+        params.conversionNote = `Departure ${conversion.departure} local ${conversion.localLabel} → ${conversion.yyzLabel} YYZ. Arrival ${normalizeAirportCode(arrivalCode)} (${formatHoursValue(timezoneDiff)}h time zone difference).`;
+      }
     }
     const res = computeMaxDuty(params);
     if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
@@ -4420,6 +4516,8 @@ function init(){
   document.getElementById('modern-rrsp')?.addEventListener('change', ()=>syncAdvancedRrsp(true));
   document.getElementById('duty-type')?.addEventListener('change', ()=>toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields'));
   document.getElementById('modern-duty-type')?.addEventListener('change', ()=>toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields'));
+  document.getElementById('duty-mode')?.addEventListener('change', ()=>{ toggleDutyModeFields('duty-mode','tab-duty'); updateAugmentedFacilityOptions('duty-crew','duty-rest-facility'); });
+  document.getElementById('modern-duty-mode')?.addEventListener('change', ()=>{ toggleDutyModeFields('modern-duty-mode','modern-duty'); updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility'); });
   document.getElementById('duty-crew')?.addEventListener('change', ()=>updateAugmentedFacilityOptions('duty-crew','duty-rest-facility'));
   document.getElementById('modern-duty-crew')?.addEventListener('change', ()=>updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility'));
   document.getElementById('rest-duty-type')?.addEventListener('change', ()=>toggleRestFields('rest-duty-type','rest-unaug-fields'));
@@ -4472,6 +4570,8 @@ function init(){
   tieYearStepFromYearModernMonthly();
   toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields');
   toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields');
+  toggleDutyModeFields('duty-mode','tab-duty');
+  toggleDutyModeFields('modern-duty-mode','modern-duty');
   updateAugmentedFacilityOptions('duty-crew','duty-rest-facility');
   updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility');
   toggleRestFields('rest-duty-type','rest-unaug-fields');

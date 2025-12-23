@@ -651,13 +651,20 @@
                       <option value="augmented">Augmented</option>
                     </select>
                   </div>
+                  <div>
+                    <label>Duty time rules</label>
+                    <select id="modern-duty-mode">
+                      <option value="alpa" selected>ALPA</option>
+                      <option value="fom">FOM</option>
+                    </select>
+                  </div>
                 </div>
                 <div class="stacked-fields" id="modern-duty-unaug-fields">
                   <div>
                     <label>Departure airport</label>
                     <input id="modern-duty-departure" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LAX or KLAX">
                   </div>
-                  <div>
+                  <div data-duty-mode="alpa">
                     <label>Arrival airport</label>
                     <input id="modern-duty-arrival" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LHR or EGLL">
                   </div>
@@ -695,7 +702,7 @@
                     </select>
                   </div>
                 </div>
-                <div class="stacked-fields">
+                <div class="stacked-fields" data-duty-mode="alpa">
                   <div>
                     <label>Operation zone</label>
                     <select id="modern-duty-zone">
@@ -1156,13 +1163,22 @@
             </select>
           </div>
         </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Duty time rules</label>
+            <select id="duty-mode">
+              <option value="alpa" selected>ALPA</option>
+              <option value="fom">FOM</option>
+            </select>
+          </div>
+        </div>
         <div id="duty-unaug-fields">
           <div class="row" style="margin-top:10px">
             <div>
               <label>Departure airport</label>
               <input id="duty-departure" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LAX or KLAX">
             </div>
-            <div>
+            <div data-duty-mode="alpa">
               <label>Arrival airport</label>
               <input id="duty-arrival" type="text" inputmode="text" autocapitalize="characters" value="YYZ" placeholder="e.g., LHR or EGLL">
             </div>
@@ -1205,7 +1221,7 @@
             </select>
           </div>
         </div>
-        <div class="row" style="margin-top:10px">
+        <div class="row" style="margin-top:10px" data-duty-mode="alpa">
           <div>
             <label>Operation zone</label>
             <select id="duty-zone">
