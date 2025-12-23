@@ -3647,7 +3647,7 @@ const INFO_COPY = {
   duty: {
     maxFdp: 'Maximum flight duty period based on the selected rule set (ALPA or FOM). ALPA uses the FDP start time converted to YYZ local, planned sectors/legs, zone selection, time zone difference between departure and arrival (<4 vs ≥4 column), and augmentation/rest facility limits from Tables A–C; deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours). FOM uses the published FDP tables for unaugmented/augmented limits without zone or time-zone adjustments.',
     endUtc: 'FDP end time in UTC using the calculated maximum FDP added to the departure local start time (day offset shown when crossing midnight UTC).',
-    brakesSet: 'Brakes set time in UTC calculated as FDP end minus 15 minutes (day offset shown when crossing midnight UTC).',
+    brakesSet: 'Brakes set time in UTC calculated as FDP end minus 15 minutes (day offset shown when crossing midnight UTC). This is shown for ALPA duty results only.',
     basis: 'Rule bucket used to determine the maximum FDP from the tables and whether deadhead rules were applied.'
   },
   rest: {
@@ -4204,7 +4204,9 @@ async function calcDutyLegacy(){
     if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
       const endUtcMinutes = params.startUtcMinutes + (res.maxFdp * 60);
       res.endUtc = formatUtcMinutesWithDayOffset(endUtcMinutes);
-      res.brakesSetUtc = formatUtcMinutesWithDayOffset(endUtcMinutes - 15);
+      if (dutyMode !== 'fom'){
+        res.brakesSetUtc = formatUtcMinutesWithDayOffset(endUtcMinutes - 15);
+      }
     }
     renderDutyResult(document.getElementById('duty-out'), res, false);
   } catch(err){
@@ -4249,7 +4251,9 @@ async function calcDutyModern(){
     if (Number.isFinite(res.maxFdp) && Number.isFinite(params.startUtcMinutes)){
       const endUtcMinutes = params.startUtcMinutes + (res.maxFdp * 60);
       res.endUtc = formatUtcMinutesWithDayOffset(endUtcMinutes);
-      res.brakesSetUtc = formatUtcMinutesWithDayOffset(endUtcMinutes - 15);
+      if (dutyMode !== 'fom'){
+        res.brakesSetUtc = formatUtcMinutesWithDayOffset(endUtcMinutes - 15);
+      }
     }
     renderDutyResult(document.getElementById('modern-duty-out'), res, true);
   } catch(err){
