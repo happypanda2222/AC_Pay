@@ -2163,6 +2163,8 @@ function parseTafRawForecasts(rawTAF){
     const visToken = segmentTokens.find(t => /SM$/.test(t));
     const cloudTokens = segmentTokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}$/.test(t));
     const clouds = cloudTokens.map(t => ({ cover: t.slice(0,3), base: normalizeCloudBaseFt(Number(t.slice(3))) }));
+    const windToken = segmentTokens.find(t => parseWindToken(t));
+    const wind = windToken ? parseWindToken(windToken) : null;
     const wxString = segmentTokens.join(' ').trim();
     return {
       timeFrom: Math.floor(startMs / 1000),
@@ -2170,6 +2172,9 @@ function parseTafRawForecasts(rawTAF){
       visib: visToken ? parseVisibilityToSM(visToken) : null,
       clouds,
       vertVis: null,
+      wdir: wind?.dir ?? null,
+      wspd: wind?.speed ?? null,
+      wgust: wind?.gust ?? null,
       wxString,
       changeIndicator
     };
@@ -2275,6 +2280,9 @@ function normalizeTafPayload(raw, icao){
     const cloudsSrc = f.clouds || f.sky_condition || [];
     const changeIndicator = f.change_indicator || f.changeIndicator || f.change_type || f.changeType || f.type || f.fcst_type || '';
     const probability = f.probability || f.prob || f.probability_pct || f.probabilityPercent || null;
+    const windDir = f.wdir || f.wind_dir_degrees || f.windDirDegrees || f.wind_dir || f.windDir;
+    const windSpeed = f.wspd || f.wind_speed_kt || f.windSpeedKt || f.wind_speed_kts || f.windSpeedKts || f.wind_speed;
+    const windGust = f.wgust || f.wgst || f.wind_gust_kt || f.windGustKt || f.wind_gust_kts || f.windGustKts || f.wind_gust;
     const clouds = (Array.isArray(cloudsSrc) ? cloudsSrc : [cloudsSrc]).filter(Boolean).map(c => ({
       cover: c.cover || c.sky_cover || c.skyCover || c.code || c.type || '',
       base: normalizeCloudBaseFt(c.base || c.cloud_base_ft_agl || c.base_ft_agl || c.altitude)
@@ -2291,6 +2299,9 @@ function normalizeTafPayload(raw, icao){
       visib: parseVisibilityToSM(visRaw),
       vertVis: vertVis ? normalizeCloudBaseFt(vertVis) : null,
       clouds,
+      wdir: windDir ?? null,
+      wspd: windSpeed ?? null,
+      wgust: windGust ?? null,
       wxString: wx.trim(),
       changeIndicator: changeIndicator ? String(changeIndicator).trim() : '',
       probability: probability === null ? null : Number(probability)
@@ -2815,6 +2826,178 @@ function wxWithCarry(fcsts, seg){
   }
   return '';
 }
+const WX_PRECIP_CODES = ['DZ', 'RA', 'SN', 'SG', 'IC', 'PL', 'GR', 'GS', 'UP'];
+const WX_OBSTRUCTION_CODES = ['BR', 'FG', 'FU', 'VA', 'DU', 'SA', 'HZ', 'PY', 'PO', 'SQ', 'FC', 'SS', 'DS'];
+const WX_DESCRIPTORS = ['TS', 'SH', 'FZ', 'BL', 'DR', 'MI', 'PR', 'BC'];
+const WX_PHENOMENA_SEVERITY = {
+  FC: 6,
+  FG: 5,
+  SS: 4,
+  DS: 4,
+  SN: 4,
+  GR: 4,
+  TS: 4,
+  GS: 3,
+  RA: 3,
+  IC: 3,
+  PL: 3,
+  UP: 3,
+  DZ: 2,
+  SG: 2,
+  BR: 2,
+  FU: 2,
+  VA: 2,
+  PO: 2,
+  SQ: 2,
+  HZ: 1,
+  DU: 1,
+  SA: 1,
+  PY: 1
+};
+function parseWindToken(token){
+  if (!token) return null;
+  const match = String(token).toUpperCase().match(/^(VRB|\d{3})(\d{2,3})(G(\d{2,3}))?(KT|MPS|KMH)$/);
+  if (!match) return null;
+  const [, dirRaw, speedRaw, , gustRaw, unitRaw] = match;
+  let speed = Number(speedRaw);
+  let gust = gustRaw ? Number(gustRaw) : null;
+  if (!Number.isFinite(speed)) return null;
+  let unit = unitRaw;
+  if (unit === 'MPS'){
+    speed *= 1.94384;
+    if (Number.isFinite(gust)) gust *= 1.94384;
+    unit = 'KT';
+  } else if (unit === 'KMH'){
+    speed *= 0.539957;
+    if (Number.isFinite(gust)) gust *= 0.539957;
+    unit = 'KT';
+  }
+  return {
+    dir: dirRaw === 'VRB' ? 'VRB' : Number(dirRaw),
+    speed: Math.round(speed),
+    gust: Number.isFinite(gust) ? Math.round(gust) : null,
+    unit
+  };
+}
+function parseWindFromString(text){
+  if (!text) return null;
+  const tokens = String(text).trim().split(/\s+/);
+  for (const token of tokens){
+    const wind = parseWindToken(token);
+    if (wind) return wind;
+  }
+  return null;
+}
+function parseWindNumbers(dir, speed, gust){
+  const speedVal = Number(speed);
+  if (!Number.isFinite(speedVal)) return null;
+  const gustVal = Number(gust);
+  const dirVal = Number(dir);
+  const dirOut = Number.isFinite(dirVal)
+    ? dirVal
+    : (typeof dir === 'string' && dir.toUpperCase() === 'VRB' ? 'VRB' : null);
+  return {
+    dir: dirOut,
+    speed: Math.round(speedVal),
+    gust: Number.isFinite(gustVal) ? Math.round(gustVal) : null,
+    unit: 'KT'
+  };
+}
+function extractWindFromSegment(segment){
+  if (!segment) return null;
+  const wind = parseWindNumbers(
+    segment.wdir ?? segment.wind_dir_degrees ?? segment.windDirDegrees ?? segment.wind_dir,
+    segment.wspd ?? segment.wind_speed_kt ?? segment.windSpeedKt ?? segment.wind_speed_kts ?? segment.windSpeedKts ?? segment.wind_speed,
+    segment.wgust ?? segment.wgst ?? segment.wind_gust_kt ?? segment.windGustKt ?? segment.wind_gust_kts ?? segment.windGustKts ?? segment.wind_gust
+  );
+  if (wind) return wind;
+  const raw = segment.wxString || segment.rawOb || segment.raw_text || segment.rawTAF || segment.text || '';
+  return parseWindFromString(raw);
+}
+function windWithCarry(fcsts, seg){
+  const direct = extractWindFromSegment(seg);
+  if (direct) return direct;
+  if (!Array.isArray(fcsts) || !seg) return null;
+  const segFrom = Number(seg.timeFrom);
+  if (!Number.isFinite(segFrom)) return null;
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
+  const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
+  for (const candidate of prior){
+    const wind = extractWindFromSegment(candidate);
+    if (wind) return wind;
+  }
+  return null;
+}
+function compareWindSeverity(a, b){
+  if (!a) return b;
+  if (!b) return a;
+  const aGust = a.gust ?? a.speed ?? 0;
+  const bGust = b.gust ?? b.speed ?? 0;
+  if (aGust !== bGust) return aGust > bGust ? a : b;
+  const aSpeed = a.speed ?? 0;
+  const bSpeed = b.speed ?? 0;
+  if (aSpeed !== bSpeed) return aSpeed > bSpeed ? a : b;
+  return a;
+}
+function formatWind(wind){
+  if (!wind) return 'No wind reported';
+  const speed = Number(wind.speed);
+  if (!Number.isFinite(speed)) return 'No wind reported';
+  if (speed === 0) return 'Calm';
+  const dir = wind.dir === 'VRB'
+    ? 'VRB'
+    : (Number.isFinite(Number(wind.dir)) ? String(Math.round(Number(wind.dir))).padStart(3, '0') + '°' : '---');
+  const gust = Number.isFinite(Number(wind.gust)) && Number(wind.gust) > 0 ? `G${Math.round(Number(wind.gust))}` : '';
+  return `${dir} ${Math.round(speed)}${gust ? gust : ''} kt`;
+}
+function wxTokenSeverity(token){
+  if (!token) return null;
+  const upper = String(token).toUpperCase();
+  if (upper === 'NSW') return null;
+  const intensity = upper.startsWith('+') ? 1 : (upper.startsWith('-') ? -0.3 : 0);
+  let cleaned = upper.replace(/^(\+|-)/, '');
+  const vicinity = cleaned.startsWith('VC');
+  cleaned = cleaned.replace(/^VC/, '');
+  let descriptorScore = 0;
+  if (cleaned.includes('TS')) descriptorScore += 1;
+  if (cleaned.includes('FZ')) descriptorScore += 0.5;
+  if (cleaned.includes('SH')) descriptorScore += 0.3;
+  if (cleaned.includes('BL')) descriptorScore += 0.2;
+  if (cleaned.includes('DR')) descriptorScore += 0.1;
+  if (cleaned.includes('MI')) descriptorScore += 0.1;
+  if (cleaned.includes('PR')) descriptorScore += 0.1;
+  if (cleaned.includes('BC')) descriptorScore += 0.1;
+  let base = null;
+  const allCodes = WX_PRECIP_CODES.concat(WX_OBSTRUCTION_CODES).concat(WX_DESCRIPTORS);
+  allCodes.forEach(code => {
+    if (!cleaned.includes(code)) return;
+    const severity = WX_PHENOMENA_SEVERITY[code];
+    if (severity !== undefined){
+      base = base === null ? severity : Math.max(base, severity);
+    }
+  });
+  if (base === null) return null;
+  let score = base + intensity + descriptorScore;
+  if (vicinity) score -= 0.5;
+  return score;
+}
+function parseObstructionFromWxString(wxString){
+  if (!wxString) return null;
+  const tokens = String(wxString).trim().split(/\s+/).filter(Boolean);
+  const candidates = tokens.map(token => {
+    const score = wxTokenSeverity(token);
+    return score === null ? null : { token, score };
+  }).filter(Boolean);
+  if (!candidates.length) return null;
+  return candidates.reduce((worst, current) => (current.score > worst.score ? current : worst));
+}
+function obstructionWithCarry(fcsts, seg){
+  const direct = parseObstructionFromWxString(seg?.wxString || seg?.rawOb || seg?.raw_text || '');
+  if (direct) return direct;
+  if (!Array.isArray(fcsts) || !seg) return null;
+  const wx = wxWithCarry(fcsts, seg);
+  return parseObstructionFromWxString(wx);
+}
 function classifyFlightRules(ceilingFt, visSm){
   const ceil = (ceilingFt === null || ceilingFt === undefined) ? Infinity : ceilingFt;
   const vis = (visSm === null || visSm === undefined) ? Infinity : visSm;
@@ -2882,12 +3065,14 @@ function tafSegmentForTime(fcsts, targetMs){
   return future || ordered[ordered.length - 1];
 }
 function tafWorstConditionsForTime(fcsts, targetMs){
-  if (!Array.isArray(fcsts) || !fcsts.length) return { ceiling: null, visibility: null, segments: [] };
+  if (!Array.isArray(fcsts) || !fcsts.length) return { ceiling: null, visibility: null, wind: null, obstruction: null, segments: [] };
   const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
   const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
   const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs)].filter(Boolean);
   let worstCeiling = null;
   let worstVisibility = null;
+  let worstWind = null;
+  let worstObstruction = null;
   segments.forEach(seg => {
     const ceiling = ceilingWithCarry(ordered, seg);
     if (ceiling !== null && ceiling !== undefined){
@@ -2897,8 +3082,18 @@ function tafWorstConditionsForTime(fcsts, targetMs){
     if (vis !== null && vis !== undefined){
       worstVisibility = worstVisibility === null ? vis : Math.min(worstVisibility, vis);
     }
+    const wind = windWithCarry(ordered, seg);
+    if (wind){
+      worstWind = compareWindSeverity(worstWind, wind);
+    }
+    const obstruction = obstructionWithCarry(ordered, seg);
+    if (obstruction){
+      worstObstruction = worstObstruction
+        ? (obstruction.score > worstObstruction.score ? obstruction : worstObstruction)
+        : obstruction;
+    }
   });
-  return { ceiling: worstCeiling, visibility: worstVisibility, segments };
+  return { ceiling: worstCeiling, visibility: worstVisibility, wind: worstWind, obstruction: worstObstruction, segments };
 }
 function formatZulu(ms){
   const d = new Date(ms);
@@ -3135,6 +3330,10 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const tafWorst = source === 'TAF' ? tafWorstConditionsForTime(tafFcsts || [], targetMs) : null;
   const ceiling = source === 'TAF' ? tafWorst.ceiling : extractCeilingFt(segment?.clouds, segment?.vertVis);
   const vis = source === 'TAF' ? tafWorst.visibility : parseVisibilityToSM(segment?.visib);
+  const wind = source === 'TAF' ? tafWorst.wind : extractWindFromSegment(segment);
+  const obstruction = source === 'TAF'
+    ? tafWorst.obstruction
+    : parseObstructionFromWxString(segment?.wxString || segment?.rawOb || segment?.raw_text || segment?.text || '');
   const rules = classifyFlightRules(ceiling, vis);
   const ils = ilsCategory(ceiling, vis);
   const skyClear = ceiling === null && hasSkyClear(segment);
@@ -3165,6 +3364,8 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     windowText,
     ceiling,
     visibility: vis,
+    wind,
+    obstruction,
     rules,
     ils,
     skyClear,
@@ -3201,6 +3402,8 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
       ? `${a.ceiling} ft`
       : (a.skyClear ? 'SKC' : 'No ceiling');
     const visTxt = formatVisSm(a.visibility);
+    const windTxt = formatWind(a.wind);
+    const obstructionTxt = a.obstruction?.token ? a.obstruction.token : 'None reported';
     return `<div class="weather-card">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <div>
@@ -3219,6 +3422,8 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
       <div class="wx-metric">
         <div class="wx-box"><div class="label">${labelWithInfo('Ceiling', INFO_COPY.weather.ceiling)}</div><div class="value">${escapeHtml(ceilTxt)}</div></div>
         <div class="wx-box"><div class="label">${labelWithInfo('Visibility', INFO_COPY.weather.visibility)}</div><div class="value">${escapeHtml(visTxt)}</div></div>
+        <div class="wx-box"><div class="label">${labelWithInfo('Wind', INFO_COPY.weather.wind)}</div><div class="value">${escapeHtml(windTxt)}</div></div>
+        <div class="wx-box"><div class="label">${labelWithInfo('Precip/Obstruction', INFO_COPY.weather.obstruction)}</div><div class="value">${escapeHtml(obstructionTxt)}</div></div>
         <div class="wx-box"><div class="label">ILS guidance</div><div class="value"><span class="ils-badge">${escapeHtml(a.ils.cat)}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(a.ils.reason)}</div></div></div>
         <div class="wx-box"><div class="label">Drivers</div><div class="value" style="font-size:14px;line-height:1.4">${escapeHtml(a.summary)}</div></div>
         ${showDecoders ? `<div class="wx-box"><div class="label">TAF decoders</div><div class="value">${renderDecoderIcons(a.tafIcons)}</div></div>` : ''}
@@ -3348,7 +3553,9 @@ const INFO_COPY = {
   },
   weather: {
     ceiling: 'Lowest ceiling across overlapping TAF segments at the selected time (TEMPO/PROB included).',
-    visibility: 'Lowest visibility across overlapping TAF segments at the selected time (TEMPO/PROB included).'
+    visibility: 'Lowest visibility across overlapping TAF segments at the selected time (TEMPO/PROB included).',
+    wind: 'Strongest sustained wind or gust across overlapping TAF segments at the selected time (TEMPO/PROB included).',
+    obstruction: 'Worst precipitation or visibility obstruction token across overlapping TAF segments at the selected time (TEMPO/PROB included).'
   },
   duty: {
     maxFdp: 'Maximum flight duty period based on FDP start time (converted to YYZ local from the departure airport), planned sectors/legs, zone selection (inside/outside North American zone), the time zone difference between departure and arrival (<4 vs ≥4 column), and augmentation/rest facility limits from Tables A–C. Table values can include 15-minute increments, and deadhead at end of duty day applies Table D limits or the +3 hour extension cap (18 hours).',
