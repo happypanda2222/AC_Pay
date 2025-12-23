@@ -4552,6 +4552,25 @@ function init(){
   document.getElementById('modern-rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestModern(); });
   document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body' }); });
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
+  const heroBanner = document.getElementById('modern-hero-banner');
+  if (heroBanner){
+    const plane = heroBanner.querySelector('.rouge-plane');
+    const triggerFlight = () => {
+      heroBanner.classList.remove('easter-egg-active');
+      void heroBanner.offsetWidth;
+      heroBanner.classList.add('easter-egg-active');
+    };
+    heroBanner.addEventListener('click', triggerFlight);
+    heroBanner.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        triggerFlight();
+      }
+    });
+    plane?.addEventListener('animationend', () => {
+      heroBanner.classList.remove('easter-egg-active');
+    });
+  }
   // Tab defaults
   setLegacyPrimaryTab('pay');
   setLegacySubTab('annual');
