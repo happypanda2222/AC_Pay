@@ -4554,27 +4554,16 @@ function init(){
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
-    const plane = heroBanner.querySelector('.rouge-plane');
-    let lastEasterEgg = 0;
-    const triggerFlight = () => {
-      const now = Date.now();
-      if (now - lastEasterEgg < 350) return;
-      lastEasterEgg = now;
-      heroBanner.classList.remove('easter-egg-active');
-      void heroBanner.offsetWidth;
-      heroBanner.classList.add('easter-egg-active');
+    const toggleBanner = () => {
+      const isRed = heroBanner.classList.toggle('is-red');
+      heroBanner.setAttribute('aria-pressed', isRed ? 'true' : 'false');
     };
-    heroBanner.addEventListener('click', triggerFlight);
-    heroBanner.addEventListener('pointerup', triggerFlight);
-    heroBanner.addEventListener('touchend', triggerFlight);
+    heroBanner.addEventListener('click', toggleBanner);
     heroBanner.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' '){
         e.preventDefault();
-        triggerFlight();
+        toggleBanner();
       }
-    });
-    plane?.addEventListener('animationend', () => {
-      heroBanner.classList.remove('easter-egg-active');
     });
   }
   // Tab defaults

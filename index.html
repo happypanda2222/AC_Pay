@@ -192,28 +192,11 @@
 
     /* Modern UI styling */
     body[data-ui="modern"]{--bg:#05070c;--card:#0f121d;--acc:#6dd3ff;--muted:#9fb1c5;--txt:#f7f9fc;}
-    .modern-hero{background:linear-gradient(135deg,#0a84ff 0%,#6dd3ff 40%,#1c1f2b 100%);border-radius:16px;padding:18px 18px;margin-bottom:14px;color:#0c1022;box-shadow:0 12px 40px rgba(0,0,0,.35);display:flex;justify-content:space-between;align-items:center;gap:10px;position:relative;overflow:hidden;cursor:pointer}
+    .modern-hero{--hero-bg:linear-gradient(135deg,#0a84ff 0%,#6dd3ff 40%,#1c1f2b 100%);background:var(--hero-bg);border-radius:16px;padding:18px 18px;margin-bottom:14px;color:#0c1022;box-shadow:0 12px 40px rgba(0,0,0,.35);display:flex;justify-content:space-between;align-items:center;gap:10px;position:relative;overflow:hidden;cursor:pointer}
+    .modern-hero.is-red{--hero-bg:linear-gradient(135deg,#ff3b30 0%,#ff8a80 45%,#2a0b0b 100%)}
     .modern-hero h2{margin:0;font-size:20px;color:#0c1022}
     .modern-hero p{margin:4px 0 0 0;color:#0c1022;font-weight:600}
     .modern-hero-content{position:relative;z-index:2}
-    .rouge-plane{
-      position:absolute;
-      left:-35%;
-      top:50%;
-      width:clamp(180px, 32vw, 360px);
-      height:auto;
-      opacity:0;
-      pointer-events:none;
-      z-index:1;
-      filter:drop-shadow(0 10px 18px rgba(6,10,24,0.45));
-    }
-    .modern-hero.easter-egg-active .rouge-plane{animation:rougeTakeoff 2.6s ease-in-out forwards}
-    @keyframes rougeTakeoff{
-      0%{transform:translateX(0) translateY(8px) rotate(2deg);opacity:0}
-      12%{opacity:1}
-      60%{transform:translateX(70vw) translateY(-12px) rotate(6deg);opacity:1}
-      100%{transform:translateX(120vw) translateY(-32px) rotate(8deg);opacity:0}
-    }
     .badge-pill{background:rgba(0,0,0,0.12);color:#0c1022;border-radius:999px;padding:6px 10px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;font-size:11px}
     .modern-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:12px}
     @media(max-width:960px){.modern-grid{grid-template-columns:1fr}}
@@ -323,11 +306,10 @@
     </div>
 
     <div id="modern-ui">
-      <div class="modern-hero" id="modern-hero-banner" role="button" tabindex="0" aria-label="Hidden flight animation">
+      <div class="modern-hero" id="modern-hero-banner" role="button" tabindex="0" aria-label="Toggle banner color" aria-pressed="false">
         <div class="modern-hero-content">
           <h2>AC Tools</h2>
         </div>
-        <img class="rouge-plane" src="air-canada-a321.svg" alt="" aria-hidden="true">
       </div>
 
       <div class="modern-panel" id="modern-tabs">
