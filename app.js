@@ -2171,7 +2171,7 @@ function parseMetarText(raw, icao){
     cover: t.slice(0,3),
     base: normalizeCloudBaseFt(Number(t.slice(3)))
   }));
-  const visib = visToken ? parseVisibilityToSM(visToken) : null;
+  const visib = visToken ? parseVisibilityToSM(visToken, { icao }) : null;
   const vertVis = vvToken ? Number(vvToken.slice(2)) * 100 : null;
   return {
     icaoId: icao,
@@ -2192,7 +2192,7 @@ function parseTafText(raw, icao){
   const tafLine = lines.find(l => l.trim().startsWith('TAF')) || lines.find(l => l.includes(icao)) || '';
   const rawTAF = lines.join(' ').replace(/\s+/g,' ').trim();
   if (!rawTAF) return null;
-  const fcsts = parseTafRawForecasts(rawTAF);
+  const fcsts = parseTafRawForecasts(rawTAF, icao);
   return {
     icaoId: icao,
     name: `${icao} (text feed)`,
@@ -2222,7 +2222,7 @@ function decodeTafFromTextResponse(raw, icao, sourceLabel){
 function buildTafFromRaw(rawTAF, icao, sourceLabel){
   const cleaned = String(rawTAF || '').replace(/\s+/g, ' ').trim();
   if (!cleaned) return null;
-  const fcsts = parseTafRawForecasts(cleaned);
+  const fcsts = parseTafRawForecasts(cleaned, icao);
   if (!fcsts.length) return null;
   return {
     icaoId: icao,
@@ -2231,7 +2231,7 @@ function buildTafFromRaw(rawTAF, icao, sourceLabel){
     fcsts
   };
 }
-function parseTafRawForecasts(rawTAF){
+function parseTafRawForecasts(rawTAF, icao){
   if (!rawTAF) return [];
   const tokens = rawTAF.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
   const validIdx = tokens.findIndex(t => /^\d{4}\/\d{4}$/.test(t));
@@ -2277,7 +2277,7 @@ function parseTafRawForecasts(rawTAF){
     return {
       timeFrom: Math.floor(startMs / 1000),
       timeTo: Math.floor(endMs / 1000),
-      visib: visToken ? parseVisibilityToSM(visToken) : null,
+      visib: visToken ? parseVisibilityToSM(visToken, { icao }) : null,
       visibRaw: visToken || null,
       clouds,
       vertVis: null,
@@ -2357,6 +2357,7 @@ function parseTafRawForecasts(rawTAF){
   }).filter(Boolean);
   const fcsts = [...baseSegments, ...overlaysWithBase].filter(Boolean);
   fcsts.fmTimes = parseTafFmTimes(rawTAF);
+  if (icao) fcsts.icaoId = icao;
   return fcsts;
 }
 function normalizeTafPayload(raw, icao){
@@ -2405,7 +2406,7 @@ function normalizeTafPayload(raw, icao){
     return {
       timeFrom: Math.floor(fromMs / 1000),
       timeTo: Math.floor(toMs / 1000),
-      visib: parseVisibilityToSM(visRaw),
+      visib: parseVisibilityToSM(visRaw, { icao }),
       visibRaw: visRaw === null || visRaw === undefined ? null : String(visRaw).trim(),
       vertVis: vertVis ? normalizeCloudBaseFt(vertVis) : null,
       clouds,
@@ -2421,6 +2422,7 @@ function normalizeTafPayload(raw, icao){
   const fmTimes = parseTafFmTimes(rawTAF);
   const sorted = fcsts.sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
   sorted.fmTimes = fmTimes;
+  if (icao) sorted.icaoId = icao;
   return sorted.length ? { icaoId: icao, name: raw.name || `${icao} (decoder)`, rawTAF, fcsts: sorted } : null;
 }
 function parseTafFmTimes(rawTAF){
@@ -2791,10 +2793,22 @@ async function resolveAirportCode(input){
   }
   throw new Error('Use a 3-letter IATA or 4-letter ICAO code.');
 }
-function parseVisibilityToSM(raw){
+const FT_VISIBILITY_PREFIXES = ['MU']; // Cuban stations publish visibility in feet (e.g., MUCC 9000)
+
+function shouldTreatVisibilityAsFeet(raw, icao){
+  const code = typeof icao === 'string' ? icao.trim().toUpperCase() : '';
+  if (!code) return false;
+  if (!FT_VISIBILITY_PREFIXES.some(prefix => code.startsWith(prefix))) return false;
+  const token = String(raw ?? '').trim().toUpperCase();
+  return /^\d{4}$/.test(token);
+}
+
+function parseVisibilityToSM(raw, options = {}){
+  const { icao } = options;
   if (raw === null || raw === undefined) return null;
-  let s = String(raw).trim().toUpperCase();
-  if (!s) return null;
+  const rawToken = String(raw).trim();
+  if (!rawToken) return null;
+  let s = rawToken.toUpperCase();
   s = s.replace(/SM/g,'').replace(/^P/,'').replace('+','').trim();
   const frac = s.match(/^(\d+)\s+(\d+)\/(\d+)$/) || s.match(/^(\d+)\/(\d+)$/);
   let num = null;
@@ -2809,6 +2823,8 @@ function parseVisibilityToSM(raw){
     if (!Number.isNaN(parsed)) num = parsed;
   }
   if (num === null) return null;
+  const treatAsFeet = shouldTreatVisibilityAsFeet(rawToken, icao);
+  if (treatAsFeet) return +(num / 5280).toFixed(2);
   if (num > 50) return +(num / 1609.34).toFixed(2); // assume meters/visibility 9999 etc
   return +num.toFixed(2);
 }
@@ -2839,8 +2855,10 @@ function formatVisSm(v){
   if (frac) return `${frac} SM`;
   return v >= 1 ? `${v.toFixed(1)} SM` : `${v.toFixed(2)} SM`;
 }
-function formatVisibilityDisplay(valueSm, rawToken){
+function formatVisibilityDisplay(valueSm, rawToken, options = {}){
+  const { icao } = options;
   const cleaned = rawToken === null || rawToken === undefined ? '' : String(rawToken).trim();
+  const treatAsFeet = shouldTreatVisibilityAsFeet(rawToken, icao);
   if (cleaned){
     const upper = cleaned.toUpperCase();
     if (upper === 'CAVOK') return 'CAVOK';
@@ -2849,7 +2867,12 @@ function formatVisibilityDisplay(valueSm, rawToken){
       const base = cleaned.replace(/\s*SM$/i, '').trim();
       return `${base} SM`;
     }
-    if (/^\d{4}$/.test(upper)) return `${cleaned} m`;
+    if (/^\d{4}$/.test(upper)){
+      if (treatAsFeet && valueSm !== null && valueSm !== undefined){
+        return `${cleaned} ft (${formatVisSm(valueSm)})`;
+      }
+      return `${cleaned} m`;
+    }
     return cleaned;
   }
   return formatVisSm(valueSm);
@@ -3332,8 +3355,9 @@ function driverLabelForSegment(seg){
   if (change.includes('TEMPO')) return 'TEMPO';
   return 'FROM';
 }
-function buildTafDriversSummary(fcsts, targetMs, ceiling, visibility){
+function buildTafDriversSummary(fcsts, targetMs, ceiling, visibility, icaoOverride){
   if (!Array.isArray(fcsts) || !fcsts.length) return '';
+  const icao = icaoOverride || fcsts?.icaoId || '';
   const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), targetMs);
   const matches = ordered.filter(f => targetMs >= f.timeFrom * 1000 && targetMs < f.timeTo * 1000);
   const segments = matches.length ? matches : [tafSegmentForTime(ordered, targetMs, { excludeProb: true })].filter(Boolean);
@@ -3368,7 +3392,7 @@ function buildTafDriversSummary(fcsts, targetMs, ceiling, visibility){
       return segVis !== null && segVis !== undefined && segVis === visibility;
     });
     const visRaw = visSeg ? visibilityRawWithCarryFromOrdered(ordered, visSeg) : null;
-    addDriver(visSeg, formatVisibilityDisplay(visibility, visRaw));
+    addDriver(visSeg, formatVisibilityDisplay(visibility, visRaw, { icao }));
   }
   return drivers.map(d => `${d.label} ${d.timeText} ${d.values.join(' / ')}`).join(', ');
 }
@@ -3473,6 +3497,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
       tafIcons
     };
   }
+  const airportIcao = airportData?.icao || '';
   const metarMs = metarTimeMs(airportData.metar);
   const metarIsCurrent = metarMs ? Math.abs(targetMs - metarMs) <= 90 * 60000 : false;
   const useMetar = (forceMetar && hasMetar) || (metarIsCurrent && (!tafSeg || targetMs <= metarMs + 45 * 60000));
@@ -3483,7 +3508,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const tafWorst = source === 'TAF' ? tafWorstConditionsForTime(tafFcsts || [], targetMs) : null;
   const tafProbConditions = source === 'TAF' ? tafWorst?.prob || null : null;
   const ceiling = source === 'TAF' ? tafWorst.ceiling : extractCeilingFt(segment?.clouds, segment?.vertVis);
-  const vis = source === 'TAF' ? tafWorst.visibility : parseVisibilityToSM(segment?.visib);
+  const vis = source === 'TAF' ? tafWorst.visibility : parseVisibilityToSM(segment?.visib, { icao: airportIcao });
   const visRaw = source === 'TAF' ? tafWorst.visibilityRaw : segmentVisibilityRaw(segment);
   const probVisRaw = source === 'TAF' ? tafProbConditions?.visibilityRaw ?? null : null;
   const wind = source === 'TAF' ? tafWorst.wind : extractWindFromSegment(segment);
@@ -3503,11 +3528,11 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const reasonBits = [];
   if (ceiling !== null) reasonBits.push(`Ceiling ${ceiling} ft`);
   if (ceiling === null && skyClear) reasonBits.push('SKC');
-  if (vis !== null) reasonBits.push(`Vis ${formatVisibilityDisplay(vis, visRaw)}`);
+  if (vis !== null) reasonBits.push(`Vis ${formatVisibilityDisplay(vis, visRaw, { icao: airportIcao })}`);
   if (wx && wx !== 'None reported') reasonBits.push(wx);
   if (!segment) reasonBits.push('No METAR/TAF available');
   const driversSummary = source === 'TAF'
-    ? buildTafDriversSummary(tafFcsts || [], targetMs, ceiling, vis)
+    ? buildTafDriversSummary(tafFcsts || [], targetMs, ceiling, vis, airportIcao)
     : '';
   return {
     label,
@@ -3521,7 +3546,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     ceiling,
     visibility: vis,
     visibilityRaw: visRaw,
-    visibilityDisplay: formatVisibilityDisplay(vis, visRaw),
+    visibilityDisplay: formatVisibilityDisplay(vis, visRaw, { icao: airportIcao }),
     wind,
     obstruction,
     rules,
@@ -3532,7 +3557,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     probConditions: tafProbConditions,
     probVisibilityRaw: probVisRaw,
     probVisibilityDisplay: (tafProbConditions && tafProbConditions.visibility !== null && tafProbConditions.visibility !== undefined)
-      ? formatVisibilityDisplay(tafProbConditions.visibility, probVisRaw)
+      ? formatVisibilityDisplay(tafProbConditions.visibility, probVisRaw, { icao: airportIcao })
       : '',
     tafIcons,
     summary: driversSummary || reasonBits.join(' · ') || 'No significant weather decoded'
@@ -3567,7 +3592,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
       : (prob.skyClear ? 'SKC' : '');
     const probVisText = a.probVisibilityDisplay
       || ((prob.visibility !== null && prob.visibility !== undefined)
-        ? formatVisibilityDisplay(prob.visibility, prob.visibilityRaw ?? a.probVisibilityRaw)
+        ? formatVisibilityDisplay(prob.visibility, prob.visibilityRaw ?? a.probVisibilityRaw, { icao: a.icao })
         : '');
     const probWindText = prob.wind ? formatWind(prob.wind) : '';
     const probObstructionText = prob.obstruction?.token ? prob.obstruction.token : '';
@@ -3575,7 +3600,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined)
       ? `${a.ceiling} ft`
       : (a.skyClear ? 'SKC' : 'No ceiling');
-    const visTxt = a.visibilityDisplay || formatVisibilityDisplay(a.visibility, a.visibilityRaw);
+    const visTxt = a.visibilityDisplay || formatVisibilityDisplay(a.visibility, a.visibilityRaw, { icao: a.icao });
     const windTxt = formatWind(a.wind);
     const obstructionTxt = a.obstruction?.token ? a.obstruction.token : 'None reported';
     const ceilDisplay = withProbSuffix(ceilTxt, probCeilingText);
