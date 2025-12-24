@@ -2102,6 +2102,35 @@ async function fetchTextWithCorsFallback(url, cache='no-store'){
     throw lastErr;
   }
 }
+function extractVisibilityToken(tokens){
+  if (!Array.isArray(tokens)) return null;
+  for (let i = 0; i < tokens.length; i += 1){
+    const tok = tokens[i];
+    if (!tok) continue;
+    if (/^CAVOK$/i.test(tok)) return tok;
+    if (/SM$/i.test(tok)){
+      const prev = tokens[i - 1];
+      if (i > 0 && /^\d+$/.test(prev) && /^M?\d+\/\d+SM$/i.test(tok)){
+        return `${prev} ${tok}`;
+      }
+      return tok;
+    }
+  }
+  const meterToken = tokens.find(t => /^\d{4}$/.test(t));
+  return meterToken || null;
+}
+function segmentVisibilityRaw(seg){
+  if (!seg) return null;
+  const direct = seg.visibRaw ?? seg.visRaw ?? seg.visibility_raw ?? seg.visibilityRaw;
+  if (direct !== null && direct !== undefined){
+    const text = String(direct).trim();
+    return text || null;
+  }
+  const raw = seg.rawOb || seg.raw_text || seg.rawTAF || seg.text || seg.wxString;
+  if (!raw) return null;
+  const token = extractVisibilityToken(String(raw).trim().split(/\s+/));
+  return token || null;
+}
 async function fetchMetarTextWithFallbacks(icao){
   for (const buildUrl of METAR_TEXT_FALLBACKS){
     const url = buildUrl(icao);
@@ -2136,7 +2165,7 @@ function parseMetarText(raw, icao){
     reportMs = approximateUtcFromDayHour(Number(dd), Number(hh), Number(mm));
   }
   const tokens = rawLine.split(/\s+/);
-  const visToken = tokens.find(t => /SM$/.test(t));
+  const visToken = extractVisibilityToken(tokens);
   const vvToken = tokens.find(t => /^VV\d{3}/.test(t));
   const clouds = tokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}/.test(t)).map(t => ({
     cover: t.slice(0,3),
@@ -2151,6 +2180,7 @@ function parseMetarText(raw, icao){
     obsTime: Math.floor(reportMs / 1000),
     wxString: rawLine,
     visib,
+    visibRaw: visToken || null,
     vertVis,
     clouds,
     rawOb: rawLine
@@ -2238,7 +2268,7 @@ function parseTafRawForecasts(rawTAF){
   };
   const buildSegment = (segmentTokens, startMs, endMs, changeIndicator) => {
     if (!startMs || !endMs || startMs === endMs) return null;
-    const visToken = segmentTokens.find(t => /SM$/.test(t));
+    const visToken = extractVisibilityToken(segmentTokens);
     const cloudTokens = segmentTokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}$/.test(t));
     const clouds = cloudTokens.map(t => ({ cover: t.slice(0,3), base: normalizeCloudBaseFt(Number(t.slice(3))) }));
     const windToken = segmentTokens.find(t => parseWindToken(t));
@@ -2248,6 +2278,7 @@ function parseTafRawForecasts(rawTAF){
       timeFrom: Math.floor(startMs / 1000),
       timeTo: Math.floor(endMs / 1000),
       visib: visToken ? parseVisibilityToSM(visToken) : null,
+      visibRaw: visToken || null,
       clouds,
       vertVis: null,
       wdir: wind?.dir ?? null,
@@ -2375,6 +2406,7 @@ function normalizeTafPayload(raw, icao){
       timeFrom: Math.floor(fromMs / 1000),
       timeTo: Math.floor(toMs / 1000),
       visib: parseVisibilityToSM(visRaw),
+      visibRaw: visRaw === null || visRaw === undefined ? null : String(visRaw).trim(),
       vertVis: vertVis ? normalizeCloudBaseFt(vertVis) : null,
       clouds,
       wdir: windDir ?? null,
@@ -2807,6 +2839,21 @@ function formatVisSm(v){
   if (frac) return `${frac} SM`;
   return v >= 1 ? `${v.toFixed(1)} SM` : `${v.toFixed(2)} SM`;
 }
+function formatVisibilityDisplay(valueSm, rawToken){
+  const cleaned = rawToken === null || rawToken === undefined ? '' : String(rawToken).trim();
+  if (cleaned){
+    const upper = cleaned.toUpperCase();
+    if (upper === 'CAVOK') return 'CAVOK';
+    if (/^P6SM$/.test(upper)) return '6+ SM';
+    if (/SM$/.test(upper)){
+      const base = cleaned.replace(/\s*SM$/i, '').trim();
+      return `${base} SM`;
+    }
+    if (/^\d{4}$/.test(upper)) return `${cleaned} m`;
+    return cleaned;
+  }
+  return formatVisSm(valueSm);
+}
 function extractCeilingFt(clouds, vertVis){
   let ceil = null;
   if (Array.isArray(clouds)){
@@ -2876,19 +2923,45 @@ function ceilingWithCarry(fcsts, seg){
   }
   return null;
 }
-function visibilityWithCarry(fcsts, seg){
+function visibilityWithCarryFromOrdered(ordered, seg){
   const direct = parseVisibilityToSM(seg?.visib);
   if (direct !== null && direct !== undefined) return direct;
-  if (!Array.isArray(fcsts) || !seg) return null;
+  if (!Array.isArray(ordered) || !seg) return null;
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return null;
-  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
   const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
   for (const candidate of prior){
     const vis = parseVisibilityToSM(candidate.visib);
     if (vis !== null && vis !== undefined) return vis;
   }
   return null;
+}
+function visibilityWithCarry(fcsts, seg){
+  if (!seg) return null;
+  const segFrom = Number(seg.timeFrom);
+  if (!Number.isFinite(segFrom)) return parseVisibilityToSM(seg?.visib);
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
+  return visibilityWithCarryFromOrdered(ordered, seg);
+}
+function visibilityRawWithCarryFromOrdered(ordered, seg){
+  const direct = segmentVisibilityRaw(seg);
+  if (direct) return direct;
+  if (!Array.isArray(ordered) || !seg) return null;
+  const segFrom = Number(seg.timeFrom);
+  if (!Number.isFinite(segFrom)) return null;
+  const prior = ordered.filter(s => Number.isFinite(s.timeFrom) && s.timeFrom <= segFrom).sort((a, b) => b.timeFrom - a.timeFrom);
+  for (const candidate of prior){
+    const vis = segmentVisibilityRaw(candidate);
+    if (vis) return vis;
+  }
+  return null;
+}
+function visibilityRawWithCarry(fcsts, seg){
+  if (!seg) return null;
+  const segFrom = Number(seg.timeFrom);
+  if (!Number.isFinite(segFrom)) return segmentVisibilityRaw(seg);
+  const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
+  return visibilityRawWithCarryFromOrdered(ordered, seg);
 }
 function wxWithCarry(fcsts, seg){
   const direct = (seg?.wxString || (Array.isArray(seg?.weather) ? seg.weather.join(' ') : '')).trim();
@@ -3129,9 +3202,9 @@ function tafSegmentForTime(fcsts, targetMs, options = {}){
     return segments.reduce((worst, seg) => {
       if (!worst) return seg;
       const ceiling = ceilingWithCarry(ordered, seg);
-      const vis = visibilityWithCarry(ordered, seg);
+      const vis = visibilityWithCarryFromOrdered(ordered, seg);
       const worstCeiling = ceilingWithCarry(ordered, worst);
-      const worstVis = visibilityWithCarry(ordered, worst);
+      const worstVis = visibilityWithCarryFromOrdered(ordered, worst);
       const severity = classifyFlightRules(ceiling, vis).code;
       const worstSeverity = classifyFlightRules(worstCeiling, worstVis).code;
       const severityRank = { LIFR: 4, IFR: 3, MVFR: 2, VFR: 1, UNK: 0 };
@@ -3170,6 +3243,7 @@ function tafSegmentForTime(fcsts, targetMs, options = {}){
 function worstConditionsFromSegments(ordered, segments){
   let worstCeiling = null;
   let worstVisibility = null;
+  let worstVisibilityRaw = null;
   let worstWind = null;
   let worstObstruction = null;
   segments.forEach(seg => {
@@ -3177,9 +3251,13 @@ function worstConditionsFromSegments(ordered, segments){
     if (ceiling !== null && ceiling !== undefined){
       worstCeiling = worstCeiling === null ? ceiling : Math.min(worstCeiling, ceiling);
     }
-    const vis = visibilityWithCarry(ordered, seg);
+    const vis = visibilityWithCarryFromOrdered(ordered, seg);
+    const visRaw = visibilityRawWithCarryFromOrdered(ordered, seg);
     if (vis !== null && vis !== undefined){
-      worstVisibility = worstVisibility === null ? vis : Math.min(worstVisibility, vis);
+      if (worstVisibility === null || vis < worstVisibility){
+        worstVisibility = vis;
+        worstVisibilityRaw = visRaw ?? worstVisibilityRaw;
+      }
     }
     const wind = windWithCarry(ordered, seg);
     if (wind){
@@ -3192,16 +3270,17 @@ function worstConditionsFromSegments(ordered, segments){
         : obstruction;
     }
   });
-  return { ceiling: worstCeiling, visibility: worstVisibility, wind: worstWind, obstruction: worstObstruction };
+  return { ceiling: worstCeiling, visibility: worstVisibility, visibilityRaw: worstVisibilityRaw, wind: worstWind, obstruction: worstObstruction };
 }
 function tafWorstConditionsForTime(fcsts, targetMs){
   if (!Array.isArray(fcsts) || !fcsts.length) {
     return {
       ceiling: null,
       visibility: null,
+      visibilityRaw: null,
       wind: null,
       obstruction: null,
-      prob: { ceiling: null, visibility: null, wind: null, obstruction: null, skyClear: false },
+      prob: { ceiling: null, visibility: null, visibilityRaw: null, wind: null, obstruction: null, skyClear: false },
       segments: []
     };
   }
@@ -3216,6 +3295,7 @@ function tafWorstConditionsForTime(fcsts, targetMs){
   const probWorst = probSegments.length ? worstConditionsFromSegments(ordered, probSegments) : {
     ceiling: null,
     visibility: null,
+    visibilityRaw: null,
     wind: null,
     obstruction: null
   };
@@ -3284,10 +3364,11 @@ function buildTafDriversSummary(fcsts, targetMs, ceiling, visibility){
   }
   if (visibility !== null && visibility !== undefined){
     const visSeg = driverSegments.find(seg => {
-      const segVis = visibilityWithCarry(ordered, seg);
+      const segVis = visibilityWithCarryFromOrdered(ordered, seg);
       return segVis !== null && segVis !== undefined && segVis === visibility;
     });
-    addDriver(visSeg, formatVisSm(visibility));
+    const visRaw = visSeg ? visibilityRawWithCarryFromOrdered(ordered, visSeg) : null;
+    addDriver(visSeg, formatVisibilityDisplay(visibility, visRaw));
   }
   return drivers.map(d => `${d.label} ${d.timeText} ${d.values.join(' / ')}`).join(', ');
 }
@@ -3403,6 +3484,8 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const tafProbConditions = source === 'TAF' ? tafWorst?.prob || null : null;
   const ceiling = source === 'TAF' ? tafWorst.ceiling : extractCeilingFt(segment?.clouds, segment?.vertVis);
   const vis = source === 'TAF' ? tafWorst.visibility : parseVisibilityToSM(segment?.visib);
+  const visRaw = source === 'TAF' ? tafWorst.visibilityRaw : segmentVisibilityRaw(segment);
+  const probVisRaw = source === 'TAF' ? tafProbConditions?.visibilityRaw ?? null : null;
   const wind = source === 'TAF' ? tafWorst.wind : extractWindFromSegment(segment);
   const obstruction = source === 'TAF'
     ? tafWorst.obstruction
@@ -3420,7 +3503,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const reasonBits = [];
   if (ceiling !== null) reasonBits.push(`Ceiling ${ceiling} ft`);
   if (ceiling === null && skyClear) reasonBits.push('SKC');
-  if (vis !== null) reasonBits.push(`Vis ${formatVisSm(vis)}`);
+  if (vis !== null) reasonBits.push(`Vis ${formatVisibilityDisplay(vis, visRaw)}`);
   if (wx && wx !== 'None reported') reasonBits.push(wx);
   if (!segment) reasonBits.push('No METAR/TAF available');
   const driversSummary = source === 'TAF'
@@ -3437,6 +3520,8 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     windowText,
     ceiling,
     visibility: vis,
+    visibilityRaw: visRaw,
+    visibilityDisplay: formatVisibilityDisplay(vis, visRaw),
     wind,
     obstruction,
     rules,
@@ -3445,6 +3530,10 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     wx,
     probFlag,
     probConditions: tafProbConditions,
+    probVisibilityRaw: probVisRaw,
+    probVisibilityDisplay: (tafProbConditions && tafProbConditions.visibility !== null && tafProbConditions.visibility !== undefined)
+      ? formatVisibilityDisplay(tafProbConditions.visibility, probVisRaw)
+      : '',
     tafIcons,
     summary: driversSummary || reasonBits.join(' · ') || 'No significant weather decoded'
   };
@@ -3476,16 +3565,17 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     const probCeilingText = (prob.ceiling !== null && prob.ceiling !== undefined)
       ? `${prob.ceiling} ft`
       : (prob.skyClear ? 'SKC' : '');
-    const probVisText = (prob.visibility !== null && prob.visibility !== undefined)
-      ? formatVisSm(prob.visibility)
-      : '';
+    const probVisText = a.probVisibilityDisplay
+      || ((prob.visibility !== null && prob.visibility !== undefined)
+        ? formatVisibilityDisplay(prob.visibility, prob.visibilityRaw ?? a.probVisibilityRaw)
+        : '');
     const probWindText = prob.wind ? formatWind(prob.wind) : '';
     const probObstructionText = prob.obstruction?.token ? prob.obstruction.token : '';
     const withProbSuffix = (baseText, probText) => probText ? `${baseText} (${probText})` : baseText;
     const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined)
       ? `${a.ceiling} ft`
       : (a.skyClear ? 'SKC' : 'No ceiling');
-    const visTxt = formatVisSm(a.visibility);
+    const visTxt = a.visibilityDisplay || formatVisibilityDisplay(a.visibility, a.visibilityRaw);
     const windTxt = formatWind(a.wind);
     const obstructionTxt = a.obstruction?.token ? a.obstruction.token : 'None reported';
     const ceilDisplay = withProbSuffix(ceilTxt, probCeilingText);
