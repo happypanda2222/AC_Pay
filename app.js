@@ -69,11 +69,7 @@ const HEALTH_MO = 58.80;
 const DIVIDEND_GROSS_UP = { eligible: 1.38, nonEligible: 1.15 };
 const CAPITAL_GAINS_INCLUSION = 0.5;
 const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
-const FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
-const FIN_SYNC_FILENAME = 'acpay-fin.json';
-const FIN_SYNC_GIST_API = 'https://api.github.com/gists/';
-const FIN_SYNC_TIMEOUT_MS = 10000;
-const FIN_SYNC_POLL_MS = 5 * 60 * 1000;
+const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const FIN_CONFIGS = [
   { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A320 Jetz', finStart: 225, finEnd: 225, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
@@ -1371,6 +1367,14 @@ function normalizeFinState(raw){
   return { items, updatedAt };
 }
 
+function purgeLegacyFinSyncSettings(){
+  try {
+    localStorage.removeItem(LEGACY_FIN_SYNC_SETTINGS_KEY);
+  } catch (err){
+    console.warn('Failed to clear legacy fin sync settings', err);
+  }
+}
+
 function loadCustomFinState(){
   try {
     const raw = localStorage.getItem(FIN_CUSTOM_STORAGE_KEY);
@@ -1399,7 +1403,6 @@ function persistCustomFinState(state){
 function saveCustomFinConfigs(next){
   const state = { items: next, updatedAt: Date.now() };
   persistCustomFinState(state);
-  queueFinSyncUpload();
 }
 
 function normalizeFinConfig(config){
@@ -1563,140 +1566,41 @@ function removeCustomFinConfig(fin){
   return true;
 }
 
-function loadFinSyncSettings(){
-  try{
-    const raw = localStorage.getItem(FIN_SYNC_SETTINGS_KEY);
-    if (!raw) return { gistId: '', token: '', file: FIN_SYNC_FILENAME };
-    const parsed = JSON.parse(raw);
-    const gistId = typeof parsed.gistId === 'string' ? parsed.gistId.trim() : '';
-    const token = typeof parsed.token === 'string' ? parsed.token.trim() : '';
-    const file = typeof parsed.file === 'string' && parsed.file.trim() ? parsed.file.trim() : FIN_SYNC_FILENAME;
-    return { gistId, token, file };
-  } catch (err){
-    console.warn('Failed to load fin sync settings', err);
-    return { gistId: '', token: '', file: FIN_SYNC_FILENAME };
-  }
-}
+const finSyncCapabilityProbe = {
+  backgroundSync: false,
+  periodicBackgroundSync: false,
+  backgroundFetch: false,
+  persistentStorage: false,
+  errors: []
+};
 
-function saveFinSyncSettings(settings){
-  const next = {
-    gistId: typeof settings.gistId === 'string' ? settings.gistId.trim() : '',
-    token: typeof settings.token === 'string' ? settings.token.trim() : '',
-    file: typeof settings.file === 'string' && settings.file.trim() ? settings.file.trim() : FIN_SYNC_FILENAME
-  };
-  try{
-    localStorage.setItem(FIN_SYNC_SETTINGS_KEY, JSON.stringify(next));
-  } catch (err){
-    console.warn('Failed to persist fin sync settings', err);
-  }
-  return next;
-}
-
-let finSyncSettings = saveFinSyncSettings(loadFinSyncSettings());
-let finSyncUploadPending = false;
-let finSyncTimer = null;
-let finSyncVisibilityBound = false;
-
-function withFinSyncTimeout(promise){
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FIN_SYNC_TIMEOUT_MS);
-  return Promise.race([
-    promise(controller),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Fin sync timed out')), FIN_SYNC_TIMEOUT_MS + 1000))
-  ]).finally(() => clearTimeout(timer));
-}
-
-async function fetchFinSyncRemote(){
-  if (!finSyncSettings.gistId) return null;
-  return withFinSyncTimeout(async (controller) => {
-    const headers = { 'Accept': 'application/vnd.github+json' };
-    if (finSyncSettings.token) headers['Authorization'] = `Bearer ${finSyncSettings.token}`;
-    const resp = await fetch(`${FIN_SYNC_GIST_API}${finSyncSettings.gistId}`, { headers, signal: controller.signal, cache: 'no-store' });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    const file = data?.files?.[finSyncSettings.file];
-    if (!file?.content) return null;
-    return JSON.parse(file.content);
-  }).catch(err => {
-    console.warn('Fin sync download failed', err);
-    return null;
-  });
-}
-
-async function pushFinSyncRemote(state){
-  if (!finSyncSettings.gistId || !finSyncSettings.token) return false;
-  const payload = {
-    files: {
-      [finSyncSettings.file]: { content: JSON.stringify(state, null, 2) }
+async function investigateBackgroundFinSync(){
+  const result = { ...finSyncCapabilityProbe, errors: [] };
+  if (!('serviceWorker' in navigator)){
+    result.errors.push('Service worker unavailable; background sync unsupported.');
+  } else {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      result.backgroundSync = typeof reg.sync === 'object';
+      result.periodicBackgroundSync = typeof reg.periodicSync === 'object';
+      result.backgroundFetch = typeof reg.backgroundFetch === 'object';
+    } catch (err){
+      result.errors.push(`Service worker readiness failed: ${err.message}`);
     }
-  };
-  return withFinSyncTimeout(async (controller) => {
-    const resp = await fetch(`${FIN_SYNC_GIST_API}${finSyncSettings.gistId}`, {
-      method: 'PATCH',
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${finSyncSettings.token}`
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return true;
-  }).catch(err => {
-    console.warn('Fin sync upload failed', err);
-    return false;
-  });
-}
-
-function setFinSyncStatus(message, isError = false){
-  if (!message) return;
-  const log = isError ? console.warn : console.info;
-  log(`Fin sync: ${message}`);
-}
-
-async function reconcileFinSync(){
-  if (!finSyncSettings.gistId) return;
-  const remoteState = await fetchFinSyncRemote();
-  if (!remoteState) return;
-  const normalized = normalizeFinState(remoteState);
-  if (normalized.updatedAt > customFinState.updatedAt){
-    persistCustomFinState(normalized);
-    refreshFinResults();
-    setFinSyncStatus('Fins updated from cloud.', false);
-  } else if (normalized.updatedAt < customFinState.updatedAt && finSyncSettings.token){
-    const pushed = await pushFinSyncRemote(customFinState);
-    setFinSyncStatus(pushed ? 'Cloud updated.' : 'Cloud update failed.', !pushed);
   }
-}
-
-function queueFinSyncUpload(){
-  if (!finSyncSettings.gistId || !finSyncSettings.token) return;
-  if (finSyncUploadPending) return;
-  finSyncUploadPending = true;
-  setTimeout(async () => {
-    finSyncUploadPending = false;
-    const pushed = await pushFinSyncRemote(customFinState);
-    setFinSyncStatus(pushed ? 'Cloud updated.' : 'Cloud update failed.', !pushed);
-  }, 500);
-}
-
-function startFinSyncBackground(){
-  if (!finSyncSettings.gistId) return;
-  reconcileFinSync();
-  if (!finSyncVisibilityBound){
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible'){
-        reconcileFinSync();
-      }
-    });
-    finSyncVisibilityBound = true;
+  if (navigator.storage?.persist){
+    try{
+      const persisted = await navigator.storage.persisted();
+      result.persistentStorage = persisted || await navigator.storage.persist();
+    } catch (err){
+      result.errors.push(`Storage persistence check failed: ${err.message}`);
+    }
+  } else {
+    result.errors.push('Persistent storage API unavailable.');
   }
-  if (finSyncTimer) clearInterval(finSyncTimer);
-  finSyncTimer = setInterval(() => {
-    if (document.visibilityState !== 'visible') return;
-    reconcileFinSync();
-  }, FIN_SYNC_POLL_MS);
+  window.__acpayFinSyncCapabilities = result;
+  console.info('Fin sync background capability probe', result);
+  return result;
 }
 
 const finDeleteState = { fin: null, outEl: null };
@@ -4766,6 +4670,7 @@ function startUtcClock(ids) {
 
 function init(){
   updateVersionBadgeFromSW();
+  purgeLegacyFinSyncSettings();
   startUtcClock([
     'legacy-utc-clock',
     'modern-utc-clock',
@@ -4905,7 +4810,7 @@ function init(){
   attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
   attachFinLookup({ inputId: 'fin-input', outId: 'fin-out' });
   attachFinLookup({ inputId: 'modern-fin-input', outId: 'modern-fin-out' });
-  startFinSyncBackground();
+  investigateBackgroundFinSync();
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does
