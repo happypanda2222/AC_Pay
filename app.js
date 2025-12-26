@@ -73,6 +73,7 @@ const FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const FIN_SYNC_FILENAME = 'acpay-fin.json';
 const FIN_SYNC_GIST_API = 'https://api.github.com/gists/';
 const FIN_SYNC_TIMEOUT_MS = 10000;
+const FIN_SYNC_POLL_MS = 5 * 60 * 1000;
 const FIN_CONFIGS = [
   { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A320 Jetz', finStart: 225, finEnd: 225, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
@@ -1593,7 +1594,8 @@ function saveFinSyncSettings(settings){
 
 let finSyncSettings = saveFinSyncSettings(loadFinSyncSettings());
 let finSyncUploadPending = false;
-let finSyncStatusEls = [];
+let finSyncTimer = null;
+let finSyncVisibilityBound = false;
 
 function withFinSyncTimeout(promise){
   const controller = new AbortController();
@@ -1648,12 +1650,9 @@ async function pushFinSyncRemote(state){
 }
 
 function setFinSyncStatus(message, isError = false){
-  finSyncStatusEls.forEach(el => {
-    if (!el) return;
-    el.textContent = message;
-    el.classList.toggle('wx-error', isError);
-    el.classList.toggle('muted-note', !isError);
-  });
+  if (!message) return;
+  const log = isError ? console.warn : console.info;
+  log(`Fin sync: ${message}`);
 }
 
 async function reconcileFinSync(){
@@ -1680,6 +1679,24 @@ function queueFinSyncUpload(){
     const pushed = await pushFinSyncRemote(customFinState);
     setFinSyncStatus(pushed ? 'Cloud updated.' : 'Cloud update failed.', !pushed);
   }, 500);
+}
+
+function startFinSyncBackground(){
+  if (!finSyncSettings.gistId) return;
+  reconcileFinSync();
+  if (!finSyncVisibilityBound){
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible'){
+        reconcileFinSync();
+      }
+    });
+    finSyncVisibilityBound = true;
+  }
+  if (finSyncTimer) clearInterval(finSyncTimer);
+  finSyncTimer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    reconcileFinSync();
+  }, FIN_SYNC_POLL_MS);
 }
 
 const finDeleteState = { fin: null, outEl: null };
@@ -1860,38 +1877,6 @@ function refreshFinResults(){
   if (modernFinOut){
     renderFinResult(modernFinOut, modernFinInput?.value?.trim() ?? '');
   }
-}
-
-function attachFinSyncForm({ formId, statusId }){
-  const form = document.getElementById(formId);
-  const statusEl = document.getElementById(statusId);
-  if (statusEl) finSyncStatusEls.push(statusEl);
-  if (!form || form.dataset.finSyncBound) return;
-  const gistId = form.querySelector('[data-fin-sync="gist"]');
-  const token = form.querySelector('[data-fin-sync="token"]');
-  const file = form.querySelector('[data-fin-sync="file"]');
-  const saveBtn = form.querySelector('[data-fin-sync-action="save"]');
-  const pullBtn = form.querySelector('[data-fin-sync-action="pull"]');
-  const applySettings = () => {
-    if (gistId) gistId.value = finSyncSettings.gistId;
-    if (token) token.value = finSyncSettings.token;
-    if (file) file.value = finSyncSettings.file;
-  };
-  applySettings();
-  saveBtn?.addEventListener('click', async () => {
-    const next = {
-      gistId: gistId?.value ?? '',
-      token: token?.value ?? '',
-      file: file?.value ?? FIN_SYNC_FILENAME
-    };
-    finSyncSettings = saveFinSyncSettings(next);
-    setFinSyncStatus(finSyncSettings.gistId ? 'Sync settings saved.' : 'Sync disabled.', false);
-    await reconcileFinSync();
-  });
-  pullBtn?.addEventListener('click', async () => {
-    await reconcileFinSync();
-  });
-  form.dataset.finSyncBound = 'true';
 }
 
 let currentLegacySubTab = 'annual';
@@ -4920,8 +4905,7 @@ function init(){
   attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
   attachFinLookup({ inputId: 'fin-input', outId: 'fin-out' });
   attachFinLookup({ inputId: 'modern-fin-input', outId: 'modern-fin-out' });
-  attachFinSyncForm({ formId: 'fin-sync-form', statusId: 'fin-sync-status' });
-  attachFinSyncForm({ formId: 'modern-fin-sync-form', statusId: 'modern-fin-sync-status' });
+  startFinSyncBackground();
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does
@@ -4929,7 +4913,6 @@ function init(){
   autoSelectDefaults();
   syncAdvancedRrsp(false);
   syncAdvancedRrsp(true);
-  reconcileFinSync();
   // Sensible placeholders for weather tab
   const depWx = document.getElementById('wx-dep'); if (depWx && !depWx.value) depWx.value = 'YWG';
   const arrWx = document.getElementById('wx-arr'); if (arrWx && !arrWx.value) arrWx.value = 'YYZ';
