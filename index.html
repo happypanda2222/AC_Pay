@@ -12,7 +12,17 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180-red.png">
   <title>AC Tools</title>
   <style>
-    :root{ --bg:#0b0c0f; --card:#141825; --muted:#9aa3b2; --acc:#0a84ff; --txt:#e9edf1; --mono:"Menlo",monospace; }
+    :root{
+      --bg:#0b0c0f;
+      --card:#141825;
+      --muted:#9aa3b2;
+      --acc:#0a84ff;
+      --txt:#e9edf1;
+      --mono:"Menlo",monospace;
+      --btn-primary:linear-gradient(135deg,#0a84ff,#6dd3ff);
+      --btn-primary-shadow:0 10px 26px rgba(0,0,0,.35);
+      --btn-primary-text:#0c1022;
+    }
     *{box-sizing:border-box}
     html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;overflow-x:hidden;}
     .wrap{
@@ -197,6 +207,11 @@
     .modern-hero h2{margin:0;font-size:20px;color:#0c1022}
     .modern-hero p{margin:4px 0 0 0;color:#0c1022;font-weight:600}
     .modern-hero-content{position:relative;z-index:2}
+    body.easter-red{
+      --btn-primary:linear-gradient(135deg,#ff3b30,#ff8a80);
+      --btn-primary-shadow:0 10px 26px rgba(255,59,48,.35);
+      --btn-primary-text:#1d0b0b;
+    }
     .badge-pill{background:rgba(0,0,0,0.12);color:#0c1022;border-radius:999px;padding:6px 10px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;font-size:11px}
     .modern-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:12px}
     @media(max-width:960px){.modern-grid{grid-template-columns:1fr}}
@@ -206,7 +221,7 @@
     .modern-controls{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
     .chip{padding:10px 12px;border-radius:12px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt);font-weight:700;display:flex;align-items:center;gap:8px}
     .modern-cta{display:flex;justify-content:flex-end;margin-top:12px}
-    .btn-primary{background:linear-gradient(135deg,#0a84ff,#6dd3ff);color:#0c1022;border:none;border-radius:12px;padding:14px 16px;font-weight:800;cursor:pointer;box-shadow:0 10px 26px rgba(0,0,0,.35)}
+    .btn-primary{background:var(--btn-primary);color:var(--btn-primary-text);border:none;border-radius:12px;padding:14px 16px;font-weight:800;cursor:pointer;box-shadow:var(--btn-primary-shadow)}
     .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:6px}
     .metric-card{background:#0c101a;border:1px solid #1f2633;border-radius:12px;padding:12px}
     .metric-label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-bottom:4px}

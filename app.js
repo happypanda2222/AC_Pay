@@ -4690,6 +4690,7 @@ function init(){
     const toggleBanner = () => {
       const isRed = heroBanner.classList.toggle('is-red');
       heroBanner.setAttribute('aria-pressed', isRed ? 'true' : 'false');
+      document.body.classList.toggle('easter-red', isRed);
     };
     heroBanner.addEventListener('click', toggleBanner);
     heroBanner.addEventListener('keydown', (e) => {
