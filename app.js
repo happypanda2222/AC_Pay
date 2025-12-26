@@ -1636,6 +1636,7 @@ function renderFinResult(outEl, finValue){
     cards.push({ label: 'Bunks', value: row.ofcr });
   }
   const isCustom = Boolean(findCustomFinConfig(fin));
+  const deleteDisabled = isCustom ? '' : 'disabled aria-disabled="true"';
   const notesText = typeof row.notes === 'string' ? row.notes.trim() : '';
   const notesBody = notesText
     ? `<div class="fin-notes-body">${escapeHtml(notesText).replace(/\n/g, '<br>')}</div>`
@@ -1656,7 +1657,7 @@ function renderFinResult(outEl, finValue){
     </div>
     <div class="fin-actions">
       <button type="button" class="btn" data-fin-action="edit">Edit fin</button>
-      ${isCustom ? '<button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete">Delete fin</button>' : ''}
+      <button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete" ${deleteDisabled}>Delete fin</button>
     </div>
     ${renderFinForm(finFormValuesFromRow(row, fin))}
   `;
