@@ -1394,10 +1394,12 @@ function normalizeFinConfig(config){
   const fdjs = Number(config.fdjs);
   const ofcr = Number(config.ofcr);
   const ccjs = Number(config.ccjs);
+  const notesRaw = typeof config.notes === 'string' ? config.notes : '';
+  const notes = notesRaw.trim();
   if (!type) return null;
   const numbers = [finStart, finEnd, j, o, y, fdjs, ofcr, ccjs];
   if (numbers.some(n => !Number.isFinite(n))) return null;
-  return { type, finStart, finEnd, j, o, y, fdjs, ofcr, ccjs };
+  return { type, finStart, finEnd, j, o, y, fdjs, ofcr, ccjs, notes };
 }
 
 function getFinConfigs(){
@@ -1437,7 +1439,8 @@ function finFormValuesFromRow(row, fin){
     y: Number.isFinite(row?.y) ? row.y : 0,
     fdjs: Number.isFinite(row?.fdjs) ? row.fdjs : 0,
     ofcr: Number.isFinite(row?.ofcr) ? row.ofcr : 0,
-    ccjs: Number.isFinite(row?.ccjs) ? row.ccjs : 0
+    ccjs: Number.isFinite(row?.ccjs) ? row.ccjs : 0,
+    notes: typeof row?.notes === 'string' ? row.notes : ''
   };
 }
 
@@ -1481,6 +1484,10 @@ function renderFinForm(values){
           <label>Cabin jumps</label>
           <input type="number" min="0" inputmode="numeric" data-fin-field="ccjs" value="${values.ccjs}">
         </div>
+        <div class="fin-notes-field">
+          <label>Notes (optional)</label>
+          <textarea data-fin-field="notes" rows="3" maxlength="2000" placeholder="Add reference info or reminders for this fin">${escapeHtml(values.notes)}</textarea>
+        </div>
       </div>
       <div class="fin-form-actions">
         <button type="button" class="btn" data-fin-action="save">Save fin</button>
@@ -1501,7 +1508,8 @@ function getFinFormData(form){
     y: Number(getValue('y')),
     fdjs: Number(getValue('fdjs')),
     ofcr: Number(getValue('ofcr')),
-    ccjs: Number(getValue('ccjs'))
+    ccjs: Number(getValue('ccjs')),
+    notes: getValue('notes').trim()
   };
 }
 
@@ -1513,6 +1521,8 @@ function validateFinConfig(config){
   for (const field of numericFields){
     if (!Number.isFinite(config[field])) return 'Enter numeric values for all fields.';
   }
+  const notes = String(config.notes ?? '');
+  if (notes.length > 2000) return 'Notes must be 2000 characters or fewer.';
   return null;
 }
 
@@ -1626,6 +1636,10 @@ function renderFinResult(outEl, finValue){
     cards.push({ label: 'Bunks', value: row.ofcr });
   }
   const isCustom = Boolean(findCustomFinConfig(fin));
+  const notesText = typeof row.notes === 'string' ? row.notes.trim() : '';
+  const notesBody = notesText
+    ? `<div class="fin-notes-body">${escapeHtml(notesText).replace(/\n/g, '<br>')}</div>`
+    : '<div class="fin-notes-body muted-note">No notes added for this fin.</div>';
   outEl.innerHTML = `
     <div class="metric-grid">
       ${cards.map(card => `
@@ -1636,6 +1650,10 @@ function renderFinResult(outEl, finValue){
       `).join('')}
     </div>
     <div class="muted-note">Fin range: ${finRangeLabel(row)}</div>
+    <div class="fin-notes-card">
+      <h4>Notes</h4>
+      ${notesBody}
+    </div>
     <div class="fin-actions">
       <button type="button" class="btn" data-fin-action="edit">Edit fin</button>
       ${isCustom ? '<button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete">Delete fin</button>' : ''}
