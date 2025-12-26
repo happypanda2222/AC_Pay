@@ -69,6 +69,10 @@ const HEALTH_MO = 58.80;
 const DIVIDEND_GROSS_UP = { eligible: 1.38, nonEligible: 1.15 };
 const CAPITAL_GAINS_INCLUSION = 0.5;
 const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
+const FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
+const FIN_SYNC_FILENAME = 'acpay-fin.json';
+const FIN_SYNC_GIST_API = 'https://api.github.com/gists/';
+const FIN_SYNC_TIMEOUT_MS = 10000;
 const FIN_CONFIGS = [
   { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A320 Jetz', finStart: 225, finEnd: 225, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
@@ -1357,30 +1361,44 @@ function isWidebodyType(type){
   return /^(B767|777|787|A330)/.test(type);
 }
 
-function loadCustomFinConfigs(){
+function normalizeFinState(raw){
+  if (!raw) return { items: [], updatedAt: 0 };
+  if (Array.isArray(raw)) return { items: raw.map(normalizeFinConfig).filter(Boolean), updatedAt: 0 };
+  if (typeof raw !== 'object') return { items: [], updatedAt: 0 };
+  const items = Array.isArray(raw.items) ? raw.items.map(normalizeFinConfig).filter(Boolean) : [];
+  const updatedAt = Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0;
+  return { items, updatedAt };
+}
+
+function loadCustomFinState(){
   try {
     const raw = localStorage.getItem(FIN_CUSTOM_STORAGE_KEY);
-    if (!raw) return [];
+    if (!raw) return { items: [], updatedAt: 0 };
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map(normalizeFinConfig)
-      .filter(Boolean);
+    return normalizeFinState(parsed);
   } catch (err){
     console.warn('Failed to load custom fin configs', err);
-    return [];
+    return { items: [], updatedAt: 0 };
   }
 }
 
-let customFinConfigs = loadCustomFinConfigs();
+let customFinState = loadCustomFinState();
+let customFinConfigs = customFinState.items.slice();
 
-function saveCustomFinConfigs(next){
-  customFinConfigs = next;
+function persistCustomFinState(state){
+  customFinState = state;
+  customFinConfigs = state.items.slice();
   try {
-    localStorage.setItem(FIN_CUSTOM_STORAGE_KEY, JSON.stringify(next));
+    localStorage.setItem(FIN_CUSTOM_STORAGE_KEY, JSON.stringify(state));
   } catch (err){
     console.warn('Failed to save custom fin configs', err);
   }
+}
+
+function saveCustomFinConfigs(next){
+  const state = { items: next, updatedAt: Date.now() };
+  persistCustomFinState(state);
+  queueFinSyncUpload();
 }
 
 function normalizeFinConfig(config){
@@ -1542,6 +1560,126 @@ function removeCustomFinConfig(fin){
   if (next.length === customFinConfigs.length) return false;
   saveCustomFinConfigs(next);
   return true;
+}
+
+function loadFinSyncSettings(){
+  try{
+    const raw = localStorage.getItem(FIN_SYNC_SETTINGS_KEY);
+    if (!raw) return { gistId: '', token: '', file: FIN_SYNC_FILENAME };
+    const parsed = JSON.parse(raw);
+    const gistId = typeof parsed.gistId === 'string' ? parsed.gistId.trim() : '';
+    const token = typeof parsed.token === 'string' ? parsed.token.trim() : '';
+    const file = typeof parsed.file === 'string' && parsed.file.trim() ? parsed.file.trim() : FIN_SYNC_FILENAME;
+    return { gistId, token, file };
+  } catch (err){
+    console.warn('Failed to load fin sync settings', err);
+    return { gistId: '', token: '', file: FIN_SYNC_FILENAME };
+  }
+}
+
+function saveFinSyncSettings(settings){
+  const next = {
+    gistId: typeof settings.gistId === 'string' ? settings.gistId.trim() : '',
+    token: typeof settings.token === 'string' ? settings.token.trim() : '',
+    file: typeof settings.file === 'string' && settings.file.trim() ? settings.file.trim() : FIN_SYNC_FILENAME
+  };
+  try{
+    localStorage.setItem(FIN_SYNC_SETTINGS_KEY, JSON.stringify(next));
+  } catch (err){
+    console.warn('Failed to persist fin sync settings', err);
+  }
+  return next;
+}
+
+let finSyncSettings = saveFinSyncSettings(loadFinSyncSettings());
+let finSyncUploadPending = false;
+let finSyncStatusEls = [];
+
+function withFinSyncTimeout(promise){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FIN_SYNC_TIMEOUT_MS);
+  return Promise.race([
+    promise(controller),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Fin sync timed out')), FIN_SYNC_TIMEOUT_MS + 1000))
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function fetchFinSyncRemote(){
+  if (!finSyncSettings.gistId) return null;
+  return withFinSyncTimeout(async (controller) => {
+    const headers = { 'Accept': 'application/vnd.github+json' };
+    if (finSyncSettings.token) headers['Authorization'] = `Bearer ${finSyncSettings.token}`;
+    const resp = await fetch(`${FIN_SYNC_GIST_API}${finSyncSettings.gistId}`, { headers, signal: controller.signal, cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const file = data?.files?.[finSyncSettings.file];
+    if (!file?.content) return null;
+    return JSON.parse(file.content);
+  }).catch(err => {
+    console.warn('Fin sync download failed', err);
+    return null;
+  });
+}
+
+async function pushFinSyncRemote(state){
+  if (!finSyncSettings.gistId || !finSyncSettings.token) return false;
+  const payload = {
+    files: {
+      [finSyncSettings.file]: { content: JSON.stringify(state, null, 2) }
+    }
+  };
+  return withFinSyncTimeout(async (controller) => {
+    const resp = await fetch(`${FIN_SYNC_GIST_API}${finSyncSettings.gistId}`, {
+      method: 'PATCH',
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${finSyncSettings.token}`
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return true;
+  }).catch(err => {
+    console.warn('Fin sync upload failed', err);
+    return false;
+  });
+}
+
+function setFinSyncStatus(message, isError = false){
+  finSyncStatusEls.forEach(el => {
+    if (!el) return;
+    el.textContent = message;
+    el.classList.toggle('wx-error', isError);
+    el.classList.toggle('muted-note', !isError);
+  });
+}
+
+async function reconcileFinSync(){
+  if (!finSyncSettings.gistId) return;
+  const remoteState = await fetchFinSyncRemote();
+  if (!remoteState) return;
+  const normalized = normalizeFinState(remoteState);
+  if (normalized.updatedAt > customFinState.updatedAt){
+    persistCustomFinState(normalized);
+    refreshFinResults();
+    setFinSyncStatus('Fins updated from cloud.', false);
+  } else if (normalized.updatedAt < customFinState.updatedAt && finSyncSettings.token){
+    const pushed = await pushFinSyncRemote(customFinState);
+    setFinSyncStatus(pushed ? 'Cloud updated.' : 'Cloud update failed.', !pushed);
+  }
+}
+
+function queueFinSyncUpload(){
+  if (!finSyncSettings.gistId || !finSyncSettings.token) return;
+  if (finSyncUploadPending) return;
+  finSyncUploadPending = true;
+  setTimeout(async () => {
+    finSyncUploadPending = false;
+    const pushed = await pushFinSyncRemote(customFinState);
+    setFinSyncStatus(pushed ? 'Cloud updated.' : 'Cloud update failed.', !pushed);
+  }, 500);
 }
 
 const finDeleteState = { fin: null, outEl: null };
@@ -1709,6 +1847,51 @@ function attachFinLookup({ inputId, outId }){
     out.dataset.finBound = 'true';
   }
   update();
+}
+
+function refreshFinResults(){
+  const finOut = document.getElementById('fin-out');
+  const finInput = document.getElementById('fin-input');
+  if (finOut){
+    renderFinResult(finOut, finInput?.value?.trim() ?? '');
+  }
+  const modernFinOut = document.getElementById('modern-fin-out');
+  const modernFinInput = document.getElementById('modern-fin-input');
+  if (modernFinOut){
+    renderFinResult(modernFinOut, modernFinInput?.value?.trim() ?? '');
+  }
+}
+
+function attachFinSyncForm({ formId, statusId }){
+  const form = document.getElementById(formId);
+  const statusEl = document.getElementById(statusId);
+  if (statusEl) finSyncStatusEls.push(statusEl);
+  if (!form || form.dataset.finSyncBound) return;
+  const gistId = form.querySelector('[data-fin-sync="gist"]');
+  const token = form.querySelector('[data-fin-sync="token"]');
+  const file = form.querySelector('[data-fin-sync="file"]');
+  const saveBtn = form.querySelector('[data-fin-sync-action="save"]');
+  const pullBtn = form.querySelector('[data-fin-sync-action="pull"]');
+  const applySettings = () => {
+    if (gistId) gistId.value = finSyncSettings.gistId;
+    if (token) token.value = finSyncSettings.token;
+    if (file) file.value = finSyncSettings.file;
+  };
+  applySettings();
+  saveBtn?.addEventListener('click', async () => {
+    const next = {
+      gistId: gistId?.value ?? '',
+      token: token?.value ?? '',
+      file: file?.value ?? FIN_SYNC_FILENAME
+    };
+    finSyncSettings = saveFinSyncSettings(next);
+    setFinSyncStatus(finSyncSettings.gistId ? 'Sync settings saved.' : 'Sync disabled.', false);
+    await reconcileFinSync();
+  });
+  pullBtn?.addEventListener('click', async () => {
+    await reconcileFinSync();
+  });
+  form.dataset.finSyncBound = 'true';
 }
 
 let currentLegacySubTab = 'annual';
@@ -4737,6 +4920,8 @@ function init(){
   attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
   attachFinLookup({ inputId: 'fin-input', outId: 'fin-out' });
   attachFinLookup({ inputId: 'modern-fin-input', outId: 'modern-fin-out' });
+  attachFinSyncForm({ formId: 'fin-sync-form', statusId: 'fin-sync-status' });
+  attachFinSyncForm({ formId: 'modern-fin-sync-form', statusId: 'modern-fin-sync-status' });
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does
@@ -4744,6 +4929,7 @@ function init(){
   autoSelectDefaults();
   syncAdvancedRrsp(false);
   syncAdvancedRrsp(true);
+  reconcileFinSync();
   // Sensible placeholders for weather tab
   const depWx = document.getElementById('wx-dep'); if (depWx && !depWx.value) depWx.value = 'YWG';
   const arrWx = document.getElementById('wx-arr'); if (arrWx && !arrWx.value) arrWx.value = 'YYZ';
