@@ -289,6 +289,18 @@
     .note-list{margin:8px 0 0 18px;padding:0;color:var(--muted);font-size:13px}
     .note-list li{margin:4px 0}
     .fin-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+    .fin-viewer{margin-top:8px}
+    .fin-card-grid{margin-top:8px}
+    .fin-card .fin-field-edit{display:none;margin-top:8px}
+    .fin-viewer.is-editing .fin-field-display{display:none}
+    .fin-viewer.is-editing .fin-field-edit{display:block}
+    .fin-edit-only{display:none}
+    .fin-viewer.is-editing .fin-edit-only{display:block}
+    .fin-viewer.is-editing .fin-card{border-color:var(--acc)}
+    .fin-seat-inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:8px;align-items:end}
+    .fin-seat-inputs label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+    .fin-seat-label{font-weight:700;color:var(--muted)}
+    .fin-notes-card .fin-field-edit textarea{width:100%}
     .fin-form{margin-top:12px}
     .fin-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
     .fin-notes-field{grid-column:1/-1}

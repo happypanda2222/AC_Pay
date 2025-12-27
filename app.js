@@ -1908,6 +1908,37 @@ function renderFinForm(values){
   `;
 }
 
+function renderFinSeatInputs(values){
+  return `
+    <div class="fin-seat-inputs">
+      <label>
+        <span class="fin-seat-label">J</span>
+        <input type="number" min="0" inputmode="numeric" data-fin-field="j" value="${values.j}">
+      </label>
+      <label>
+        <span class="fin-seat-label">O</span>
+        <input type="number" min="0" inputmode="numeric" data-fin-field="o" value="${values.o}">
+      </label>
+      <label>
+        <span class="fin-seat-label">Y</span>
+        <input type="number" min="0" inputmode="numeric" data-fin-field="y" value="${values.y}">
+      </label>
+    </div>
+  `;
+}
+
+function renderFinCard({ label, display, edit, editOnly = false }){
+  return `
+    <div class="metric-card fin-card ${editOnly ? 'fin-edit-only' : ''}">
+      <div class="metric-label">${label}</div>
+      <div class="metric-value fin-field-display">${display}</div>
+      <div class="fin-field-edit">
+        ${edit}
+      </div>
+    </div>
+  `;
+}
+
 function getFinFormData(form){
   const getValue = (field) => form.querySelector(`[data-fin-field="${field}"]`)?.value ?? '';
   const finStart = Number(getValue('finStart'));
@@ -2079,12 +2110,18 @@ function closeFinDeleteOverlay(){
 
 function renderFinResult(outEl, finValue){
   if (!outEl) return;
+  const previousFin = Number(outEl.dataset.finCurrent ?? NaN);
+  const fin = Number(finValue);
+  const sameFin = Number.isFinite(fin) && Number.isFinite(previousFin) && previousFin === fin;
+  const editing = sameFin && outEl.dataset.finEditing === 'true';
+  outEl.dataset.finCurrent = Number.isFinite(fin) ? String(fin) : '';
   if (finValue === '' || finValue === null || finValue === undefined){
+    outEl.dataset.finEditing = 'false';
     outEl.innerHTML = '<div class="muted-note">Enter a fin to see configuration details.</div>';
     return;
   }
-  const fin = Number(finValue);
   if (!Number.isFinite(fin)){
+    outEl.dataset.finEditing = 'false';
     outEl.innerHTML = '<div class="wx-error">Enter a valid fin number.</div>';
     return;
   }
@@ -2093,6 +2130,7 @@ function renderFinResult(outEl, finValue){
   const isDeletedFin = Boolean(customConfig?.deleted);
   const coreRow = FIN_CONFIGS.find(r => fin >= r.finStart && fin <= r.finEnd) || null;
   if (!row){
+    outEl.dataset.finEditing = 'false';
     const restoreButton = isDeletedFin ? '<button type="button" class="btn btn-secondary" data-fin-action="restore">Restore fin</button>' : '';
     const message = isDeletedFin
       ? `<div class="wx-error">This fin was deleted from your device.</div>`
@@ -2107,40 +2145,77 @@ function renderFinResult(outEl, finValue){
     `;
     return;
   }
+  outEl.dataset.finEditing = editing ? 'true' : 'false';
+  const values = finFormValuesFromRow(row, fin);
   const seats = `${row.j}/${row.o}/${row.y}`;
   const cards = [
-    { label: 'Aircraft type', value: row.type },
-    { label: 'FD Jumps', value: row.fdjs },
-    { label: 'Cabin Jumps', value: row.ccjs },
-    { label: 'Seats (J/O/Y)', value: seats }
+    renderFinCard({
+      label: 'Aircraft type',
+      display: escapeHtml(values.type),
+      edit: `<input type="text" inputmode="text" data-fin-field="type" value="${escapeHtml(values.type)}">`
+    }),
+    renderFinCard({
+      label: 'Fin number',
+      display: `${fin}`,
+      edit: `<input type="number" min="1" inputmode="numeric" data-fin-field="finStart" value="${values.finStart}">`,
+      editOnly: false
+    }),
+    renderFinCard({
+      label: 'FD Jumps',
+      display: `${row.fdjs}`,
+      edit: `<input type="number" min="0" inputmode="numeric" data-fin-field="fdjs" value="${values.fdjs}">`
+    }),
+    renderFinCard({
+      label: 'Cabin Jumps',
+      display: `${row.ccjs}`,
+      edit: `<input type="number" min="0" inputmode="numeric" data-fin-field="ccjs" value="${values.ccjs}">`
+    }),
+    renderFinCard({
+      label: 'Seats (J/O/Y)',
+      display: seats,
+      edit: renderFinSeatInputs(values)
+    })
   ];
-  if (isWidebodyType(row.type)){
-    cards.push({ label: 'Bunks', value: row.ofcr });
+  if (isWidebodyType(row.type) || editing){
+    cards.push(renderFinCard({
+      label: 'Bunks',
+      display: `${row.ofcr}`,
+      edit: `<input type="number" min="0" inputmode="numeric" data-fin-field="ofcr" value="${values.ofcr}">`,
+      editOnly: !isWidebodyType(row.type)
+    }));
   }
-  const isCustom = Boolean(customConfig && !customConfig.deleted);
   const deleteDisabled = '';
   const notesText = typeof row.notes === 'string' ? row.notes.trim() : '';
   const notesBody = notesText
     ? `<div class="fin-notes-body">${escapeHtml(notesText).replace(/\n/g, '<br>')}</div>`
     : '<div class="fin-notes-body muted-note">No notes added for this fin.</div>';
-  outEl.innerHTML = `
-    <div class="metric-grid">
-      ${cards.map(card => `
-        <div class="metric-card">
-          <div class="metric-label">${card.label}</div>
-          <div class="metric-value">${card.value}</div>
-        </div>
-      `).join('')}
-    </div>
-    <div class="fin-notes-card">
-      <h4>Notes</h4>
-      ${notesBody}
-    </div>
-    <div class="fin-actions">
+  const actions = editing
+    ? `
+      <button type="button" class="btn" data-fin-action="save">Save fin</button>
+      <button type="button" class="btn btn-secondary" data-fin-action="cancel">Cancel</button>
+      <button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete" ${deleteDisabled}>Delete fin</button>
+    `
+    : `
       <button type="button" class="btn" data-fin-action="edit">Edit fin</button>
       <button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete" ${deleteDisabled}>Delete fin</button>
+    `;
+  outEl.innerHTML = `
+    <div class="fin-viewer ${editing ? 'is-editing' : ''}" data-fin-form>
+      <div class="metric-grid fin-card-grid">
+        ${cards.join('')}
+      </div>
+      <div class="fin-notes-card fin-card">
+        <h4>Notes</h4>
+        <div class="fin-field-display">${notesBody}</div>
+        <div class="fin-field-edit">
+          <textarea data-fin-field="notes" rows="3" maxlength="2000" placeholder="Add reference info or reminders for this fin">${escapeHtml(values.notes)}</textarea>
+        </div>
+      </div>
+      <div class="fin-actions">
+        ${actions}
+      </div>
+      <div class="wx-error hidden" data-fin-error></div>
     </div>
-    ${renderFinForm(finFormValuesFromRow(row, fin))}
   `;
 }
 
@@ -2163,16 +2238,29 @@ function attachFinLookup({ inputId, outId }){
       if (!form) return;
       const errorEl = form.querySelector('[data-fin-error]');
       if (errorEl) errorEl.classList.add('hidden');
-      if (action === 'add' || action === 'edit'){
+      if (action === 'add'){
         form.classList.remove('hidden');
         return;
       }
+      if (action === 'edit'){
+        out.dataset.finEditing = 'true';
+        renderFinResult(out, finValue);
+        out.querySelector('[data-fin-field="type"]')?.focus();
+        return;
+      }
+      if (action === 'cancel'){
+        out.dataset.finEditing = 'false';
+        renderFinResult(out, finValue);
+        return;
+      }
       if (action === 'restore'){
+        out.dataset.finEditing = 'false';
         removeCustomFinConfig(fin);
         renderFinResult(out, finValue);
         return;
       }
       if (action === 'delete'){
+        out.dataset.finEditing = 'false';
         const custom = findCustomFinConfig(fin);
         const isCustom = Boolean(custom && !custom.deleted);
         openFinDeleteOverlay(fin, { isCustom });
@@ -2189,6 +2277,7 @@ function attachFinLookup({ inputId, outId }){
           return;
         }
         upsertCustomFinConfig(data, fin);
+        out.dataset.finEditing = 'false';
         renderFinResult(out, finValue);
       }
     });
