@@ -71,7 +71,27 @@ const CAPITAL_GAINS_INCLUSION = 0.5;
 const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
 const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
-const FIN_CONFIGS = [
+
+function expandFinConfig(config){
+  if (!config) return [];
+  const start = Number(config.finStart);
+  const end = Number.isFinite(config.finEnd) ? Number(config.finEnd) : start;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+  const finStart = Math.min(start, end);
+  const finEnd = Math.max(start, end);
+  const entries = [];
+  for (let fin = finStart; fin <= finEnd; fin += 1){
+    entries.push({ ...config, finStart: fin, finEnd: fin });
+  }
+  return entries;
+}
+
+function expandFinConfigList(list){
+  if (!Array.isArray(list)) return [];
+  return list.flatMap(expandFinConfig);
+}
+
+const FIN_CONFIGS = expandFinConfigList([
   { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A320 Jetz', finStart: 225, finEnd: 225, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
   { type: 'A320 Jetz', finStart: 226, finEnd: 226, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
@@ -171,7 +191,7 @@ const FIN_CONFIGS = [
   { type: 'A330 TAP', finStart: 946, finEnd: 946, j: 30, o: 0, y: 255, fdjs: 2, ofcr: 0, ccjs: 13 },
   { type: 'A330 Dream', finStart: 947, finEnd: 947, j: 32, o: 24, y: 241, fdjs: 2, ofcr: 0, ccjs: 11 },
   { type: 'A330 TAP', finStart: 948, finEnd: 950, j: 30, o: 0, y: 255, fdjs: 2, ofcr: 0, ccjs: 13 }
-];
+]);
 const FDP_MAX_TABLE = [
   { start: 0, end: 239, label: '00:00-03:59', max14: 9, max56: 9, max14Over4: 8, max56Over4: 8 },
   { start: 240, end: 299, label: '04:00-04:59', max14: 10, max56: 9, max14Over4: 9, max56Over4: 8 },
@@ -1361,9 +1381,11 @@ function isWidebodyType(type){
 
 function normalizeFinState(raw){
   if (!raw) return { items: [], updatedAt: 0 };
-  if (Array.isArray(raw)) return { items: raw.map(normalizeFinConfig).filter(Boolean), updatedAt: 0 };
+  if (Array.isArray(raw)) return { items: expandFinConfigList(raw.map(normalizeFinConfig).filter(Boolean)), updatedAt: 0 };
   if (typeof raw !== 'object') return { items: [], updatedAt: 0 };
-  const items = Array.isArray(raw.items) ? raw.items.map(normalizeFinConfig).filter(Boolean) : [];
+  const items = Array.isArray(raw.items)
+    ? expandFinConfigList(raw.items.map(normalizeFinConfig).filter(Boolean))
+    : [];
   const updatedAt = Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0;
   return { items, updatedAt };
 }
@@ -1434,8 +1456,9 @@ function saveCustomFinConfigs(next){
 function normalizeFinConfig(config){
   if (!config) return null;
   const finStart = Number(config.finStart);
-  const finEnd = Number(config.finEnd);
-  if (!Number.isFinite(finStart) || !Number.isFinite(finEnd) || finStart > finEnd) return null;
+  const finEndRaw = Number(config.finEnd);
+  const finEnd = Number.isFinite(finEndRaw) ? finEndRaw : finStart;
+  if (!Number.isFinite(finStart) || !Number.isFinite(finEnd)) return null;
   const deleted = config.deleted === true;
   const type = String(config.type ?? '').trim();
   if (deleted){
@@ -1807,7 +1830,6 @@ function finFormValuesFromRow(row, fin){
   return {
     type: row?.type ?? '',
     finStart: Number.isFinite(row?.finStart) ? row.finStart : fin,
-    finEnd: Number.isFinite(row?.finEnd) ? row.finEnd : fin,
     j: Number.isFinite(row?.j) ? row.j : 0,
     o: Number.isFinite(row?.o) ? row.o : 0,
     y: Number.isFinite(row?.y) ? row.y : 0,
@@ -1827,12 +1849,8 @@ function renderFinForm(values){
           <input type="text" inputmode="text" data-fin-field="type" value="${escapeHtml(values.type)}">
         </div>
         <div>
-          <label>Fin start</label>
+          <label>Fin number</label>
           <input type="number" min="1" inputmode="numeric" data-fin-field="finStart" value="${values.finStart}">
-        </div>
-        <div>
-          <label>Fin end</label>
-          <input type="number" min="1" inputmode="numeric" data-fin-field="finEnd" value="${values.finEnd}">
         </div>
         <div>
           <label>J seats</label>
@@ -1873,10 +1891,11 @@ function renderFinForm(values){
 
 function getFinFormData(form){
   const getValue = (field) => form.querySelector(`[data-fin-field="${field}"]`)?.value ?? '';
+  const finStart = Number(getValue('finStart'));
   return {
     type: getValue('type'),
-    finStart: Number(getValue('finStart')),
-    finEnd: Number(getValue('finEnd')),
+    finStart,
+    finEnd: finStart,
     j: Number(getValue('j')),
     o: Number(getValue('o')),
     y: Number(getValue('y')),
@@ -1889,8 +1908,8 @@ function getFinFormData(form){
 
 function validateFinConfig(config){
   if (!String(config.type ?? '').trim()) return 'Enter an aircraft type.';
-  if (!Number.isFinite(config.finStart) || !Number.isFinite(config.finEnd)) return 'Enter a valid fin range.';
-  if (config.finStart > config.finEnd) return 'Fin start must be less than or equal to fin end.';
+  if (!Number.isFinite(config.finStart)) return 'Enter a valid fin number.';
+  if (config.finStart <= 0) return 'Fin must be at least 1.';
   const numericFields = ['j', 'o', 'y', 'fdjs', 'ofcr', 'ccjs'];
   for (const field of numericFields){
     if (!Number.isFinite(config[field])) return 'Enter numeric values for all fields.';
