@@ -2874,6 +2874,92 @@ function attachTimeConverter({ airportId, localId, utcId, noteId }){
   });
 }
 
+function attachAirportToAirportConverter({ fromAirportId, toAirportId, fromTimeId, toTimeId, noteId }){
+  const fromAirportEl = document.getElementById(fromAirportId);
+  const toAirportEl = document.getElementById(toAirportId);
+  const fromTimeEl = document.getElementById(fromTimeId);
+  const toTimeEl = document.getElementById(toTimeId);
+  const noteEl = noteId ? document.getElementById(noteId) : null;
+  if (!fromAirportEl || !toAirportEl || !fromTimeEl || !toTimeEl) return;
+  const defaultNote = noteEl?.textContent || '';
+  let lastEdited = 'from';
+  let isUpdating = false;
+
+  const resetNote = () => {
+    if (noteEl) noteEl.textContent = defaultNote;
+  };
+
+  const setError = (err) => {
+    if (noteEl) noteEl.textContent = err?.message || 'Unable to convert time.';
+  };
+
+  const updateOpposite = async (source) => {
+    if (isUpdating) return;
+    isUpdating = true;
+    try {
+      const sourceTimeEl = source === 'from' ? fromTimeEl : toTimeEl;
+      const targetTimeEl = source === 'from' ? toTimeEl : fromTimeEl;
+      const sourceAirportEl = source === 'from' ? fromAirportEl : toAirportEl;
+      const targetAirportEl = source === 'from' ? toAirportEl : fromAirportEl;
+
+      const sourceMinutes = parseTimeToMinutes(sourceTimeEl.value);
+      if (!Number.isFinite(sourceMinutes)){
+        targetTimeEl.value = '';
+        resetNote();
+        return;
+      }
+
+      const [sourceTz, targetTz] = await Promise.all([
+        resolveAirportTimeZone(sourceAirportEl.value, 'from'),
+        resolveAirportTimeZone(targetAirportEl.value, 'to')
+      ]);
+      const now = new Date();
+      const sourceOffset = getTimeZoneOffsetMinutes(sourceTz, now);
+      const targetOffset = getTimeZoneOffsetMinutes(targetTz, now);
+      const utcMinutes = sourceMinutes - sourceOffset;
+      const targetMinutes = utcMinutes + targetOffset;
+      targetTimeEl.value = formatMinutesToTime(targetMinutes);
+      resetNote();
+    } catch (err) {
+      const targetTimeEl = source === 'from' ? toTimeEl : fromTimeEl;
+      targetTimeEl.value = '';
+      setError(err);
+    } finally {
+      isUpdating = false;
+    }
+  };
+
+  const reapply = () => updateOpposite(lastEdited);
+
+  fromTimeEl.addEventListener('input', () => {
+    lastEdited = 'from';
+    updateOpposite('from');
+  });
+  toTimeEl.addEventListener('input', () => {
+    lastEdited = 'to';
+    updateOpposite('to');
+  });
+  fromAirportEl.addEventListener('input', reapply);
+  toAirportEl.addEventListener('input', reapply);
+}
+
+function initTimeConverterModeSwitch({ selectId, utcGroupId, otherGroupId, noteId }){
+  const selectEl = document.getElementById(selectId);
+  const utcGroup = document.getElementById(utcGroupId);
+  const otherGroup = document.getElementById(otherGroupId);
+  const noteEl = noteId ? document.getElementById(noteId) : null;
+  const defaultNote = noteEl?.textContent || '';
+  if (!selectEl || !utcGroup || !otherGroup) return;
+  const apply = () => {
+    const mode = selectEl.value === 'other' ? 'other' : 'utc';
+    utcGroup.classList.toggle('hidden', mode !== 'utc');
+    otherGroup.classList.toggle('hidden', mode !== 'other');
+    if (noteEl) noteEl.textContent = defaultNote;
+  };
+  selectEl.addEventListener('change', apply);
+  apply();
+}
+
 function formatDayOffsetLabel(dayOffset){
   if (!Number.isFinite(dayOffset) || dayOffset === 0) return 'Same day';
   const abs = Math.abs(dayOffset);
@@ -4897,8 +4983,12 @@ function init(){
   calcDutyModern();
   calcRestLegacy();
   calcRestModern();
+  initTimeConverterModeSwitch({ selectId: 'time-mode', utcGroupId: 'time-utc-group', otherGroupId: 'time-other-group', noteId: 'time-note' });
+  initTimeConverterModeSwitch({ selectId: 'modern-time-mode', utcGroupId: 'modern-time-utc-group', otherGroupId: 'modern-time-other-group', noteId: 'modern-time-note' });
   attachTimeConverter({ airportId: 'time-airport', localId: 'time-local', utcId: 'time-utc', noteId: 'time-note' });
+  attachAirportToAirportConverter({ fromAirportId: 'time-from-airport', toAirportId: 'time-to-airport', fromTimeId: 'time-from', toTimeId: 'time-to', noteId: 'time-note' });
   attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
+  attachAirportToAirportConverter({ fromAirportId: 'modern-time-from-airport', toAirportId: 'modern-time-to-airport', fromTimeId: 'modern-time-from', toTimeId: 'modern-time-to', noteId: 'modern-time-note' });
   attachFinLookup({ inputId: 'fin-input', outId: 'fin-out' });
   attachFinLookup({ inputId: 'modern-fin-input', outId: 'modern-fin-out' });
   investigateBackgroundFinSync();

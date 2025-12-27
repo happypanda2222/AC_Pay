@@ -836,6 +836,15 @@
                 <div class="muted-note">Uses today’s date for time zone offsets (DST aware).</div>
                 <div class="stacked-fields">
                   <div>
+                    <label>Conversion type</label>
+                    <select id="modern-time-mode">
+                      <option value="utc" selected>UTC</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="stacked-fields" id="modern-time-utc-group">
+                  <div>
                     <label>Local airport</label>
                     <input id="modern-time-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
                   </div>
@@ -848,7 +857,25 @@
                     <input id="modern-time-utc" type="time">
                   </div>
                 </div>
-                <div class="muted-note" id="modern-time-note">Enter a local or UTC time to convert.</div>
+                <div class="stacked-fields hidden" id="modern-time-other-group">
+                  <div>
+                    <label>From airport</label>
+                    <input id="modern-time-from-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
+                  </div>
+                  <div>
+                    <label>From time</label>
+                    <input id="modern-time-from" type="time">
+                  </div>
+                  <div>
+                    <label>To airport</label>
+                    <input id="modern-time-to-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., LHR or EGLL">
+                  </div>
+                  <div>
+                    <label>To time</label>
+                    <input id="modern-time-to" type="time">
+                  </div>
+                </div>
+                <div class="muted-note" id="modern-time-note">Enter a time to convert.</div>
               </div>
             </div>
           </div>
@@ -1394,21 +1421,54 @@
         <div class="muted-note">Uses today’s date for time zone offsets (DST aware).</div>
         <div class="row" style="margin-top:10px">
           <div>
-            <label>Local airport</label>
-            <input id="time-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
-          </div>
-          <div>
-            <label>Local time</label>
-            <input id="time-local" type="time">
-          </div>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <div>
-            <label>UTC time</label>
-            <input id="time-utc" type="time">
+            <label>Conversion type</label>
+            <select id="time-mode">
+              <option value="utc" selected>UTC</option>
+              <option value="other">Other</option>
+            </select>
           </div>
         </div>
-        <div class="muted-note" id="time-note">Enter a local or UTC time to convert.</div>
+        <div id="time-utc-group">
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>Local airport</label>
+              <input id="time-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
+            </div>
+            <div>
+              <label>Local time</label>
+              <input id="time-local" type="time">
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>UTC time</label>
+              <input id="time-utc" type="time">
+            </div>
+          </div>
+        </div>
+        <div id="time-other-group" class="hidden">
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>From airport</label>
+              <input id="time-from-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
+            </div>
+            <div>
+              <label>From time</label>
+              <input id="time-from" type="time">
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <div>
+              <label>To airport</label>
+              <input id="time-to-airport" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., LHR or EGLL">
+            </div>
+            <div>
+              <label>To time</label>
+              <input id="time-to" type="time">
+            </div>
+          </div>
+        </div>
+        <div class="muted-note" id="time-note">Enter a time to convert.</div>
       </div>
 
       <div id="tab-time-calculator" class="hidden">
