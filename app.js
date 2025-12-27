@@ -1434,9 +1434,14 @@ function saveCustomFinConfigs(next){
 
 function normalizeFinConfig(config){
   if (!config) return null;
-  const type = String(config.type ?? '').trim();
   const finStart = Number(config.finStart);
   const finEnd = Number(config.finEnd);
+  if (!Number.isFinite(finStart) || !Number.isFinite(finEnd) || finStart > finEnd) return null;
+  const deleted = config.deleted === true;
+  const type = String(config.type ?? '').trim();
+  if (deleted){
+    return { finStart, finEnd, deleted: true, type };
+  }
   const j = Number(config.j);
   const o = Number(config.o);
   const y = Number(config.y);
@@ -1446,13 +1451,13 @@ function normalizeFinConfig(config){
   const notesRaw = typeof config.notes === 'string' ? config.notes : '';
   const notes = notesRaw.trim();
   if (!type) return null;
-  const numbers = [finStart, finEnd, j, o, y, fdjs, ofcr, ccjs];
+  const numbers = [j, o, y, fdjs, ofcr, ccjs];
   if (numbers.some(n => !Number.isFinite(n))) return null;
-  return { type, finStart, finEnd, j, o, y, fdjs, ofcr, ccjs, notes };
+  return { type, finStart, finEnd, j, o, y, fdjs, ofcr, ccjs, notes, deleted: false };
 }
 
 function getFinConfigs(){
-  return [...customFinConfigs, ...FIN_CONFIGS];
+  return mergeFinConfigs(FIN_CONFIGS, customFinConfigs);
 }
 
 function findCustomFinConfig(fin){
@@ -1467,6 +1472,10 @@ function findFinConfig(fin){
 
 function finConfigsEqual(a, b){
   if (!a || !b) return false;
+  if (!!a.deleted !== !!b.deleted) return false;
+  if (a.deleted && b.deleted){
+    return a.finStart === b.finStart && a.finEnd === b.finEnd && String(a.type ?? '') === String(b.type ?? '');
+  }
   const fields = ['type','finStart','finEnd','j','o','y','fdjs','ofcr','ccjs','notes'];
   return fields.every(key => String(a[key] ?? '') === String(b[key] ?? ''));
 }
@@ -1475,18 +1484,50 @@ function finRangesOverlap(a, b){
   return a.finStart <= b.finEnd && b.finStart <= a.finEnd;
 }
 
+function subtractFinRange(base, removal){
+  if (!finRangesOverlap(base, removal)) return [base];
+  const segments = [];
+  if (removal.finStart > base.finStart){
+    segments.push({ finStart: base.finStart, finEnd: Math.min(removal.finStart - 1, base.finEnd) });
+  }
+  if (removal.finEnd < base.finEnd){
+    segments.push({ finStart: Math.max(removal.finEnd + 1, base.finStart), finEnd: base.finEnd });
+  }
+  return segments.filter(seg => seg.finStart <= seg.finEnd);
+}
+
 function mergeFinConfigs(coreConfigs, customConfigs){
-  const merged = [];
-  coreConfigs.forEach(row => merged.push({ ...row }));
+  const additions = [];
+  const deletions = [];
   customConfigs.forEach(custom => {
     const normalized = normalizeFinConfig(custom);
     if (!normalized) return;
+    if (normalized.deleted){
+      deletions.push(normalized);
+    } else {
+      additions.push(normalized);
+    }
+  });
+  let base = coreConfigs.map(row => ({ ...row }));
+  if (deletions.length){
+    const reduced = [];
+    base.forEach(row => {
+      let segments = [{ finStart: row.finStart, finEnd: row.finEnd }];
+      deletions.forEach(del => {
+        segments = segments.flatMap(seg => subtractFinRange(seg, del));
+      });
+      segments.forEach(seg => reduced.push({ ...row, finStart: seg.finStart, finEnd: seg.finEnd }));
+    });
+    base = reduced;
+  }
+  const merged = [...base];
+  additions.forEach(custom => {
     for (let i = merged.length - 1; i >= 0; i -= 1){
-      if (finRangesOverlap(normalized, merged[i])){
+      if (finRangesOverlap(custom, merged[i])){
         merged.splice(i, 1);
       }
     }
-    merged.push(normalized);
+    merged.push(custom);
   });
   merged.sort((a, b) => a.finStart - b.finStart);
   return merged;
@@ -1497,8 +1538,13 @@ function computeCustomFinDifferences(){
   customFinConfigs.forEach(custom => {
     const normalized = normalizeFinConfig(custom);
     if (!normalized) return;
-    const match = FIN_CONFIGS.find(row => row.finStart === normalized.finStart && row.finEnd === normalized.finEnd);
-    if (!match || !finConfigsEqual(match, normalized)){
+    const baseMatch = FIN_CONFIGS.find(row => finRangesOverlap(row, normalized));
+    const exactMatch = FIN_CONFIGS.find(row => row.finStart === normalized.finStart && row.finEnd === normalized.finEnd);
+    if (normalized.deleted){
+      diffs.push({ ...normalized, type: normalized.type || baseMatch?.type || 'Fin' });
+      return;
+    }
+    if (!exactMatch || !finConfigsEqual(exactMatch, normalized)){
       diffs.push(normalized);
     }
   });
@@ -1615,6 +1661,11 @@ async function ensureFinExportSettings(){
 function buildFinPrBody(diffs){
   const lines = ['Automated fin export from AC Pay.', '', 'Changes:', ''];
   diffs.forEach(row => {
+    if (row.deleted){
+      const typeLabel = row.type ? `${row.type} ` : '';
+      lines.push(`- Removed ${typeLabel}fin ${finRangeLabel(row)}`);
+      return;
+    }
     lines.push(`- ${row.type} ${finRangeLabel(row)} (J/O/Y ${row.j}/${row.o}/${row.y}, FDJS ${row.fdjs}, OFCR ${row.ofcr}, CCJS ${row.ccjs})${row.notes ? ` — ${row.notes}` : ''}`);
   });
   return lines.join('\n');
@@ -1844,6 +1895,20 @@ function removeCustomFinConfig(fin){
   return true;
 }
 
+function deleteFinFromConfigs(fin){
+  if (!Number.isFinite(fin)) return false;
+  const custom = findCustomFinConfig(fin);
+  if (custom){
+    return removeCustomFinConfig(fin);
+  }
+  const base = FIN_CONFIGS.find(row => fin >= row.finStart && fin <= row.finEnd);
+  if (!base) return false;
+  const next = customFinConfigs.filter(row => !(fin >= row.finStart && fin <= row.finEnd));
+  next.push({ finStart: fin, finEnd: fin, deleted: true, type: base.type });
+  saveCustomFinConfigs(next);
+  return true;
+}
+
 const finSyncCapabilityProbe = {
   backgroundSync: false,
   periodicBackgroundSync: false,
@@ -1881,7 +1946,7 @@ async function investigateBackgroundFinSync(){
   return result;
 }
 
-const finDeleteState = { fin: null };
+const finDeleteState = { fin: null, isCustom: false, isBuiltIn: false };
 
 function getFinDeleteOverlay(){
   let overlay = document.getElementById('fin-delete-overlay');
@@ -1909,21 +1974,33 @@ function getFinDeleteOverlay(){
   overlay.querySelector('[data-fin-delete-cancel]').addEventListener('click', closeFinDeleteOverlay);
   overlay.querySelector('[data-fin-delete-confirm]').addEventListener('click', () => {
     const fin = finDeleteState.fin;
-    if (removeCustomFinConfig(fin)){
-      refreshFinResults();
-    }
+    deleteFinFromConfigs(fin);
+    refreshFinResults();
     closeFinDeleteOverlay();
   });
   document.body.appendChild(overlay);
   return overlay;
 }
 
-function openFinDeleteOverlay(fin){
+function openFinDeleteOverlay(fin, { isCustom } = {}){
   const overlay = getFinDeleteOverlay();
   const message = overlay.querySelector('[data-fin-delete-message]');
+  const confirm = overlay.querySelector('[data-fin-delete-confirm]');
+  const base = FIN_CONFIGS.find(row => fin >= row.finStart && fin <= row.finEnd);
   finDeleteState.fin = fin;
+  finDeleteState.isCustom = Boolean(isCustom);
+  finDeleteState.isBuiltIn = Boolean(base) && !isCustom;
   if (message){
-    message.textContent = `Are you sure you want to delete fin ${fin}?`;
+    if (finDeleteState.isCustom){
+      message.textContent = `Are you sure you want to delete fin ${fin}?`;
+    } else if (finDeleteState.isBuiltIn){
+      message.textContent = `Fin ${fin} is built into the app. Deleting will hide it on this device until you add it back.`;
+    } else {
+      message.textContent = `Are you sure you want to delete fin ${fin}?`;
+    }
+  }
+  if (confirm){
+    confirm.textContent = finDeleteState.isBuiltIn ? 'Hide fin' : 'Delete fin';
   }
   overlay.classList.remove('hidden');
   overlay.querySelector('[data-fin-delete-cancel]')?.focus();
@@ -1935,6 +2012,8 @@ function closeFinDeleteOverlay(){
     overlay.classList.add('hidden');
   }
   finDeleteState.fin = null;
+  finDeleteState.isCustom = false;
+  finDeleteState.isBuiltIn = false;
 }
 
 function renderFinResult(outEl, finValue){
@@ -1949,13 +2028,21 @@ function renderFinResult(outEl, finValue){
     return;
   }
   const row = findFinConfig(fin);
+  const customConfig = findCustomFinConfig(fin);
+  const isDeletedFin = Boolean(customConfig?.deleted);
+  const coreRow = FIN_CONFIGS.find(r => fin >= r.finStart && fin <= r.finEnd) || null;
   if (!row){
+    const restoreButton = isDeletedFin ? '<button type="button" class="btn btn-secondary" data-fin-action="restore">Restore fin</button>' : '';
+    const message = isDeletedFin
+      ? `<div class="wx-error">This fin was deleted from your device.</div>`
+      : `<div class="wx-error">No configuration found for that fin.</div>`;
     outEl.innerHTML = `
-      <div class="wx-error">No configuration found for that fin.</div>
+      ${message}
       <div class="fin-actions">
+        ${restoreButton}
         <button type="button" class="btn" data-fin-action="add">Add fin</button>
       </div>
-      ${renderFinForm(finFormValuesFromRow(null, fin))}
+      ${renderFinForm(finFormValuesFromRow(coreRow, fin))}
     `;
     return;
   }
@@ -1969,8 +2056,8 @@ function renderFinResult(outEl, finValue){
   if (isWidebodyType(row.type)){
     cards.push({ label: 'Bunks', value: row.ofcr });
   }
-  const isCustom = Boolean(findCustomFinConfig(fin));
-  const deleteDisabled = isCustom ? '' : 'disabled aria-disabled="true"';
+  const isCustom = Boolean(customConfig && !customConfig.deleted);
+  const deleteDisabled = '';
   const notesText = typeof row.notes === 'string' ? row.notes.trim() : '';
   const notesBody = notesText
     ? `<div class="fin-notes-body">${escapeHtml(notesText).replace(/\n/g, '<br>')}</div>`
@@ -2020,10 +2107,15 @@ function attachFinLookup({ inputId, outId }){
         form.classList.remove('hidden');
         return;
       }
+      if (action === 'restore'){
+        removeCustomFinConfig(fin);
+        renderFinResult(out, finValue);
+        return;
+      }
       if (action === 'delete'){
-        if (findCustomFinConfig(fin)){
-          openFinDeleteOverlay(fin);
-        }
+        const custom = findCustomFinConfig(fin);
+        const isCustom = Boolean(custom && !custom.deleted);
+        openFinDeleteOverlay(fin, { isCustom });
         return;
       }
       if (action === 'save'){
