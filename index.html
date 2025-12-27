@@ -180,20 +180,22 @@
     .audit thead th:nth-child(7) {
       text-align: right;
     }
-    .version-badge{
-      position:fixed;
-      top:calc(10px + env(safe-area-inset-top));
-      right:calc(12px + env(safe-area-inset-right));
-      background:#0f1218;
-      border:1px solid #2a2f3b;
-      border-radius:12px;
-      padding:8px 10px;
+    .version-meta{
+      margin:24px 0 8px 0;
       color:var(--muted);
       font-size:12px;
       font-weight:700;
       letter-spacing:.2px;
-      box-shadow:0 6px 20px rgba(0,0,0,.35);
-      z-index:10;
+      display:flex;
+      align-items:center;
+      gap:6px;
+    }
+    .version-meta .version-label{
+      text-transform:uppercase;
+      letter-spacing:.3px;
+      font-size:11px;
+      color:var(--muted);
+      opacity:.85;
     }
 
     /* Modern UI styling */
@@ -326,7 +328,6 @@
   </style>
 </head>
 <body data-ui="modern">
-  <div id="version" class="version-badge" aria-label="App version"></div>
   <div class="wrap">
     <div id="modern-ui">
       <div class="modern-hero" id="modern-hero-banner" role="button" tabindex="0" aria-label="Toggle banner color" aria-pressed="false">
@@ -934,6 +935,10 @@
       </div>
     </div>
 
+    <div class="version-meta" aria-live="polite">
+      <span class="version-label">Version</span>
+      <span id="version" aria-label="App version"></span>
+    </div>
   </div>
   <script src="app.js" defer></script>
 </body>
