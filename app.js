@@ -1906,6 +1906,23 @@ function getFinFormData(form){
   };
 }
 
+function getFinInlineData(container){
+  const getValue = (field) => container.querySelector(`[data-fin-field="${field}"]`)?.value ?? '';
+  const finStart = Number(getValue('finStart'));
+  return {
+    type: getValue('type'),
+    finStart,
+    finEnd: finStart,
+    j: Number(getValue('j')),
+    o: Number(getValue('o')),
+    y: Number(getValue('y')),
+    fdjs: Number(getValue('fdjs')),
+    ofcr: Number(getValue('ofcr')),
+    ccjs: Number(getValue('ccjs')),
+    notes: getValue('notes').trim()
+  };
+}
+
 function validateFinConfig(config){
   if (!String(config.type ?? '').trim()) return 'Enter an aircraft type.';
   if (!Number.isFinite(config.finStart)) return 'Enter a valid fin number.';
@@ -2058,6 +2075,18 @@ function closeFinDeleteOverlay(){
   finDeleteState.isBuiltIn = false;
 }
 
+function setFinEditMode(outEl, editing){
+  const container = outEl?.querySelector('[data-fin-container]');
+  if (!container) return;
+  container.classList.toggle('fin-editing', Boolean(editing));
+  if (editing){
+    const firstInput = container.querySelector('[data-fin-field]');
+    if (firstInput){
+      firstInput.focus();
+    }
+  }
+}
+
 function renderFinResult(outEl, finValue){
   if (!outEl) return;
   if (finValue === '' || finValue === null || finValue === undefined){
@@ -2089,40 +2118,84 @@ function renderFinResult(outEl, finValue){
     return;
   }
   const seats = `${row.j}/${row.o}/${row.y}`;
-  const cards = [
-    { label: 'Aircraft type', value: row.type },
-    { label: 'FD Jumps', value: row.fdjs },
-    { label: 'Cabin Jumps', value: row.ccjs },
-    { label: 'Seats (J/O/Y)', value: seats }
-  ];
-  if (isWidebodyType(row.type)){
-    cards.push({ label: 'Bunks', value: row.ofcr });
-  }
-  const isCustom = Boolean(customConfig && !customConfig.deleted);
+  const values = finFormValuesFromRow(row, fin);
+  const bunksEditOnly = !isWidebodyType(row.type);
   const deleteDisabled = '';
   const notesText = typeof row.notes === 'string' ? row.notes.trim() : '';
   const notesBody = notesText
     ? `<div class="fin-notes-body">${escapeHtml(notesText).replace(/\n/g, '<br>')}</div>`
     : '<div class="fin-notes-body muted-note">No notes added for this fin.</div>';
   outEl.innerHTML = `
-    <div class="metric-grid">
-      ${cards.map(card => `
+    <div class="fin-editable" data-fin-container>
+      <div class="metric-grid fin-editable">
         <div class="metric-card">
-          <div class="metric-label">${card.label}</div>
-          <div class="metric-value">${card.value}</div>
+          <div class="metric-label">Aircraft type</div>
+          <div class="metric-value" data-fin-view>${escapeHtml(row.type)}</div>
+          <div class="fin-edit-field">
+            <input class="fin-inline-input" aria-label="Aircraft type" type="text" inputmode="text" data-fin-field="type" value="${escapeHtml(values.type)}">
+          </div>
         </div>
-      `).join('')}
+        <div class="metric-card fin-edit-only">
+          <div class="metric-label">Fin number</div>
+          <div class="metric-value" data-fin-view>${values.finStart}</div>
+          <div class="fin-edit-field">
+            <input class="fin-inline-input" aria-label="Fin number" type="number" min="1" inputmode="numeric" data-fin-field="finStart" value="${values.finStart}">
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">FD Jumps</div>
+          <div class="metric-value" data-fin-view>${row.fdjs}</div>
+          <div class="fin-edit-field">
+            <input class="fin-inline-input" aria-label="FD jumps" type="number" min="0" inputmode="numeric" data-fin-field="fdjs" value="${values.fdjs}">
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Cabin Jumps</div>
+          <div class="metric-value" data-fin-view>${row.ccjs}</div>
+          <div class="fin-edit-field">
+            <input class="fin-inline-input" aria-label="Cabin jumps" type="number" min="0" inputmode="numeric" data-fin-field="ccjs" value="${values.ccjs}">
+          </div>
+        </div>
+        <div class="metric-card ${bunksEditOnly ? 'fin-edit-only' : ''}">
+          <div class="metric-label">Bunks</div>
+          <div class="metric-value" data-fin-view>${row.ofcr}</div>
+          <div class="fin-edit-field">
+            <input class="fin-inline-input" aria-label="Bunks" type="number" min="0" inputmode="numeric" data-fin-field="ofcr" value="${values.ofcr}">
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Seats (J/O/Y)</div>
+          <div class="metric-value" data-fin-view>${seats}</div>
+          <div class="fin-edit-field fin-seat-edit">
+            <label>J seats
+              <input class="fin-inline-input" aria-label="J seats" type="number" min="0" inputmode="numeric" data-fin-field="j" value="${values.j}">
+            </label>
+            <label>O seats
+              <input class="fin-inline-input" aria-label="O seats" type="number" min="0" inputmode="numeric" data-fin-field="o" value="${values.o}">
+            </label>
+            <label>Y seats
+              <input class="fin-inline-input" aria-label="Y seats" type="number" min="0" inputmode="numeric" data-fin-field="y" value="${values.y}">
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="muted-note">Fin range: ${finRangeLabel(row)}</div>
+      <div class="fin-notes-card fin-editable">
+        <h4>Notes</h4>
+        ${notesBody}
+        <textarea class="fin-notes-input fin-edit-field" data-fin-field="notes" rows="3" maxlength="2000" placeholder="Add reference info or reminders for this fin">${escapeHtml(values.notes)}</textarea>
+      </div>
+      <div class="fin-actions" data-fin-view-actions>
+        <button type="button" class="btn" data-fin-action="edit">Edit fin</button>
+        <button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete" ${deleteDisabled}>Delete fin</button>
+      </div>
+      <div class="fin-actions" data-fin-edit-actions>
+        <button type="button" class="btn" data-fin-action="save">Save fin</button>
+        <button type="button" class="btn btn-secondary" data-fin-action="cancel-edit">Cancel</button>
+        <button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete" ${deleteDisabled}>Delete fin</button>
+      </div>
+      <div class="wx-error hidden" data-fin-error></div>
     </div>
-    <div class="muted-note">Fin range: ${finRangeLabel(row)}</div>
-    <div class="fin-notes-card">
-      <h4>Notes</h4>
-      ${notesBody}
-    </div>
-    <div class="fin-actions">
-      <button type="button" class="btn" data-fin-action="edit">Edit fin</button>
-      <button type="button" class="btn btn-secondary btn-danger" data-fin-action="delete" ${deleteDisabled}>Delete fin</button>
-    </div>
-    ${renderFinForm(finFormValuesFromRow(row, fin))}
   `;
 }
 
@@ -2142,11 +2215,25 @@ function attachFinLookup({ inputId, outId }){
       const finValue = input?.value?.trim() ?? '';
       const fin = Number(finValue);
       const form = out.querySelector('[data-fin-form]');
-      if (!form) return;
-      const errorEl = form.querySelector('[data-fin-error]');
+      const container = out.querySelector('[data-fin-container]');
+      const errorEl = out.querySelector('[data-fin-error]');
       if (errorEl) errorEl.classList.add('hidden');
-      if (action === 'add' || action === 'edit'){
-        form.classList.remove('hidden');
+      if (action === 'add'){
+        if (form){
+          form.classList.remove('hidden');
+        }
+        return;
+      }
+      if (action === 'edit'){
+        if (container){
+          setFinEditMode(out, true);
+        } else if (form){
+          form.classList.remove('hidden');
+        }
+        return;
+      }
+      if (action === 'cancel-edit'){
+        renderFinResult(out, finValue);
         return;
       }
       if (action === 'restore'){
@@ -2161,7 +2248,13 @@ function attachFinLookup({ inputId, outId }){
         return;
       }
       if (action === 'save'){
-        const data = getFinFormData(form);
+        let data = null;
+        if (container && container.classList.contains('fin-editing')){
+          data = getFinInlineData(container);
+        } else if (form){
+          data = getFinFormData(form);
+        }
+        if (!data) return;
         const error = validateFinConfig(data);
         if (error){
           if (errorEl){
