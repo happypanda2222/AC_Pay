@@ -3026,7 +3026,7 @@ function runTimeCalculator({ startId, hoursId, minutesId, modeId, outId, convert
           <div class="value">${formatDayOffsetLabel(dayOffset)}</div>
         </div>
       </div>
-      ${canConvert ? `<button class="convert-btn" type="button" data-action="timecalc-convert" aria-label="Send ${adjustedLabel} (${formatDayOffsetLabel(dayOffset)}) to time converter">Send to time converter</button>` : ''}
+      ${canConvert ? `<button class="convert-btn" type="button" data-action="timecalc-convert" aria-label="Send ${adjustedLabel} (${formatDayOffsetLabel(dayOffset)}) to time converter">Convert</button>` : ''}
     `;
     if (canConvert){
       const convertBtn = out.querySelector('[data-action="timecalc-convert"]');
