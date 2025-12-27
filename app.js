@@ -2881,7 +2881,32 @@ function formatDayOffsetLabel(dayOffset){
   return `${dayOffset > 0 ? '+' : '-'}${abs} ${suffix}`;
 }
 
-function runTimeCalculator({ startId, hoursId, minutesId, modeId, outId }){
+function sendTimeCalcToConverter({ timeLabel, dayOffset, isModern }){
+  if (!timeLabel) return;
+  if (isModern){
+    setModernPrimaryTab('modern-duty-rest');
+    setModernDutyTab('modern-time-converter');
+  } else {
+    setLegacyPrimaryTab('duty-rest');
+    setLegacyDutyTab('time-converter');
+  }
+  const localId = isModern ? 'modern-time-local' : 'time-local';
+  const noteId = isModern ? 'modern-time-note' : 'time-note';
+  const localEl = document.getElementById(localId);
+  const noteEl = noteId ? document.getElementById(noteId) : null;
+  if (localEl){
+    localEl.value = timeLabel;
+    localEl.dispatchEvent(new Event('input', { bubbles: true }));
+    localEl.focus();
+  }
+  if (noteEl){
+    const suffix = dayOffset === 0 ? '' : ` (${formatDayOffsetLabel(dayOffset)})`;
+    const msg = `From time calculator${suffix}`;
+    setTimeout(() => { noteEl.textContent = msg; }, 0);
+  }
+}
+
+function runTimeCalculator({ startId, hoursId, minutesId, modeId, outId, converterTarget }){
   const out = document.getElementById(outId);
   const startEl = document.getElementById(startId);
   const hoursEl = document.getElementById(hoursId);
@@ -2903,6 +2928,7 @@ function runTimeCalculator({ startId, hoursId, minutesId, modeId, outId }){
     const adjusted = startMinutes + (deltaMinutes * mode);
     const dayOffset = Math.floor(adjusted / 1440);
     const adjustedLabel = formatMinutesToTime(adjusted);
+    const canConvert = Boolean(converterTarget);
     out.innerHTML = `
       <div class="simple">
         <div class="block">
@@ -2914,7 +2940,21 @@ function runTimeCalculator({ startId, hoursId, minutesId, modeId, outId }){
           <div class="value">${formatDayOffsetLabel(dayOffset)}</div>
         </div>
       </div>
+      ${canConvert ? `<button class="convert-btn" type="button" data-action="timecalc-convert" aria-label="Send ${adjustedLabel} (${formatDayOffsetLabel(dayOffset)}) to time converter">Send to time converter</button>` : ''}
     `;
+    if (canConvert){
+      const convertBtn = out.querySelector('[data-action="timecalc-convert"]');
+      if (convertBtn){
+        convertBtn.addEventListener('click', (e) => {
+          hapticTap(e.currentTarget);
+          sendTimeCalcToConverter({
+            timeLabel: adjustedLabel,
+            dayOffset,
+            isModern: converterTarget === 'modern'
+          });
+        });
+      }
+    }
   } catch (err){
     showError(err?.message || 'Unable to calculate time.');
   }
@@ -4808,8 +4848,8 @@ function init(){
   document.getElementById('modern-rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestModern(); });
   document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body' }); });
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
-  document.getElementById('timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'timecalc-start', hoursId:'timecalc-hours', minutesId:'timecalc-minutes', modeId:'timecalc-mode', outId:'timecalc-out' }); });
-  document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out' }); });
+  document.getElementById('timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'timecalc-start', hoursId:'timecalc-hours', minutesId:'timecalc-minutes', modeId:'timecalc-mode', outId:'timecalc-out', converterTarget:'legacy' }); });
+  document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out', converterTarget:'modern' }); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
     const toggleBanner = () => {
