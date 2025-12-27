@@ -69,6 +69,7 @@ const HEALTH_MO = 58.80;
 const DIVIDEND_GROSS_UP = { eligible: 1.38, nonEligible: 1.15 };
 const CAPITAL_GAINS_INCLUSION = 0.5;
 const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
+const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const FIN_CONFIGS = [
   { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
@@ -1367,6 +1368,31 @@ function normalizeFinState(raw){
   return { items, updatedAt };
 }
 
+function loadFinExportSettings(){
+  try{
+    const raw = localStorage.getItem(FIN_EXPORT_SETTINGS_KEY);
+    if (!raw) return { owner: '', repo: '', baseBranch: 'main', token: '' };
+    const parsed = JSON.parse(raw);
+    return {
+      owner: String(parsed.owner ?? '').trim(),
+      repo: String(parsed.repo ?? '').trim(),
+      baseBranch: String(parsed.baseBranch ?? 'main').trim() || 'main',
+      token: String(parsed.token ?? '').trim()
+    };
+  } catch (err){
+    console.warn('Failed to load fin export settings', err);
+    return { owner: '', repo: '', baseBranch: 'main', token: '' };
+  }
+}
+
+function saveFinExportSettings(settings){
+  try{
+    localStorage.setItem(FIN_EXPORT_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (err){
+    console.warn('Failed to save fin export settings', err);
+  }
+}
+
 function purgeLegacyFinSyncSettings(){
   try {
     localStorage.removeItem(LEGACY_FIN_SYNC_SETTINGS_KEY);
@@ -1436,6 +1462,257 @@ function findCustomFinConfig(fin){
 function findFinConfig(fin){
   if (!Number.isFinite(fin)) return null;
   return getFinConfigs().find(row => fin >= row.finStart && fin <= row.finEnd) || null;
+}
+
+function finConfigsEqual(a, b){
+  if (!a || !b) return false;
+  const fields = ['type','finStart','finEnd','j','o','y','fdjs','ofcr','ccjs','notes'];
+  return fields.every(key => String(a[key] ?? '') === String(b[key] ?? ''));
+}
+
+function finRangesOverlap(a, b){
+  return a.finStart <= b.finEnd && b.finStart <= a.finEnd;
+}
+
+function mergeFinConfigs(coreConfigs, customConfigs){
+  const merged = [];
+  coreConfigs.forEach(row => merged.push({ ...row }));
+  customConfigs.forEach(custom => {
+    const normalized = normalizeFinConfig(custom);
+    if (!normalized) return;
+    for (let i = merged.length - 1; i >= 0; i -= 1){
+      if (finRangesOverlap(normalized, merged[i])){
+        merged.splice(i, 1);
+      }
+    }
+    merged.push(normalized);
+  });
+  merged.sort((a, b) => a.finStart - b.finStart);
+  return merged;
+}
+
+function computeCustomFinDifferences(){
+  const diffs = [];
+  customFinConfigs.forEach(custom => {
+    const normalized = normalizeFinConfig(custom);
+    if (!normalized) return;
+    const match = FIN_CONFIGS.find(row => row.finStart === normalized.finStart && row.finEnd === normalized.finEnd);
+    if (!match || !finConfigsEqual(match, normalized)){
+      diffs.push(normalized);
+    }
+  });
+  return diffs;
+}
+
+function formatFinConfigForSource(row){
+  const esc = (val) => String(val ?? '').replace(/\\/g, '\\\\').replace(/'/g, '\\\'').replace(/\n/g, '\\n');
+  const fields = [
+    `type: '${esc(row.type)}'`,
+    `finStart: ${row.finStart}`,
+    `finEnd: ${row.finEnd}`,
+    `j: ${row.j}`,
+    `o: ${row.o}`,
+    `y: ${row.y}`,
+    `fdjs: ${row.fdjs}`,
+    `ofcr: ${row.ofcr}`,
+    `ccjs: ${row.ccjs}`
+  ];
+  if (row.notes){
+    fields.push(`notes: '${esc(row.notes)}'`);
+  }
+  return `  { ${fields.join(', ')} }`;
+}
+
+function replaceFinConfigBlock(source, configs){
+  const marker = 'const FIN_CONFIGS = [';
+  const start = source.indexOf(marker);
+  if (start === -1) throw new Error('FIN_CONFIGS block not found');
+  let depth = 0;
+  const openIndex = source.indexOf('[', start);
+  let closeIndex = -1;
+  for (let i = openIndex; i < source.length; i += 1){
+    const ch = source[i];
+    if (ch === '[') depth += 1;
+    if (ch === ']') depth -= 1;
+    if (depth === 0){
+      closeIndex = i;
+      break;
+    }
+  }
+  if (closeIndex === -1) throw new Error('FIN_CONFIGS block termination not found');
+  const before = source.slice(0, openIndex);
+  const after = source.slice(closeIndex + 2);
+  const body = configs.map(formatFinConfigForSource).join(',\n');
+  return `${before}[\n${body}\n];${after}`;
+}
+
+function bumpCacheVersion(content){
+  const match = content.match(/const\s+CACHE\s*=\s*'([^']+)'/);
+  if (!match) return content;
+  const current = match[1];
+  const next = current.replace(/(v)(\d+)$/i, (_, v, num) => `${v}${Number(num) + 1}`);
+  const updated = (next === current) ? `${current}-${Date.now()}` : next;
+  return content.replace(match[0], `const CACHE = '${updated}'`);
+}
+
+async function githubJson(path, { method = 'GET', token, body } = {}){
+  const resp = await fetch(`https://api.github.com${path}`, {
+    method,
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body
+  });
+  const text = await resp.text();
+  if (!resp.ok){
+    let message = text || resp.statusText;
+    try {
+      const parsed = JSON.parse(text);
+      message = parsed.message || message;
+    } catch (err){ /* ignore */ }
+    throw new Error(`GitHub API ${resp.status}: ${message}`);
+  }
+  return text ? JSON.parse(text) : null;
+}
+
+async function fetchGitHubFileContent({ owner, repo, ref, path, token }){
+  const json = await githubJson(`/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(ref)}`, { token });
+  const content = json?.content ? atob(json.content.replace(/\n/g, '')) : '';
+  return { text: content, sha: json.sha };
+}
+
+async function putGitHubFileContent({ owner, repo, branch, path, token, message, content, sha }){
+  const payload = {
+    message,
+    content: btoa(content),
+    branch,
+    sha
+  };
+  return githubJson(`/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`, {
+    method: 'PUT',
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+async function ensureFinExportSettings(){
+  const current = loadFinExportSettings();
+  const repoPrompt = prompt('GitHub repo (owner/name)', current.owner && current.repo ? `${current.owner}/${current.repo}` : '');
+  if (!repoPrompt) return null;
+  const [owner, repo] = repoPrompt.split('/').map(part => String(part ?? '').trim());
+  if (!owner || !repo) return null;
+  const baseBranch = prompt('Base branch', current.baseBranch || 'main') || 'main';
+  const token = prompt('GitHub token (repo scope)', current.token || '');
+  if (!token) return null;
+  const settings = { owner, repo, baseBranch, token };
+  saveFinExportSettings(settings);
+  return settings;
+}
+
+function buildFinPrBody(diffs){
+  const lines = ['Automated fin export from AC Pay.', '', 'Changes:', ''];
+  diffs.forEach(row => {
+    lines.push(`- ${row.type} ${finRangeLabel(row)} (J/O/Y ${row.j}/${row.o}/${row.y}, FDJS ${row.fdjs}, OFCR ${row.ofcr}, CCJS ${row.ccjs})${row.notes ? ` — ${row.notes}` : ''}`);
+  });
+  return lines.join('\n');
+}
+
+async function exportFinConfigsToGitHub({ statusId }){
+  const statusEl = document.getElementById(statusId);
+  const setStatus = (msg, isError=false) => {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.classList.toggle('wx-error', isError);
+  };
+  const diffs = computeCustomFinDifferences();
+  if (!diffs.length){
+    setStatus('No custom fin changes to export.');
+    return;
+  }
+  setStatus('Collecting GitHub details...');
+  const settings = await ensureFinExportSettings();
+  if (!settings){
+    setStatus('Export cancelled.');
+    return;
+  }
+  try{
+    setStatus('Preparing branch...');
+    const baseRef = await githubJson(`/repos/${settings.owner}/${settings.repo}/git/ref/heads/${encodeURIComponent(settings.baseBranch)}`, { token: settings.token });
+    const baseSha = baseRef?.object?.sha;
+    if (!baseSha) throw new Error('Base branch not found.');
+    let branchName = `fin-export-${Date.now()}`;
+    try {
+      await githubJson(`/repos/${settings.owner}/${settings.repo}/git/refs`, {
+        method: 'POST',
+        token: settings.token,
+        body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha: baseSha })
+      });
+    } catch (err){
+      branchName = `fin-export-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+      await githubJson(`/repos/${settings.owner}/${settings.repo}/git/refs`, {
+        method: 'POST',
+        token: settings.token,
+        body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha: baseSha })
+      });
+    }
+    setStatus('Fetching source files...');
+    const appFile = await fetchGitHubFileContent({
+      owner: settings.owner,
+      repo: settings.repo,
+      ref: settings.baseBranch,
+      path: 'app.js',
+      token: settings.token
+    });
+    const swFile = await fetchGitHubFileContent({
+      owner: settings.owner,
+      repo: settings.repo,
+      ref: settings.baseBranch,
+      path: 'sw.js',
+      token: settings.token
+    });
+    const merged = mergeFinConfigs(FIN_CONFIGS, customFinConfigs);
+    const updatedApp = replaceFinConfigBlock(appFile.text, merged);
+    const updatedSw = bumpCacheVersion(swFile.text);
+    setStatus('Pushing changes...');
+    await putGitHubFileContent({
+      owner: settings.owner,
+      repo: settings.repo,
+      branch: branchName,
+      path: 'app.js',
+      token: settings.token,
+      message: 'Export fin updates from AC Pay',
+      content: updatedApp,
+      sha: appFile.sha
+    });
+    await putGitHubFileContent({
+      owner: settings.owner,
+      repo: settings.repo,
+      branch: branchName,
+      path: 'sw.js',
+      token: settings.token,
+      message: 'Bump cache version for fin export',
+      content: updatedSw,
+      sha: swFile.sha
+    });
+    setStatus('Creating pull request...');
+    const pr = await githubJson(`/repos/${settings.owner}/${settings.repo}/pulls`, {
+      method: 'POST',
+      token: settings.token,
+      body: JSON.stringify({
+        title: `Export fin updates (${diffs.length} change${diffs.length === 1 ? '' : 's'})`,
+        head: branchName,
+        base: settings.baseBranch,
+        body: buildFinPrBody(diffs)
+      })
+    });
+    const url = pr?.html_url;
+    setStatus(url ? `Pull request created: ${url}` : 'Pull request created.');
+    if (url) window.open(url, '_blank');
+  } catch (err){
+    setStatus(`Export failed: ${err.message}`, true);
+  }
 }
 
 function finRangeLabel(row){
@@ -4936,6 +5213,8 @@ function init(){
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
   document.getElementById('timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'timecalc-start', hoursId:'timecalc-hours', minutesId:'timecalc-minutes', modeId:'timecalc-mode', outId:'timecalc-out', converterTarget:'legacy' }); });
   document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out', converterTarget:'modern' }); });
+  document.getElementById('fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'fin-export-status' }); });
+  document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
     const toggleBanner = () => {

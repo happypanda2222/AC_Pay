@@ -298,6 +298,9 @@
     .fin-notes-card{margin-top:12px;border:1px solid #1f2633;border-radius:12px;padding:12px;background:#0f1218}
     .fin-notes-card h4{margin:0 0 8px 0;font-size:14px;letter-spacing:.2px}
     .fin-notes-body{font-size:13px;line-height:1.5}
+    .fin-export-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:10px 0}
+    .fin-export-status{font-size:13px;margin-top:6px}
+    .fin-export-summary{margin-top:10px;border:1px solid #1f2633;border-radius:10px;padding:10px;background:#0f1218;font-size:12px;line-height:1.5}
     .btn-secondary{background:#0f1218;color:var(--txt);border:1px solid #2a2f3b}
     .btn-danger{background:#ff453a;color:#fff}
     .fin-confirm-overlay{
@@ -932,6 +935,13 @@
               <div id="modern-fin-out"></div>
             </div>
           </div>
+          <div class="modern-panel">
+            <h3>Export</h3>
+            <div class="fin-actions">
+              <button id="modern-fin-export-btn" class="btn" type="button">Export fin config to GitHub</button>
+            </div>
+            <div id="modern-fin-export-status" class="fin-export-status muted-note" aria-live="polite"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1515,6 +1525,10 @@
         </div>
       </div>
       <div id="fin-out" class="simple"></div>
+      <div class="fin-actions">
+        <button id="fin-export-btn" class="btn" type="button">Export fin config to GitHub</button>
+      </div>
+      <div id="fin-export-status" class="fin-export-status muted-note" aria-live="polite"></div>
     </div>
 
     <!-- Weather Tab -->
