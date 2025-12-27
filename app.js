@@ -1592,27 +1592,46 @@ function formatFinConfigForSource(row){
   return `  { ${fields.join(', ')} }`;
 }
 
-function replaceFinConfigBlock(source, configs){
-  const marker = 'const FIN_CONFIGS = [';
-  const start = source.indexOf(marker);
-  if (start === -1) throw new Error('FIN_CONFIGS block not found');
+function findClosingBracket(source, openIndex){
   let depth = 0;
-  const openIndex = source.indexOf('[', start);
-  let closeIndex = -1;
+  let inString = false;
+  let stringChar = '';
   for (let i = openIndex; i < source.length; i += 1){
     const ch = source[i];
+    const prev = source[i - 1];
+    if (inString){
+      if (ch === stringChar && prev !== '\\'){
+        inString = false;
+        stringChar = '';
+      }
+      continue;
+    }
+    if (ch === '"' || ch === '\'' || ch === '`'){
+      inString = true;
+      stringChar = ch;
+      continue;
+    }
     if (ch === '[') depth += 1;
-    if (ch === ']') depth -= 1;
-    if (depth === 0){
-      closeIndex = i;
-      break;
+    if (ch === ']'){
+      depth -= 1;
+      if (depth === 0) return i;
     }
   }
+  return -1;
+}
+
+function replaceFinConfigBlock(source, configs){
+  const markerPattern = /^const\s+FIN_CONFIGS\s*=\s*[^[]*\[/m;
+  const match = source.match(markerPattern);
+  if (!match) throw new Error('FIN_CONFIGS block not found');
+  const openIndex = source.indexOf('[', match.index);
+  if (openIndex === -1) throw new Error('FIN_CONFIGS block not found');
+  const closeIndex = findClosingBracket(source, openIndex);
   if (closeIndex === -1) throw new Error('FIN_CONFIGS block termination not found');
   const before = source.slice(0, openIndex);
-  const after = source.slice(closeIndex + 2);
+  const after = source.slice(closeIndex);
   const body = configs.map(formatFinConfigForSource).join(',\n');
-  return `${before}[\n${body}\n];${after}`;
+  return `${before}[\n${body}\n${after}`;
 }
 
 function bumpCacheVersion(content){
@@ -2113,7 +2132,6 @@ function renderFinResult(outEl, finValue){
         </div>
       `).join('')}
     </div>
-    <div class="muted-note">Fin range: ${finRangeLabel(row)}</div>
     <div class="fin-notes-card">
       <h4>Notes</h4>
       ${notesBody}
