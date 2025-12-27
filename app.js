@@ -158,7 +158,7 @@ const FIN_CONFIGS = [
   { type: 'A321', finStart: 483, finEnd: 483, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
   { type: 'A321', finStart: 484, finEnd: 484, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
   { type: 'B737', finStart: 501, finEnd: 540, j: 16, o: 0, y: 153, fdjs: 1, ofcr: 0, ccjs: 4 },
-  { type: 'B737', finStart: 571, finEnd: 578, j: 0, o: 0, y: 189, fdjs: 1, ofcr: 0, ccjs: 5, notes: '11A no window' },
+  { type: 'B737', finStart: 571, finEnd: 578, j: 0, o: 0, y: 189, fdjs: 1, ofcr: 0, ccjs: 5 },
   { type: 'B767F', finStart: 637, finEnd: 639, j: 0, o: 0, y: 0, fdjs: 4, ofcr: 0, ccjs: 0 },
   { type: 'B767F', finStart: 646, finEnd: 646, j: 0, o: 0, y: 0, fdjs: 4, ofcr: 0, ccjs: 0 },
   { type: 'B767F', finStart: 660, finEnd: 663, j: 0, o: 0, y: 0, fdjs: 4, ofcr: 0, ccjs: 0 },
