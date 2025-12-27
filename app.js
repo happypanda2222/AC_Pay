@@ -1840,7 +1840,8 @@ function setLegacyDutyTab(which){
   const tabs = [
     { btn: 'tabbtn-duty', pane: 'tab-duty', id: 'duty' },
     { btn: 'tabbtn-rest', pane: 'tab-rest', id: 'rest' },
-    { btn: 'tabbtn-time-converter', pane: 'tab-time-converter', id: 'time-converter' }
+    { btn: 'tabbtn-time-converter', pane: 'tab-time-converter', id: 'time-converter' },
+    { btn: 'tabbtn-time-calculator', pane: 'tab-time-calculator', id: 'time-calculator' }
   ];
   tabs.forEach(({ btn, pane, id }) => {
     const b = document.getElementById(btn);
@@ -1905,7 +1906,7 @@ function setModernSubTab(which){
 
 function setModernDutyTab(which){
   currentModernDutyTab = which;
-  const tabs = ['modern-duty','modern-rest','modern-time-converter'];
+  const tabs = ['modern-duty','modern-rest','modern-time-converter','modern-time-calculator'];
   tabs.forEach(id => {
     const btn = document.getElementById(`tabbtn-${id}`);
     const pane = document.getElementById(id);
@@ -2871,6 +2872,52 @@ function attachTimeConverter({ airportId, localId, utcId, noteId }){
       updateUtcFromLocal();
     }
   });
+}
+
+function formatDayOffsetLabel(dayOffset){
+  if (!Number.isFinite(dayOffset) || dayOffset === 0) return 'Same day';
+  const abs = Math.abs(dayOffset);
+  const suffix = abs === 1 ? 'day' : 'days';
+  return `${dayOffset > 0 ? '+' : '-'}${abs} ${suffix}`;
+}
+
+function runTimeCalculator({ startId, hoursId, minutesId, modeId, outId }){
+  const out = document.getElementById(outId);
+  const startEl = document.getElementById(startId);
+  const hoursEl = document.getElementById(hoursId);
+  const minutesEl = document.getElementById(minutesId);
+  const modeEl = document.getElementById(modeId);
+  if (!out || !startEl || !hoursEl || !minutesEl || !modeEl) return;
+  const showError = (msg) => {
+    out.innerHTML = `<div class="simple"><div class="block"><div class="label">Error</div><div class="value">${msg}</div></div></div>`;
+  };
+  try {
+    const startMinutes = parseTimeToMinutes(startEl.value);
+    if (!Number.isFinite(startMinutes)) throw new Error('Enter a start time in HH:MM.');
+    const hours = Number(hoursEl.value);
+    if (!Number.isFinite(hours) || hours < 0) throw new Error('Hours must be zero or more.');
+    const minutes = Number(minutesEl.value);
+    if (!Number.isFinite(minutes) || minutes < 0 || minutes >= 60) throw new Error('Minutes must be between 0 and 59.');
+    const deltaMinutes = Math.round((hours * 60) + minutes);
+    const mode = modeEl.value === 'subtract' ? -1 : 1;
+    const adjusted = startMinutes + (deltaMinutes * mode);
+    const dayOffset = Math.floor(adjusted / 1440);
+    const adjustedLabel = formatMinutesToTime(adjusted);
+    out.innerHTML = `
+      <div class="simple">
+        <div class="block">
+          <div class="label">Adjusted time</div>
+          <div class="value">${adjustedLabel}</div>
+        </div>
+        <div class="block">
+          <div class="label">Day offset</div>
+          <div class="value">${formatDayOffsetLabel(dayOffset)}</div>
+        </div>
+      </div>
+    `;
+  } catch (err){
+    showError(err?.message || 'Unable to calculate time.');
+  }
 }
 async function resolveAirportCode(input){
   const code = String(input || '').trim().toUpperCase();
@@ -4698,9 +4745,11 @@ function init(){
   document.getElementById('tabbtn-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('duty'); });
   document.getElementById('tabbtn-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('rest'); });
   document.getElementById('tabbtn-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('time-converter'); });
+  document.getElementById('tabbtn-time-calculator')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('time-calculator'); });
   document.getElementById('tabbtn-modern-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-duty'); });
   document.getElementById('tabbtn-modern-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-rest'); });
   document.getElementById('tabbtn-modern-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-converter'); });
+  document.getElementById('tabbtn-modern-time-calculator')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-calculator'); });
   document.getElementById('ui-mode')?.addEventListener('change', (e)=>{ const v=e.target.value==='legacy'?'legacy':'modern'; switchUIMode(v); });
   // Dropdown behaviors
   document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
@@ -4759,6 +4808,8 @@ function init(){
   document.getElementById('modern-rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestModern(); });
   document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body' }); });
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
+  document.getElementById('timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'timecalc-start', hoursId:'timecalc-hours', minutesId:'timecalc-minutes', modeId:'timecalc-mode', outId:'timecalc-out' }); });
+  document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out' }); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
     const toggleBanner = () => {

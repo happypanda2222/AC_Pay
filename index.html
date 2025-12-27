@@ -671,6 +671,7 @@
             <button class="tabbtn active" data-tab="modern-duty" id="tabbtn-modern-duty">Duty</button>
             <button class="tabbtn" data-tab="modern-rest" id="tabbtn-modern-rest">Rest</button>
             <button class="tabbtn" data-tab="modern-time-converter" id="tabbtn-modern-time-converter">Time Converter</button>
+            <button class="tabbtn" data-tab="modern-time-calculator" id="tabbtn-modern-time-calculator">Time Calculator</button>
           </div>
 
           <div id="modern-duty" class="modern-tab">
@@ -755,11 +756,11 @@
                 <div class="modern-cta"><button id="modern-duty-calc" class="btn-primary" type="button">Calculate max duty</button></div>
               </div>
               <div class="modern-panel">
-                <h3>Result</h3>
-                <div id="modern-duty-out"></div>
-                <div class="muted-note" id="modern-duty-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
-              </div>
+              <h3>Result</h3>
+              <div id="modern-duty-out"></div>
+              <div class="muted-note" id="modern-duty-utc-clock" aria-live="polite">Current UTC: --:-- -- ---</div>
             </div>
+          </div>
           </div>
 
           <div id="modern-rest" class="modern-tab hidden">
@@ -848,6 +849,42 @@
                   </div>
                 </div>
                 <div class="muted-note" id="modern-time-note">Enter a local or UTC time to convert.</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="modern-time-calculator" class="modern-tab hidden">
+            <div class="modern-grid">
+              <div class="modern-panel">
+                <h3>Time calculator</h3>
+                <div class="stacked-fields">
+                  <div>
+                    <label>Start time</label>
+                    <input id="modern-timecalc-start" type="time">
+                  </div>
+                  <div class="two-col">
+                    <div>
+                      <label>Hours</label>
+                      <input id="modern-timecalc-hours" type="number" min="0" step="1" value="0">
+                    </div>
+                    <div>
+                      <label>Minutes</label>
+                      <input id="modern-timecalc-minutes" type="number" min="0" max="59" step="1" value="0">
+                    </div>
+                  </div>
+                  <div>
+                    <label>Add or subtract</label>
+                    <select id="modern-timecalc-mode">
+                      <option value="add" selected>Add</option>
+                      <option value="subtract">Subtract</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="modern-cta"><button id="modern-timecalc-run" class="btn-primary" type="button">Calculate time</button></div>
+              </div>
+              <div class="modern-panel">
+                <h3>Result <span class="info-hover" tabindex="0" aria-label="Times wrap to 24 hours; the day offset shows how far the answer is from the start day."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Times wrap to 24 hours. The day offset shows how far the answer is from the start day.</span></span></h3>
+                <div id="modern-timecalc-out"></div>
               </div>
             </div>
           </div>
@@ -1184,6 +1221,7 @@
         <button class="tabbtn active" data-tab="duty" id="tabbtn-duty">Duty</button>
         <button class="tabbtn" data-tab="rest" id="tabbtn-rest">Rest</button>
         <button class="tabbtn" data-tab="time-converter" id="tabbtn-time-converter">Time Converter</button>
+        <button class="tabbtn" data-tab="time-calculator" id="tabbtn-time-calculator">Time Calculator</button>
       </div>
 
       <div id="tab-duty">
@@ -1371,6 +1409,41 @@
           </div>
         </div>
         <div class="muted-note" id="time-note">Enter a local or UTC time to convert.</div>
+      </div>
+
+      <div id="tab-time-calculator" class="hidden">
+        <div class="sectionTitle">Time calculator <span class="info-hover" tabindex="0" aria-label="Times wrap to 24 hours; the day offset shows how far the answer is from the start day."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Times wrap to 24 hours. The day offset shows how far the answer is from the start day.</span></span></div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Start time</label>
+            <input id="timecalc-start" type="time">
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Hours</label>
+            <input id="timecalc-hours" type="number" min="0" step="1" value="0">
+          </div>
+          <div>
+            <label>Minutes</label>
+            <input id="timecalc-minutes" type="number" min="0" max="59" step="1" value="0">
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Add or subtract</label>
+            <select id="timecalc-mode">
+              <option value="add" selected>Add</option>
+              <option value="subtract">Subtract</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <button id="timecalc-run" class="btn" type="button">Calculate time</button>
+          </div>
+        </div>
+        <div id="timecalc-out"></div>
       </div>
     </div>
 
