@@ -1670,6 +1670,30 @@ function buildFinPrBody(diffs){
   return lines.join('\n');
 }
 
+function detectClientPlatform(){
+  const ua = navigator.userAgent || '';
+  const platform = navigator.platform || '';
+  const maxTouchPoints = navigator.maxTouchPoints || 0;
+  const isIos = /iP(hone|od|ad)/i.test(platform)
+    || /iPhone|iPad|iPod/i.test(ua)
+    || (platform === 'MacIntel' && maxTouchPoints > 1);
+  const isMac = /Macintosh|Mac OS X/i.test(ua) && !isIos;
+  return { isIos, isMac };
+}
+
+function openGitHubPrDestination(url){
+  if (!url) return;
+  const { isIos, isMac } = detectClientPlatform();
+  if (isIos){
+    window.location.href = url; // iOS will hand off to the GitHub app if installed
+    return;
+  }
+  const win = window.open(url, '_blank', isMac ? 'noopener,noreferrer' : undefined);
+  if (!win){
+    window.location.href = url;
+  }
+}
+
 async function exportFinConfigsToGitHub({ statusId }){
   const statusEl = document.getElementById(statusId);
   const setStatus = (msg, isError=false) => {
@@ -1760,7 +1784,7 @@ async function exportFinConfigsToGitHub({ statusId }){
     });
     const url = pr?.html_url;
     setStatus(url ? `Pull request created: ${url}` : 'Pull request created.');
-    if (url) window.open(url, '_blank');
+    if (url) openGitHubPrDestination(url);
   } catch (err){
     setStatus(`Export failed: ${err.message}`, true);
   }
