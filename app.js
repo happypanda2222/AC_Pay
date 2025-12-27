@@ -2516,24 +2516,6 @@ function tieYearStepFromStepModernVO(){
   yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
 }
 
-function switchUIMode(mode){
-  const legacy = document.getElementById('legacy-ui');
-  const modern = document.getElementById('modern-ui');
-  const selector = document.getElementById('ui-mode');
-  if (selector && selector.value !== mode) selector.value = mode;
-  if (mode === 'legacy'){
-    document.body.dataset.ui = 'legacy';
-    if (modern) modern.classList.add('hidden');
-    if (legacy) legacy.classList.remove('hidden');
-    setLegacyPrimaryTab('pay');
-  } else {
-    document.body.dataset.ui = 'modern';
-    if (modern) modern.classList.remove('hidden');
-    if (legacy) legacy.classList.add('hidden');
-    setModernPrimaryTab('modern-pay');
-  }
-}
-
 // --- Weather helpers (METAR/TAF decoding) ---
 function escapeHtml(str=''){
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -5246,22 +5228,13 @@ function init(){
   updateVersionBadgeFromSW();
   purgeLegacyFinSyncSettings();
   startUtcClock([
-    'legacy-utc-clock',
     'modern-utc-clock',
-    'legacy-duty-utc-clock',
-    'legacy-rest-utc-clock',
     'modern-duty-utc-clock',
     'modern-rest-utc-clock'
   ]);
-  switchUIMode('modern');
-  // Tabs
-  document.getElementById('tabbtn-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('pay'); });
-  document.getElementById('tabbtn-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('weather'); });
-  document.getElementById('tabbtn-duty-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('duty-rest'); });
-  document.getElementById('tabbtn-fin')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyPrimaryTab('fin'); });
-  document.getElementById('tabbtn-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('annual'); });
-  document.getElementById('tabbtn-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('monthly'); });
-  document.getElementById('tabbtn-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('vo'); });
+  setModernPrimaryTab('modern-pay');
+  setModernSubTab('modern-annual');
+  setModernDutyTab('modern-duty');
   document.getElementById('tabbtn-modern-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-pay'); });
   document.getElementById('tabbtn-modern-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-weather'); });
   document.getElementById('tabbtn-modern-duty-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-duty-rest'); });
@@ -5269,75 +5242,41 @@ function init(){
   document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
   document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
   document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
-  document.getElementById('tabbtn-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('duty'); });
-  document.getElementById('tabbtn-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('rest'); });
-  document.getElementById('tabbtn-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('time-converter'); });
-  document.getElementById('tabbtn-time-calculator')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacyDutyTab('time-calculator'); });
   document.getElementById('tabbtn-modern-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-duty'); });
   document.getElementById('tabbtn-modern-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-rest'); });
   document.getElementById('tabbtn-modern-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-converter'); });
   document.getElementById('tabbtn-modern-time-calculator')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-calculator'); });
-  document.getElementById('ui-mode')?.addEventListener('change', (e)=>{ const v=e.target.value==='legacy'?'legacy':'modern'; switchUIMode(v); });
   // Dropdown behaviors
-  document.getElementById('seat')?.addEventListener('change', ()=>onSeatChange(false));
-  document.getElementById('ot-seat')?.addEventListener('change', ()=>onSeatChange(true));
-  document.getElementById('mon-seat')?.addEventListener('change', ()=>onSeatChangeMonthly());
   document.getElementById('modern-seat')?.addEventListener('change', ()=>onSeatChangeModern());
   document.getElementById('modern-ot-seat')?.addEventListener('change', ()=>onSeatChangeModernVO());
   document.getElementById('modern-mon-seat')?.addEventListener('change', ()=>onSeatChangeModernMonthly());
-  document.getElementById('year')?.addEventListener('change', ()=>tieYearStepFromYear(false));
-  document.getElementById('ot-year')?.addEventListener('change', ()=>tieYearStepFromYear(true));
-  document.getElementById('mon-year')?.addEventListener('change', ()=>tieYearStepFromYearMonthly());
   document.getElementById('modern-year')?.addEventListener('change', ()=>tieYearStepFromYearModern());
   document.getElementById('modern-ot-year')?.addEventListener('change', ()=>tieYearStepFromYearModernVO());
   document.getElementById('modern-mon-year')?.addEventListener('change', ()=>tieYearStepFromYearModernMonthly());
-  document.getElementById('step')?.addEventListener('change', ()=>tieYearStepFromStep(false));
-  document.getElementById('ot-step')?.addEventListener('change', ()=>tieYearStepFromStep(true));
-  document.getElementById('mon-step')?.addEventListener('change', ()=>tieYearStepFromStepMonthly());
   document.getElementById('modern-step')?.addEventListener('change', ()=>tieYearStepFromStepModern());
   document.getElementById('modern-ot-step')?.addEventListener('change', ()=>tieYearStepFromStepModernVO());
   document.getElementById('modern-mon-step')?.addEventListener('change', ()=>tieYearStepFromStepModernMonthly());
-  document.getElementById('rrsp')?.addEventListener('input', ()=>syncAdvancedRrsp(false));
-  document.getElementById('rrsp')?.addEventListener('change', ()=>syncAdvancedRrsp(false));
   document.getElementById('modern-rrsp')?.addEventListener('input', ()=>syncAdvancedRrsp(true));
   document.getElementById('modern-rrsp')?.addEventListener('change', ()=>syncAdvancedRrsp(true));
-  document.getElementById('duty-type')?.addEventListener('change', ()=>toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields'));
   document.getElementById('modern-duty-type')?.addEventListener('change', ()=>toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields'));
-  document.getElementById('duty-mode')?.addEventListener('change', ()=>{ toggleDutyModeFields('duty-mode','tab-duty'); updateAugmentedFacilityOptions('duty-crew','duty-rest-facility'); });
   document.getElementById('modern-duty-mode')?.addEventListener('change', ()=>{ toggleDutyModeFields('modern-duty-mode','modern-duty'); updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility'); });
-  document.getElementById('duty-crew')?.addEventListener('change', ()=>updateAugmentedFacilityOptions('duty-crew','duty-rest-facility'));
   document.getElementById('modern-duty-crew')?.addEventListener('change', ()=>updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility'));
-  document.getElementById('rest-duty-type')?.addEventListener('change', ()=>toggleRestFields('rest-duty-type','rest-unaug-fields'));
   document.getElementById('modern-rest-duty-type')?.addEventListener('change', ()=>toggleRestFields('modern-rest-duty-type','modern-rest-unaug-fields'));
   // ESOP slider labels
-  const esopEl=document.getElementById('esop'); const esopPct=document.getElementById('esopPct');
-  if (esopEl && esopPct){ esopEl.addEventListener('input', ()=>{ esopPct.textContent = esopEl.value+'%'; }); }
-  const monEsopEl=document.getElementById('mon-esop'); const monEsopPct=document.getElementById('mon-esopPct');
-  if (monEsopEl && monEsopPct){ monEsopEl.addEventListener('input', ()=>{ monEsopPct.textContent = monEsopEl.value+'%'; }); }
   const newEsopEl=document.getElementById('modern-esop'); const newEsopPct=document.getElementById('modern-esopPct');
   if (newEsopEl && newEsopPct){ newEsopEl.addEventListener('input', ()=>{ newEsopPct.textContent = newEsopEl.value+'%'; }); }
   const newMonEsopEl=document.getElementById('modern-mon-esop'); const newMonEsopPct=document.getElementById('modern-mon-esopPct');
   if (newMonEsopEl && newMonEsopPct){ newMonEsopEl.addEventListener('input', ()=>{ newMonEsopPct.textContent = newMonEsopEl.value+'%'; }); }
   // Buttons
-  document.getElementById('calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnual(); });
-  document.getElementById('adv-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAdvancedReturn(false); });
-  document.getElementById('adv-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setLegacySubTab('annual'); });
-  document.getElementById('ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVO(); });
-  document.getElementById('mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthly(); });
   document.getElementById('modern-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
   document.getElementById('modern-adv-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAdvancedReturn(true); });
   document.getElementById('modern-adv-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
   document.getElementById('modern-ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
   document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
-  document.getElementById('duty-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcDutyLegacy(); });
-  document.getElementById('rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestLegacy(); });
   document.getElementById('modern-duty-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcDutyModern(); });
   document.getElementById('modern-rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestModern(); });
-  document.getElementById('wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'wx-dep', arrId:'wx-arr', depHrsId:'wx-dep-hrs', arrHrsId:'wx-arr-hrs', outId:'wx-out', rawId:'wx-raw-body' }); });
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
-  document.getElementById('timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'timecalc-start', hoursId:'timecalc-hours', minutesId:'timecalc-minutes', modeId:'timecalc-mode', outId:'timecalc-out', converterTarget:'legacy' }); });
   document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out', converterTarget:'modern' }); });
-  document.getElementById('fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'fin-export-status' }); });
   document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
@@ -5355,44 +5294,28 @@ function init(){
     });
   }
   // Tab defaults
-  setLegacyPrimaryTab('pay');
-  setLegacySubTab('annual');
-  setLegacyDutyTab('duty');
   setModernPrimaryTab('modern-pay');
   setModernSubTab('modern-annual');
   setModernDutyTab('modern-duty');
   // Defaults
-  onSeatChange(false);
-  onSeatChange(true);
-  onSeatChangeMonthly();
   onSeatChangeModern();
   onSeatChangeModernVO();
   onSeatChangeModernMonthly();
-  tieYearStepFromYear(false);
-  tieYearStepFromYear(true);
-  tieYearStepFromYearMonthly();
   tieYearStepFromYearModern();
   tieYearStepFromYearModernVO();
   tieYearStepFromYearModernMonthly();
-  toggleDutyFields('duty-type','duty-unaug-fields','duty-aug-fields');
+  tieYearStepFromStepModern();
+  tieYearStepFromStepModernVO();
+  tieYearStepFromStepModernMonthly();
   toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields');
-  toggleDutyModeFields('duty-mode','tab-duty');
   toggleDutyModeFields('modern-duty-mode','modern-duty');
-  updateAugmentedFacilityOptions('duty-crew','duty-rest-facility');
   updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility');
-  toggleRestFields('rest-duty-type','rest-unaug-fields');
   toggleRestFields('modern-rest-duty-type','modern-rest-unaug-fields');
-  calcDutyLegacy();
   calcDutyModern();
-  calcRestLegacy();
   calcRestModern();
-  initTimeConverterModeSwitch({ selectId: 'time-mode', utcGroupId: 'time-utc-group', otherGroupId: 'time-other-group', noteId: 'time-note' });
   initTimeConverterModeSwitch({ selectId: 'modern-time-mode', utcGroupId: 'modern-time-utc-group', otherGroupId: 'modern-time-other-group', noteId: 'modern-time-note' });
-  attachTimeConverter({ airportId: 'time-airport', localId: 'time-local', utcId: 'time-utc', noteId: 'time-note' });
-  attachAirportToAirportConverter({ fromAirportId: 'time-from-airport', toAirportId: 'time-to-airport', fromTimeId: 'time-from', toTimeId: 'time-to', noteId: 'time-note' });
   attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
   attachAirportToAirportConverter({ fromAirportId: 'modern-time-from-airport', toAirportId: 'modern-time-to-airport', fromTimeId: 'modern-time-from', toTimeId: 'modern-time-to', noteId: 'modern-time-note' });
-  attachFinLookup({ inputId: 'fin-input', outId: 'fin-out' });
   attachFinLookup({ inputId: 'modern-fin-input', outId: 'modern-fin-out' });
   investigateBackgroundFinSync();
   // After initializing defaults and tie logic, automatically select the
@@ -5400,7 +5323,6 @@ function init(){
   // lock the controls.  If tie checkboxes remain unchecked, this does
   // nothing beyond setting defaults.
   autoSelectDefaults();
-  syncAdvancedRrsp(false);
   syncAdvancedRrsp(true);
   // Sensible placeholders for weather tab
   const depWx = document.getElementById('wx-dep'); if (depWx && !depWx.value) depWx.value = 'YWG';
