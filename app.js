@@ -72,7 +72,7 @@ const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
 const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const FIN_CONFIGS = [
-  { type: 'Test3', finStart: 1, finEnd: 1, j: 0, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 0, notes: 'Test' },
+  { type: 'Test4', finStart: 1, finEnd: 1, j: 0, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 0, notes: 'Test' },
   { type: 'A220', finStart: 101, finEnd: 137, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A320 Jetz', finStart: 225, finEnd: 225, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
   { type: 'A320 Jetz', finStart: 226, finEnd: 226, j: 70, o: 0, y: 0, fdjs: 1, ofcr: 0, ccjs: 5 },
