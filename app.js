@@ -1881,7 +1881,7 @@ async function investigateBackgroundFinSync(){
   return result;
 }
 
-const finDeleteState = { fin: null, outEl: null };
+const finDeleteState = { fin: null };
 
 function getFinDeleteOverlay(){
   let overlay = document.getElementById('fin-delete-overlay');
@@ -1909,9 +1909,8 @@ function getFinDeleteOverlay(){
   overlay.querySelector('[data-fin-delete-cancel]').addEventListener('click', closeFinDeleteOverlay);
   overlay.querySelector('[data-fin-delete-confirm]').addEventListener('click', () => {
     const fin = finDeleteState.fin;
-    const outEl = finDeleteState.outEl;
-    if (removeCustomFinConfig(fin) && outEl){
-      renderFinResult(outEl, fin);
+    if (removeCustomFinConfig(fin)){
+      refreshFinResults();
     }
     closeFinDeleteOverlay();
   });
@@ -1919,11 +1918,10 @@ function getFinDeleteOverlay(){
   return overlay;
 }
 
-function openFinDeleteOverlay(fin, outEl){
+function openFinDeleteOverlay(fin){
   const overlay = getFinDeleteOverlay();
   const message = overlay.querySelector('[data-fin-delete-message]');
   finDeleteState.fin = fin;
-  finDeleteState.outEl = outEl;
   if (message){
     message.textContent = `Are you sure you want to delete fin ${fin}?`;
   }
@@ -1937,7 +1935,6 @@ function closeFinDeleteOverlay(){
     overlay.classList.add('hidden');
   }
   finDeleteState.fin = null;
-  finDeleteState.outEl = null;
 }
 
 function renderFinResult(outEl, finValue){
@@ -2025,7 +2022,7 @@ function attachFinLookup({ inputId, outId }){
       }
       if (action === 'delete'){
         if (findCustomFinConfig(fin)){
-          openFinDeleteOverlay(fin, out);
+          openFinDeleteOverlay(fin);
         }
         return;
       }
