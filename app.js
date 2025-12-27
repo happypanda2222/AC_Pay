@@ -4250,7 +4250,18 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         : '');
     const probWindText = prob.wind ? formatWind(prob.wind) : '';
     const probObstructionText = prob.obstruction?.token ? prob.obstruction.token : '';
-    const withProbSuffix = (baseText, probText) => probText ? `${baseText} (${probText})` : baseText;
+    const withProbSuffix = (baseText, probText) => {
+      const normalize = (text) => String(text || '').trim().replace(/\s+/g, ' ').toUpperCase();
+      const baseNorm = normalize(baseText);
+      const probNorm = normalize(probText);
+      const hasBase = Boolean(baseNorm);
+      const hasProb = Boolean(probNorm);
+      if (!hasProb && !hasBase) return '';
+      if (!hasProb) return baseText;
+      if (!hasBase) return probText;
+      if (baseNorm === probNorm) return baseText;
+      return `${baseText} (${probText})`;
+    };
     const ceilTxt = (a.ceiling !== null && a.ceiling !== undefined)
       ? `${a.ceiling} ft`
       : (a.skyClear ? 'SKC' : 'No ceiling');
