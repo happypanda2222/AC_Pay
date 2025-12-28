@@ -404,6 +404,11 @@ const FOM_AUGMENTED_FDP_TABLE = [
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
 const WEATHER_MAX_ATTEMPTS = 5;
 const WEATHER_RETRY_DELAY_MS = 500;
+const WEATHER_PREFETCH_INTERVAL_MS = 5 * 60 * 1000;
+const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
+const WEATHER_PREFETCH_DELAY_MS = 250;
+const MAJOR_CANADIAN_AIRPORTS = ['CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYWG', 'CYHZ', 'CYQB', 'CYQR'];
+const MAJOR_US_AIRPORTS = ['KJFK', 'KLAX', 'KORD', 'KATL', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
 const DEPARTURE_METAR_THRESHOLD_HRS = 1;
 const METAR_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`,
@@ -1850,13 +1855,31 @@ async function putGitHubFileContent({ owner, repo, branch, path, token, message,
 
 async function ensureFinExportSettings(){
   const current = loadFinExportSettings();
-  const repoPrompt = prompt('GitHub repo (owner/name)', current.owner && current.repo ? `${current.owner}/${current.repo}` : '');
-  if (!repoPrompt) return null;
-  const [owner, repo] = repoPrompt.split('/').map(part => String(part ?? '').trim());
-  if (!owner || !repo) return null;
-  const baseBranch = prompt('Base branch', current.baseBranch || 'main') || 'main';
-  const token = prompt('GitHub token (repo scope)', current.token || '');
-  if (!token) return null;
+  const hasRepo = Boolean(current.owner && current.repo);
+  const hasBranch = Boolean(current.baseBranch);
+  const hasToken = Boolean(current.token);
+  if (hasRepo && hasBranch && hasToken){
+    return current;
+  }
+  let owner = current.owner;
+  let repo = current.repo;
+  let baseBranch = current.baseBranch || 'main';
+  let token = current.token;
+  if (!hasRepo){
+    const repoPrompt = prompt('GitHub repo (owner/name)', current.owner && current.repo ? `${current.owner}/${current.repo}` : '');
+    if (!repoPrompt) return null;
+    const [ownerInput, repoInput] = repoPrompt.split('/').map(part => String(part ?? '').trim());
+    if (!ownerInput || !repoInput) return null;
+    owner = ownerInput;
+    repo = repoInput;
+  }
+  if (!hasBranch){
+    baseBranch = prompt('Base branch', baseBranch || 'main') || 'main';
+  }
+  if (!hasToken){
+    token = prompt('GitHub token (repo scope)', token || '');
+    if (!token) return null;
+  }
   const settings = { owner, repo, baseBranch, token };
   saveFinExportSettings(settings);
   return settings;
@@ -4374,6 +4397,54 @@ async function fetchWeatherForAirport(icao){
     : '';
   return { icao, name, metar: finalMetar, taf: finalTaf, weatherWarning };
 }
+const weatherCache = new Map();
+let weatherPrefetchTimer = null;
+let weatherPrefetchInFlight = false;
+function cacheWeatherResult(icao, data){
+  if (!icao || !data) return;
+  weatherCache.set(String(icao).toUpperCase(), { data, fetchedAt: Date.now() });
+}
+function getCachedWeather(icao){
+  const entry = weatherCache.get(String(icao || '').toUpperCase());
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > WEATHER_CACHE_TTL_MS) return null;
+  return entry.data;
+}
+async function getWeatherForAirport(icao, { forceRefresh = false } = {}){
+  const code = String(icao || '').toUpperCase();
+  if (!forceRefresh){
+    const cached = getCachedWeather(code);
+    if (cached) return cached;
+  }
+  const fresh = await fetchWeatherForAirport(code);
+  cacheWeatherResult(code, fresh);
+  return fresh;
+}
+async function prefetchWeatherAirports(list, label){
+  for (const icao of list){
+    try {
+      await getWeatherForAirport(icao, { forceRefresh: true });
+    } catch (err){
+      console.warn(`Weather prefetch failed for ${label} airport ${icao}`, err);
+    }
+    await sleep(WEATHER_PREFETCH_DELAY_MS);
+  }
+}
+async function runWeatherPrefetchCycle(){
+  if (weatherPrefetchInFlight) return;
+  weatherPrefetchInFlight = true;
+  try {
+    await prefetchWeatherAirports(MAJOR_CANADIAN_AIRPORTS, 'Canadian');
+    await prefetchWeatherAirports(MAJOR_US_AIRPORTS, 'US');
+  } finally {
+    weatherPrefetchInFlight = false;
+  }
+}
+function startWeatherPrefetchLoop(){
+  runWeatherPrefetchCycle();
+  if (weatherPrefetchTimer) clearInterval(weatherPrefetchTimer);
+  weatherPrefetchTimer = setInterval(runWeatherPrefetchCycle, WEATHER_PREFETCH_INTERVAL_MS);
+}
 function metarTimeMs(metar){
   if (!metar) return null;
   if (metar.reportTime) return Date.parse(metar.reportTime);
@@ -4607,7 +4678,7 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
     const uniqueIcao = Array.from(new Set([depIcao, arrIcao]));
     const weatherMap = {};
     for (const icao of uniqueIcao){
-      weatherMap[icao] = await fetchWeatherForAirport(icao);
+      weatherMap[icao] = await getWeatherForAirport(icao);
     }
     const now = Date.now();
     const assessments = [
@@ -5618,6 +5689,7 @@ function init(){
   const arrWx = document.getElementById('wx-arr'); if (arrWx && !arrWx.value) arrWx.value = 'YYZ';
   const depWxM = document.getElementById('modern-wx-dep'); if (depWxM && !depWxM.value) depWxM.value = 'YWG';
   const arrWxM = document.getElementById('modern-wx-arr'); if (arrWxM && !arrWxM.value) arrWxM.value = 'YYZ';
+  startWeatherPrefetchLoop();
 }
 if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', init); } else { init(); }
 // PWA: register the service worker
