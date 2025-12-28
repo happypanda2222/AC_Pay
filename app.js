@@ -4115,7 +4115,9 @@ function wxTokenSeverity(token){
 function parseObstructionFromWxString(wxString){
   if (!wxString) return null;
   const tokens = String(wxString).trim().split(/\s+/).filter(Boolean);
-  const candidates = tokens.map(token => {
+  const remarkBoundaryIdx = tokens.findIndex(tok => String(tok).toUpperCase() === 'RMK');
+  const weatherTokens = remarkBoundaryIdx === -1 ? tokens : tokens.slice(0, remarkBoundaryIdx);
+  const candidates = weatherTokens.map(token => {
     const score = wxTokenSeverity(token);
     return score === null ? null : { token, score };
   }).filter(Boolean);
