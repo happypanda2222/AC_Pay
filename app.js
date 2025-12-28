@@ -4363,6 +4363,9 @@ function pickFirstWeatherRecord(payload, arrayKeys){
   }
   return null;
 }
+function hasWeatherData(record){
+  return Boolean(record?.metar || record?.taf);
+}
 async function fetchJsonWeatherRecord(builders, icao, label, keys){
   for (const buildUrl of builders){
     const url = buildUrl(icao);
@@ -4415,11 +4418,28 @@ async function getWeatherForAirport(icao, { forceRefresh = false } = {}){
   const code = String(icao || '').toUpperCase();
   if (!forceRefresh){
     const cached = getCachedWeather(code);
-    if (cached) return cached;
+    if (hasWeatherData(cached)) return cached;
   }
-  const fresh = await fetchWeatherForAirport(code);
-  cacheWeatherResult(code, fresh);
-  return fresh;
+  let lastResult = null;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= WEATHER_MAX_ATTEMPTS; attempt += 1){
+    try {
+      const fresh = await fetchWeatherForAirport(code);
+      lastResult = fresh;
+      if (hasWeatherData(fresh)){
+        cacheWeatherResult(code, fresh);
+        return fresh;
+      }
+    } catch(err){
+      lastErr = err;
+    }
+    if (attempt < WEATHER_MAX_ATTEMPTS) await sleep(WEATHER_RETRY_DELAY_MS);
+  }
+  const warningPrefix = `Unable to download weather after ${WEATHER_MAX_ATTEMPTS} attempts.`;
+  const warningSuffix = lastErr ? ` Last error: ${lastErr.message || lastErr}` : '';
+  const result = lastResult ? { ...lastResult } : { icao: code, name: code, metar: null, taf: null, weatherWarning: '' };
+  result.weatherWarning = result.weatherWarning || `${warningPrefix}${warningSuffix}`;
+  return result;
 }
 async function prefetchWeatherAirports(list, label){
   for (const icao of list){
