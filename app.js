@@ -3121,15 +3121,23 @@ function parseTafRawForecasts(rawTAF, icao){
   }
   const finalBase = buildSegment(baseTokens, baseStartMs, validToMs, baseIndicator);
   if (finalBase) baseSegments.push(finalBase);
+  const isProbOverlay = (seg) => /^PROB/.test(String(seg?.changeIndicator || '').toUpperCase());
+  const findCarrierSegment = (seg) => {
+    const overlayCarrier = overlaySegments.find(o =>
+      o && o !== seg && !isProbOverlay(o) && seg.timeFrom < o.timeTo && seg.timeTo > o.timeFrom
+    );
+    if (overlayCarrier) return overlayCarrier;
+    return baseSegments.find(b => seg.timeFrom < b.timeTo && seg.timeTo > b.timeFrom) || null;
+  };
   const overlaysWithBase = overlaySegments.map(seg => {
     if (!seg) return null;
-    const base = baseSegments.find(b => seg.timeFrom < b.timeTo && seg.timeTo > b.timeFrom);
-    if (!base) return seg;
+    const carrier = findCarrierSegment(seg);
+    if (!carrier) return seg;
     return {
       ...seg,
-      visib: seg.visib ?? base.visib ?? null,
-      vertVis: seg.vertVis ?? base.vertVis ?? null,
-      clouds: (Array.isArray(seg.clouds) && seg.clouds.length) ? seg.clouds : (base.clouds || [])
+      visib: seg.visib ?? carrier.visib ?? null,
+      vertVis: seg.vertVis ?? carrier.vertVis ?? null,
+      clouds: (Array.isArray(seg.clouds) && seg.clouds.length) ? seg.clouds : (carrier.clouds || [])
     };
   }).filter(Boolean);
   const fcsts = [...baseSegments, ...overlaysWithBase].filter(Boolean);
@@ -4218,6 +4226,7 @@ function worstConditionsFromSegments(ordered, segments){
   let worstVisibilityRaw = null;
   let worstWind = null;
   let worstObstruction = null;
+  let worstWxRaw = '';
   segments.forEach(seg => {
     const ceiling = ceilingWithCarry(ordered, seg);
     if (ceiling !== null && ceiling !== undefined){
@@ -4235,14 +4244,25 @@ function worstConditionsFromSegments(ordered, segments){
     if (wind){
       worstWind = compareWindSeverity(worstWind, wind);
     }
+    const wxRaw = wxWithCarry(ordered, seg);
     const obstruction = obstructionWithCarry(ordered, seg);
     if (obstruction){
       worstObstruction = worstObstruction
         ? (obstruction.score > worstObstruction.score ? obstruction : worstObstruction)
         : obstruction;
+      if (!worstWxRaw || obstruction === worstObstruction){
+        worstWxRaw = wxRaw || obstruction.token || worstWxRaw;
+      }
     }
   });
-  return { ceiling: worstCeiling, visibility: worstVisibility, visibilityRaw: worstVisibilityRaw, wind: worstWind, obstruction: worstObstruction };
+  return {
+    ceiling: worstCeiling,
+    visibility: worstVisibility,
+    visibilityRaw: worstVisibilityRaw,
+    wind: worstWind,
+    obstruction: worstObstruction,
+    wxRaw: worstWxRaw
+  };
 }
 function tafWorstConditionsForTime(fcsts, targetMs){
   if (!Array.isArray(fcsts) || !fcsts.length) {
@@ -4269,7 +4289,8 @@ function tafWorstConditionsForTime(fcsts, targetMs){
     visibility: null,
     visibilityRaw: null,
     wind: null,
-    obstruction: null
+    obstruction: null,
+    wxRaw: ''
   };
   const probSkyClear = probSegments.some(seg => hasSkyClear(seg));
   return {
@@ -4612,7 +4633,8 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         ? formatVisibilityDisplay(prob.visibility, prob.visibilityRaw ?? a.probVisibilityRaw, { icao: a.icao })
         : '');
     const probWindText = prob.wind ? formatWind(prob.wind) : '';
-    const probObstructionText = prob.obstruction?.token ? prob.obstruction.token : '';
+    const probWxText = (prob.wxRaw || '').trim();
+    const probObstructionText = probWxText || (prob.obstruction?.token ? prob.obstruction.token : '');
     const withProbSuffix = (baseText, probText) => {
       const normalize = (text) => String(text || '').trim().replace(/\s+/g, ' ').toUpperCase();
       const baseNorm = normalize(baseText);
@@ -4630,7 +4652,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
       : (a.skyClear ? 'SKC' : 'No ceiling');
     const visTxt = a.visibilityDisplay || formatVisibilityDisplay(a.visibility, a.visibilityRaw, { icao: a.icao });
     const windTxt = formatWind(a.wind);
-    const obstructionTxt = a.obstruction?.token ? a.obstruction.token : 'None reported';
+    const obstructionTxt = a.obstruction?.token ? a.obstruction.token : (a.wx || 'None reported');
     const ceilDisplay = withProbSuffix(ceilTxt, probCeilingText);
     const visDisplay = withProbSuffix(visTxt, probVisText);
     const windDisplay = withProbSuffix(windTxt, probWindText);
