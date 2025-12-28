@@ -410,6 +410,7 @@ const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
 const WEATHER_PREFETCH_DELAY_MS = 250;
 const MAJOR_CANADIAN_AIRPORTS = ['CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYWG', 'CYHZ', 'CYQB', 'CYQR'];
 const MAJOR_US_AIRPORTS = ['KJFK', 'KLAX', 'KORD', 'KATL', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
+const WEATHER_PREFETCH_SEQUENCE = [...MAJOR_CANADIAN_AIRPORTS, ...MAJOR_US_AIRPORTS];
 const DEPARTURE_METAR_THRESHOLD_HRS = 1;
 const METAR_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`,
@@ -4427,6 +4428,9 @@ async function fetchWeatherForAirport(icao){
 const weatherCache = new Map();
 let weatherPrefetchTimer = null;
 let weatherPrefetchInFlight = false;
+let weatherPrefetchAbort = false;
+let weatherPrefetchCursor = 0;
+let weatherPrefetchCyclePromise = null;
 function cacheWeatherResult(icao, data){
   if (!icao || !data) return;
   weatherCache.set(String(icao).toUpperCase(), { data, fetchedAt: Date.now() });
@@ -4466,28 +4470,65 @@ async function getWeatherForAirport(icao, { forceRefresh = false } = {}){
 }
 async function prefetchWeatherAirports(list, label){
   for (const icao of list){
+    if (weatherPrefetchAbort) return;
     try {
       await getWeatherForAirport(icao, { forceRefresh: true });
     } catch (err){
       console.warn(`Weather prefetch failed for ${label} airport ${icao}`, err);
     }
     await sleep(WEATHER_PREFETCH_DELAY_MS);
+    weatherPrefetchCursor = (weatherPrefetchCursor + 1) % WEATHER_PREFETCH_SEQUENCE.length;
   }
 }
+async function prefetchWeatherSequenceFromCursor(){
+  const start = weatherPrefetchCursor % WEATHER_PREFETCH_SEQUENCE.length;
+  const ordered = WEATHER_PREFETCH_SEQUENCE.slice(start).concat(WEATHER_PREFETCH_SEQUENCE.slice(0, start));
+  await prefetchWeatherAirports(ordered, 'Prefetch');
+  if (!weatherPrefetchAbort) weatherPrefetchCursor = 0;
+}
 async function runWeatherPrefetchCycle(){
-  if (weatherPrefetchInFlight) return;
+  if (weatherPrefetchInFlight) return weatherPrefetchCyclePromise;
   weatherPrefetchInFlight = true;
-  try {
-    await prefetchWeatherAirports(MAJOR_CANADIAN_AIRPORTS, 'Canadian');
-    await prefetchWeatherAirports(MAJOR_US_AIRPORTS, 'US');
-  } finally {
-    weatherPrefetchInFlight = false;
+  weatherPrefetchAbort = false;
+  const cycle = (async () => {
+    try {
+      await prefetchWeatherSequenceFromCursor();
+    } finally {
+      weatherPrefetchInFlight = false;
+      weatherPrefetchCyclePromise = null;
+    }
+  })();
+  weatherPrefetchCyclePromise = cycle;
+  return cycle;
+}
+async function pauseWeatherPrefetch(){
+  weatherPrefetchAbort = true;
+  if (weatherPrefetchCyclePromise){
+    try {
+      await weatherPrefetchCyclePromise;
+    } catch (err){
+      console.warn('Weather prefetch cycle ended with error', err);
+    }
   }
 }
 function startWeatherPrefetchLoop(){
   runWeatherPrefetchCycle();
   if (weatherPrefetchTimer) clearInterval(weatherPrefetchTimer);
   weatherPrefetchTimer = setInterval(runWeatherPrefetchCycle, WEATHER_PREFETCH_INTERVAL_MS);
+}
+async function fetchWeatherWithPriority(airports, fetcher){
+  const targets = Array.from(new Set((airports || []).map(code => String(code || '').toUpperCase()).filter(Boolean)));
+  await pauseWeatherPrefetch();
+  try {
+    const result = {};
+    for (const icao of targets){
+      result[icao] = await fetcher(icao);
+    }
+    return result;
+  } finally {
+    weatherPrefetchAbort = false;
+    runWeatherPrefetchCycle();
+  }
 }
 function metarTimeMs(metar){
   if (!metar) return null;
@@ -4721,10 +4762,7 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
     if (!Number.isFinite(arrHrs) || arrHrs < 0) throw new Error('Arrival time must be zero or greater.');
     const [depIcao, arrIcao] = await Promise.all([resolveAirportCode(depCode), resolveAirportCode(arrCode)]);
     const uniqueIcao = Array.from(new Set([depIcao, arrIcao]));
-    const weatherMap = {};
-    for (const icao of uniqueIcao){
-      weatherMap[icao] = await getWeatherForAirport(icao);
-    }
+    const weatherMap = await fetchWeatherWithPriority(uniqueIcao, (icao) => getWeatherForAirport(icao));
     const now = Date.now();
     const assessments = [
       summarizeWeatherWindow(
