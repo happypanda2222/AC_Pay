@@ -92,6 +92,7 @@ function expandFinConfigList(list){
 }
 
 const FIN_CONFIGS = expandFinConfigList([
+  { type: 'Test12', finStart: 1, finEnd: 1, j: 0, o: 0, y: 0, fdjs: 5, ofcr: 0, ccjs: 0 },
   { type: 'A220', finStart: 101, finEnd: 101, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A220', finStart: 102, finEnd: 102, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A220', finStart: 103, finEnd: 103, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
