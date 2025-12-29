@@ -4530,224 +4530,23 @@ async function fetchWeatherWithPriority(airports, fetcher){
     runWeatherPrefetchCycle();
   }
 }
-const AI_WEATHER_MODEL_KEY = 'ac-ai-weather-model-v1';
-const AI_LEARNING_RATE = 0.08;
-const AI_PENDING_RETENTION_MS = 18 * 3600000;
-const AI_LEARNING_TOLERANCE_MS = 2 * 3600000;
-const AI_MAX_PENDING = 240;
-const AI_WEATHER_DEFAULT = {
-  version: 1,
-  sourceWeights: { metar: 1, taf: 1, prob: 1.05 },
-  airportProfiles: {},
-  pendingEvaluations: [],
-  feedbackLog: []
-};
-function aiCloneDefaultModel(){
-  return {
-    version: AI_WEATHER_DEFAULT.version,
-    sourceWeights: { ...AI_WEATHER_DEFAULT.sourceWeights },
-    airportProfiles: {},
-    pendingEvaluations: [],
-    feedbackLog: []
-  };
-}
-function aiClamp(num, min, max){
-  return Math.max(min, Math.min(max, num));
-}
-function loadAiWeatherModel(){
-  const base = aiCloneDefaultModel();
-  try {
-    if (typeof localStorage === 'undefined') return base;
-    const raw = localStorage.getItem(AI_WEATHER_MODEL_KEY);
-    if (!raw) return base;
-    const parsed = JSON.parse(raw);
-    return {
-      ...base,
-      ...parsed,
-      sourceWeights: { ...base.sourceWeights, ...(parsed.sourceWeights || {}) },
-      airportProfiles: parsed.airportProfiles || {},
-      pendingEvaluations: Array.isArray(parsed.pendingEvaluations) ? parsed.pendingEvaluations : [],
-      feedbackLog: Array.isArray(parsed.feedbackLog) ? parsed.feedbackLog.slice(-120) : []
-    };
-  } catch(err){
-    console.warn('AI weather model load failed', err);
-    return base;
-  }
-}
-function persistAiWeatherModel(model){
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(AI_WEATHER_MODEL_KEY, JSON.stringify(model));
-  } catch(err){
-    console.warn('AI weather model persist failed', err);
-  }
-}
-let aiWeatherModel = loadAiWeatherModel();
-let latestWeatherContext = { mode:'legacy', assessments: [], weatherMap: {}, rawSources: [], outEl: null, rawEl: null };
-function aiEnsureAirportProfile(icao){
-  const code = String(icao || '').toUpperCase();
-  if (!code) return { bias:{ metar:1, taf:1, prob:1 }, flagged:0 };
-  if (!aiWeatherModel.airportProfiles[code]){
-    aiWeatherModel.airportProfiles[code] = { bias:{ metar:1, taf:1, prob:1 }, flagged:0, lastAdjusted:0 };
-  }
-  return aiWeatherModel.airportProfiles[code];
-}
-function aiWindStrength(wind){
-  if (!wind) return 0;
-  const speed = Number(wind.speed || wind.speedKts || 0);
-  const gust = Number(wind.gust || wind.gustKts || 0);
-  return Math.max(speed, gust, 0);
-}
-function aiObstructionToken(obstruction, wx){
-  if (obstruction?.token) return obstruction.token;
-  if (wx) return String(wx).trim().split(/\s+/)[0] || '';
-  return '';
-}
-function aiObservationFromMetar(metar, icao){
-  if (!metar) return null;
-  const ceiling = extractCeilingFt(metar.clouds, metar.vertVis);
-  const visibility = parseVisibilityToSM(metar.visib, { icao });
-  const wind = extractWindFromSegment(metar);
-  const obstruction = parseObstructionFromWxString(metar.wxString || metar.rawOb || metar.raw_text || '');
-  return {
-    ceiling,
-    visibility,
-    wind,
-    obstruction: obstruction ? obstruction.token : '',
-    targetMs: metarTimeMs(metar)
-  };
-}
-function aiPredictionFromAssessment(assessment){
-  return {
-    ceiling: assessment?.ceiling ?? null,
-    visibility: assessment?.visibility ?? null,
-    wind: assessment?.wind || null,
-    obstruction: aiObstructionToken(assessment?.obstruction, assessment?.wx),
-    source: assessment?.source || '',
-    targetMs: assessment?.targetMs || null
-  };
-}
-function aiScorePrediction(pred, actual){
-  if (!pred || !actual) return { total: 0 };
-  let score = 0;
-  if (actual.ceiling !== null && actual.ceiling !== undefined){
-    const predicted = (pred.ceiling === null || pred.ceiling === undefined) ? Infinity : pred.ceiling;
-    const delta = Math.abs(predicted - actual.ceiling);
-    if (delta > 50) score += Math.min(2, delta / 400);
-  } else if (pred.ceiling !== null && pred.ceiling !== undefined){
-    score += 0.3;
-  }
-  if (actual.visibility !== null && actual.visibility !== undefined){
-    const predicted = (pred.visibility === null || pred.visibility === undefined) ? Infinity : pred.visibility;
-    const delta = Math.abs(predicted - actual.visibility);
-    if (delta > 0.25) score += Math.min(2, delta / 2);
-  } else if (pred.visibility !== null && pred.visibility !== undefined){
-    score += 0.25;
-  }
-  const windDelta = Math.abs(aiWindStrength(pred.wind) - aiWindStrength(actual.wind));
-  if (windDelta > 1) score += Math.min(1.5, windDelta / 8);
-  if (pred.obstruction && actual.obstruction && pred.obstruction !== actual.obstruction){
-    score += 0.5;
-  }
-  return { total: Number(score.toFixed(3)) };
-}
-function aiAdjustReliability(model, icao, source, errorScore, reason = 'self-check'){
-  const profile = aiEnsureAirportProfile(icao);
-  const key = String(source || '').toLowerCase().includes('taf') ? 'taf' : 'metar';
-  const movement = errorScore > 0 ? -AI_LEARNING_RATE * Math.min(2.5, errorScore) : AI_LEARNING_RATE * 0.5;
-  model.sourceWeights[key] = aiClamp((model.sourceWeights[key] || 1) + movement, 0.4, 2.5);
-  profile.bias = profile.bias || { metar:1, taf:1, prob:1 };
-  profile.bias[key] = aiClamp((profile.bias[key] || 1) + movement * 0.6, 0.5, 2.5);
-  profile.bias.prob = aiClamp((profile.bias.prob || 1) + (errorScore > 0 ? -0.02 : 0.01), 0.5, 2.2);
-  profile.lastAdjusted = Date.now();
-  if (Array.isArray(model.feedbackLog)){
-    model.feedbackLog.push({
-      icao: String(icao || '').toUpperCase(),
-      at: Date.now(),
-      source: key,
-      reason,
-      penalty: errorScore
-    });
-    model.feedbackLog = model.feedbackLog.slice(-120);
-  }
-}
-function aiQueuePrediction(assessment){
-  if (!assessment) return;
-  const predicted = aiPredictionFromAssessment(assessment);
-  aiWeatherModel.pendingEvaluations = aiWeatherModel.pendingEvaluations || [];
-  aiWeatherModel.pendingEvaluations.push({
-    icao: assessment.icao,
-    targetMs: assessment.targetMs,
-    predicted,
-    source: assessment.source,
-    capturedAt: Date.now()
-  });
-  aiWeatherModel.pendingEvaluations = aiWeatherModel.pendingEvaluations.slice(-AI_MAX_PENDING);
-}
-function aiEvaluatePendingPredictions(weatherMap){
-  const next = [];
-  const now = Date.now();
-  const pending = Array.isArray(aiWeatherModel.pendingEvaluations) ? aiWeatherModel.pendingEvaluations : [];
-  pending.forEach(sample => {
-    const record = weatherMap?.[sample.icao];
-    const metar = record?.metar;
-    const metarMs = metarTimeMs(metar);
-    if (!metar || !metarMs){
-      if (now - sample.targetMs < AI_PENDING_RETENTION_MS) next.push(sample);
-      return;
-    }
-    if (Math.abs(sample.targetMs - metarMs) > AI_LEARNING_TOLERANCE_MS){
-      if (now - sample.targetMs < AI_PENDING_RETENTION_MS) next.push(sample);
-      return;
-    }
-    const actual = aiObservationFromMetar(metar, sample.icao);
-    if (!actual){
-      next.push(sample);
-      return;
-    }
-    const score = aiScorePrediction(sample.predicted, actual);
-    aiAdjustReliability(aiWeatherModel, sample.icao, sample.source, score.total, 'prediction');
-  });
-  aiWeatherModel.pendingEvaluations = next.slice(-AI_MAX_PENDING);
-}
-function aiSelfCalibrateWithCurrentWeather(weatherMap){
-  if (!weatherMap) return;
-  Object.values(weatherMap).forEach(record => {
-    const taf = record?.taf;
-    const metar = record?.metar;
-    if (!taf || !metar) return;
-    const metarMs = metarTimeMs(metar);
-    if (!metarMs) return;
-    const tafView = summarizeWeatherWindow(record, metarMs, record?.name || record?.icao || '', { useDecoders: true, forceSource: 'taf' });
-    if (tafView?.noResults) return;
-    const predicted = aiPredictionFromAssessment(tafView);
-    const actual = aiObservationFromMetar(metar, record?.icao);
-    if (!actual) return;
-    const score = aiScorePrediction(predicted, actual);
-    aiAdjustReliability(aiWeatherModel, record?.icao, 'TAF', score.total, 'self-check');
-  });
-}
-function aiLearnFromWeatherFetch(weatherMap, assessments){
-  aiEvaluatePendingPredictions(weatherMap);
-  aiSelfCalibrateWithCurrentWeather(weatherMap);
-  (assessments || []).forEach(aiQueuePrediction);
-  persistAiWeatherModel(aiWeatherModel);
-}
-function aiPickLower(a, b){
+let latestWeatherContext = { assessments: [], weatherMap: {}, rawSources: [], outEl: null, rawEl: null };
+function pickLower(a, b){
   if (b === null || b === undefined) return a;
   if (a === null || a === undefined) return b;
   return Math.min(a, b);
 }
-function aiPickHigher(a, b){
-  if (b === null || b === undefined) return a;
-  if (a === null || a === undefined) return b;
-  return Math.max(a, b);
-}
-function aiPickStrongerWind(a, b){
+function pickStrongerWind(a, b){
   if (!b) return a;
-  return aiWindStrength(b) > aiWindStrength(a) ? b : a;
+  const windStrength = (wind) => {
+    if (!wind) return 0;
+    const speed = Number(wind.speed || wind.speedKts || 0);
+    const gust = Number(wind.gust || wind.gustKts || 0);
+    return Math.max(speed, gust, 0);
+  };
+  return windStrength(b) > windStrength(a) ? b : a;
 }
-function aiMoreRestrictiveRules(aRules, bRules){
+function moreRestrictiveRules(aRules, bRules){
   const order = ['LIFR','IFR','MVFR','VFR','UNK'];
   const idxA = order.indexOf(String(aRules?.code || '').toUpperCase());
   const idxB = order.indexOf(String(bRules?.code || '').toUpperCase());
@@ -4755,70 +4554,18 @@ function aiMoreRestrictiveRules(aRules, bRules){
   if (idxB === -1) return aRules || bRules;
   return idxB < idxA ? bRules : aRules;
 }
-function aiApplyProbSensitivity(assessment, probWeight){
-  if (!assessment || !assessment.probConditions || probWeight <= 1) return assessment;
-  const prob = assessment.probConditions;
-  const updated = { ...assessment };
-  updated.ceiling = aiPickLower(assessment.ceiling, prob.ceiling);
-  updated.visibility = aiPickLower(assessment.visibility, prob.visibility);
-  if (prob.visibilityRaw !== undefined && prob.visibilityRaw !== null){
-    updated.visibilityRaw = prob.visibilityRaw;
-  }
-  updated.wind = aiPickStrongerWind(assessment.wind, prob.wind);
-  const probObs = prob.wxRaw || prob.obstruction?.token;
-  if (probObs) updated.obstruction = { token: probObs };
-  updated.probFlag = assessment.probFlag || 'PROB';
-  return updated;
-}
-function aiEnhanceAssessmentWithAi(assessment, airportData){
-  if (!assessment) return assessment;
-  const profile = aiEnsureAirportProfile(assessment.icao);
-  const tafWeight = (aiWeatherModel.sourceWeights.taf || 1) * (profile.bias?.taf || 1);
-  const metarWeight = (aiWeatherModel.sourceWeights.metar || 1) * (profile.bias?.metar || 1);
-  const probWeight = (aiWeatherModel.sourceWeights.prob || 1.05) * (profile.bias?.prob || 1);
-  const tafView = airportData ? summarizeWeatherWindow(airportData, assessment.targetMs, assessment.label, { useDecoders: true, forceSource: 'taf' }) : assessment;
-  const metarView = airportData ? summarizeWeatherWindow(airportData, assessment.targetMs, assessment.label, { useDecoders: true, forceSource: 'metar' }) : assessment;
-  const preferred = (tafWeight >= metarWeight ? tafView : metarView) || assessment;
-  const merged = { ...assessment };
-  merged.source = preferred.source || assessment.source;
-  merged.sourceDetail = preferred.sourceDetail || preferred.source || assessment.sourceDetail || assessment.source;
-  merged.ceiling = aiPickLower(assessment.ceiling, preferred.ceiling);
-  merged.visibility = aiPickLower(assessment.visibility, preferred.visibility);
-  if (merged.visibility === preferred.visibility && preferred.visibilityRaw !== undefined){
-    merged.visibilityRaw = preferred.visibilityRaw;
-  }
-  merged.wind = aiPickStrongerWind(assessment.wind, preferred.wind);
-  merged.obstruction = preferred.obstruction || assessment.obstruction;
-  merged.wx = preferred.wx || assessment.wx;
-  merged.rules = aiMoreRestrictiveRules(assessment.rules, preferred.rules);
-  merged.ils = preferred.ils?.cat ? preferred.ils : merged.ils;
-  merged.summary = preferred.summary || assessment.summary;
-  merged.tafIcons = preferred.tafIcons?.length ? preferred.tafIcons : merged.tafIcons;
-  merged.probFlag = preferred.probFlag || merged.probFlag;
-  merged.probConditions = preferred.probConditions || merged.probConditions;
-  merged.probVisibilityRaw = preferred.probVisibilityRaw || merged.probVisibilityRaw;
-  const tuned = aiApplyProbSensitivity(merged, probWeight);
-  tuned.aiConfidence = Number(Math.min(0.98, 0.6 + 0.08 * ((tafWeight + metarWeight) / 2)).toFixed(2));
-  tuned.aiSourceWeights = {
-    taf: Number(tafWeight.toFixed(2)),
-    metar: Number(metarWeight.toFixed(2)),
-    prob: Number(probWeight.toFixed(2))
-  };
-  tuned.aiPreferredSource = (tafWeight >= metarWeight) ? 'TAF' : 'METAR';
-  return tuned;
-}
-function aiPickMoreConservativeAssessment(base, alternative){
+function pickMoreConservativeAssessment(base, alternative){
   if (!alternative || alternative.noResults) return base;
   const merged = { ...base };
-  merged.ceiling = aiPickLower(base.ceiling, alternative.ceiling);
-  merged.visibility = aiPickLower(base.visibility, alternative.visibility);
+  merged.ceiling = pickLower(base.ceiling, alternative.ceiling);
+  merged.visibility = pickLower(base.visibility, alternative.visibility);
   if (merged.visibility === alternative.visibility && alternative.visibilityRaw !== undefined){
     merged.visibilityRaw = alternative.visibilityRaw;
   }
-  merged.wind = aiPickStrongerWind(base.wind, alternative.wind);
+  merged.wind = pickStrongerWind(base.wind, alternative.wind);
   merged.obstruction = alternative.obstruction || base.obstruction;
   merged.wx = alternative.wx || base.wx;
-  merged.rules = aiMoreRestrictiveRules(base.rules, alternative.rules);
+  merged.rules = moreRestrictiveRules(base.rules, alternative.rules);
   merged.ils = alternative.ils?.cat ? alternative.ils : merged.ils;
   merged.summary = alternative.summary || base.summary;
   merged.source = alternative.source || base.source;
@@ -4886,7 +4633,7 @@ function ensureFeedbackSlot(assessment, metric){
   }
   return assessment.feedback[metric];
 }
-function aiNextMetricCandidate({ assessment, record, metric }){
+function nextMetricCandidate({ assessment, record, metric }){
   if (!record) return null;
   const currentSnapshot = metricSnapshot(assessment, metric);
   const fb = ensureFeedbackSlot(assessment, metric);
@@ -4894,8 +4641,8 @@ function aiNextMetricCandidate({ assessment, record, metric }){
   seenKeys.add(metricSnapshotKey(currentSnapshot, metric));
   const tafView = summarizeWeatherWindow(record, assessment.targetMs, assessment.label, { useDecoders: true, forceSource: 'taf' });
   const metarView = summarizeWeatherWindow(record, assessment.targetMs, assessment.label, { useDecoders: true, forceSource: 'metar' });
-  const conservativeTaf = aiPickMoreConservativeAssessment(assessment, tafView);
-  const conservativeMetar = aiPickMoreConservativeAssessment(assessment, metarView);
+  const conservativeTaf = pickMoreConservativeAssessment(assessment, tafView);
+  const conservativeMetar = pickMoreConservativeAssessment(assessment, metarView);
   const candidates = [tafView, metarView, conservativeTaf, conservativeMetar].filter(Boolean);
   for (const candidate of candidates){
     const snap = metricSnapshot(candidate, metric);
@@ -4906,8 +4653,7 @@ function aiNextMetricCandidate({ assessment, record, metric }){
   }
   return null;
 }
-function aiHandleMetricFeedback(icao, targetMs, metric, action){
-  if (latestWeatherContext.mode !== 'ai') return;
+function handleWeatherFeedback(icao, targetMs, metric, action){
   const assessment = latestWeatherContext.assessments.find(a => a.icao === icao && Math.abs((a.targetMs || 0) - targetMs) < 1500);
   const record = latestWeatherContext.weatherMap?.[icao];
   if (!assessment || !record) return;
@@ -4915,34 +4661,26 @@ function aiHandleMetricFeedback(icao, targetMs, metric, action){
   const fb = assessment.feedback[metric];
   const currentSnapshot = metricSnapshot(assessment, metric);
   const currentKey = metricSnapshotKey(currentSnapshot, metric);
+  const currentSource = fb.currentSource || assessment.source || '';
   if (action === 'up'){
-    fb.history.forEach(entry => {
-      if (entry.source) aiAdjustReliability(aiWeatherModel, icao, entry.source, 0.9, `metric-${metric}-reject`);
-    });
-    const acceptedSource = fb.currentSource || assessment.source || '';
-    if (acceptedSource) aiAdjustReliability(aiWeatherModel, icao, acceptedSource, 1.1, `metric-${metric}-accept`);
-    aiQueuePrediction(assessment);
-    persistAiWeatherModel(aiWeatherModel);
+    fb.history.push({ valueKey: currentKey, source: currentSource });
     fb.state = 'accepted';
-    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, aiMode: true });
+    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: true });
     return;
   }
-  const rejectedSource = fb.currentSource || assessment.source || '';
   if (action === 'flag' || action === 'down'){
-    const next = aiNextMetricCandidate({ assessment, record, metric });
-    fb.history.push({ valueKey: currentKey, source: rejectedSource });
-    if (rejectedSource) aiAdjustReliability(aiWeatherModel, icao, rejectedSource, 0.9, `metric-${metric}-flag`);
+    const next = nextMetricCandidate({ assessment, record, metric });
+    fb.history.push({ valueKey: currentKey, source: currentSource });
     if (!next){
-      persistAiWeatherModel(aiWeatherModel);
-      renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, aiMode: true });
+      fb.state = 'flagged';
+      renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: true });
       return;
     }
     const updated = applyMetricSnapshot(assessment, next.snapshot, metric);
     updated.feedback = { ...assessment.feedback, [metric]: { ...fb, state: 'review', currentSource: next.candidate?.source || fb.currentSource, lastKey: next.key } };
     const nextAssessments = latestWeatherContext.assessments.map(a => (a === assessment ? updated : a));
     latestWeatherContext.assessments = nextAssessments;
-    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, nextAssessments, latestWeatherContext.rawSources, { showDecoders: false, aiMode: true });
-    return;
+    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, nextAssessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: true });
   }
 }
 function metarTimeMs(metar){
@@ -5070,19 +4808,19 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     return;
   }
   const showDecoders = options.showDecoders === true;
-  const aiMode = options.aiMode === true;
-  if (aiMode){
+  const feedbackEnabled = options.enableFeedback !== false;
+  if (feedbackEnabled){
     assessments.forEach(a => { if (!a.feedback) a.feedback = {}; });
   }
   const buildFlagButton = (assessment, extraClass = '') => {
-    if (!aiMode) return '';
+    if (!feedbackEnabled) return '';
     const cls = extraClass ? ` ${extraClass}` : '';
-    return `<button class="wx-flag${cls}" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="drivers" aria-label="Flag this weather result as incorrect">🚩 Flag</button>`;
+    return `<button class="wx-flag${cls}" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="drivers" aria-label="Flag this weather result as incorrect">🚩</button>`;
   };
   const renderWxBox = (assessment, metricKey, labelHtml, valueHtml) => {
     const feedback = assessment.feedback?.[metricKey];
-    if (aiMode){
-      let control = `<button class="wx-flag wx-flag-compact" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="Flag this weather result as incorrect">🚩 Flag</button>`;
+    if (feedbackEnabled){
+      let control = `<button class="wx-flag wx-flag-compact" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="Flag this weather result as incorrect">🚩</button>`;
       if (feedback && feedback.state !== 'idle'){
         control = `<div style="display:flex;gap:6px">
           <button class="wx-vote wx-vote-down" type="button" data-ai-feedback="down" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="This result is still wrong">👎</button>
@@ -5116,7 +4854,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
               <span>${escapeHtml(a.targetText || '')}</span>
             </div>
           </div>
-          ${aiMode ? `<div class="wx-actions">${noResultFlag}</div>` : ''}
+          ${feedbackEnabled ? `<div class="wx-actions">${noResultFlag}</div>` : ''}
         </div>
         <div class="wx-error" style="margin-top:12px">${escapeHtml(a.noResultsReason || 'No results available for this airport.')}</div>
       </div>`;
@@ -5190,10 +4928,6 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     rawEl.innerHTML = rawHtml;
   }
 }
-function getWeatherMode(){
-  const value = document.getElementById('modern-wx-mode')?.value;
-  return value === 'ai' ? 'ai' : 'legacy';
-}
 async function runWeatherWorkflow(opts){
   return runWeatherWorkflowAttempt(opts, 1);
 }
@@ -5201,9 +4935,7 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
   const outEl = document.getElementById(outId);
   const rawEl = document.getElementById(rawId);
   const rawDetails = rawEl?.closest('details');
-  const weatherMode = getWeatherMode();
-  const isAiMode = weatherMode === 'ai';
-  const useDecoders = isAiMode;
+  const useDecoders = true;
   const attemptMsg = attempt === 1
     ? 'Fetching METAR/TAF and decoding…'
     : `Retrying weather fetch (attempt ${attempt}/${WEATHER_MAX_ATTEMPTS})…`;
@@ -5230,16 +4962,10 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
       ),
       summarizeWeatherWindow(weatherMap[arrIcao], now + arrHrs * 3600000, 'Arrival field', { useDecoders })
     ];
-    const assessments = isAiMode
-      ? baseAssessments.map(a => aiEnhanceAssessmentWithAi(a, weatherMap?.[a.icao]))
-      : baseAssessments;
-    const normalizedAssessments = assessments.map(a => ({ ...a, feedback: a.feedback || {} }));
+    const normalizedAssessments = baseAssessments.map(a => ({ ...a, feedback: a.feedback || {} }));
     const rawSources = uniqueIcao.map(c => weatherMap[c]).filter(Boolean);
-    if (isAiMode){
-      aiLearnFromWeatherFetch(weatherMap, normalizedAssessments);
-    }
-    renderWeatherResults(outEl, rawEl, normalizedAssessments, rawSources, { showDecoders: false, aiMode: isAiMode });
-    latestWeatherContext = { mode: weatherMode, assessments: normalizedAssessments, weatherMap, rawSources, outEl, rawEl };
+    renderWeatherResults(outEl, rawEl, normalizedAssessments, rawSources, { showDecoders: false, enableFeedback: true });
+    latestWeatherContext = { assessments: normalizedAssessments, weatherMap, rawSources, outEl, rawEl };
   } catch(err){
     console.error(err);
     const message = err.message || 'Weather lookup failed';
@@ -6192,9 +5918,9 @@ function init(){
     if (!flagTarget && !voteTarget) return;
     e.preventDefault();
     if (flagTarget){
-      aiHandleMetricFeedback(flagTarget.dataset.aiIcao || '', Number(flagTarget.dataset.aiTarget || '0'), flagTarget.dataset.aiMetric || 'drivers', 'flag');
+      handleWeatherFeedback(flagTarget.dataset.aiIcao || '', Number(flagTarget.dataset.aiTarget || '0'), flagTarget.dataset.aiMetric || 'drivers', 'flag');
     } else if (voteTarget){
-      aiHandleMetricFeedback(voteTarget.dataset.aiIcao || '', Number(voteTarget.dataset.aiTarget || '0'), voteTarget.dataset.aiMetric || 'drivers', voteTarget.dataset.aiFeedback || 'down');
+      handleWeatherFeedback(voteTarget.dataset.aiIcao || '', Number(voteTarget.dataset.aiTarget || '0'), voteTarget.dataset.aiMetric || 'drivers', voteTarget.dataset.aiFeedback || 'down');
     }
   });
   document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
