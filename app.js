@@ -4829,19 +4829,121 @@ function aiPickMoreConservativeAssessment(base, alternative){
   merged.tafIcons = alternative.tafIcons?.length ? alternative.tafIcons : merged.tafIcons;
   return merged;
 }
-function aiHandleFlaggedAssessment(icao, targetMs){
+function metricSnapshotKey(snapshot, metric){
+  switch(metric){
+  case 'ceiling': return `${snapshot.ceiling ?? ''}|${snapshot.skyClear ? 'SKC' : ''}`;
+  case 'visibility': return `${snapshot.visibility ?? ''}|${snapshot.visibilityRaw ?? ''}|${snapshot.visibilityDisplay ?? ''}`;
+  case 'wind': return `${snapshot.wind?.dir ?? ''}|${snapshot.wind?.spd ?? ''}|${snapshot.wind?.gst ?? ''}`;
+  case 'obstruction': return `${snapshot.obstruction?.token ?? ''}|${snapshot.wx ?? ''}`;
+  case 'ils': return `${snapshot.ils?.cat ?? ''}|${snapshot.ils?.reason ?? ''}`;
+  case 'drivers': return `${snapshot.summary ?? ''}`;
+  default: return JSON.stringify(snapshot || {});
+  }
+}
+function metricSnapshot(assessment, metric){
+  switch(metric){
+  case 'ceiling': return { ceiling: assessment.ceiling, skyClear: assessment.skyClear };
+  case 'visibility': return { visibility: assessment.visibility, visibilityRaw: assessment.visibilityRaw, visibilityDisplay: assessment.visibilityDisplay };
+  case 'wind': return { wind: assessment.wind };
+  case 'obstruction': return { obstruction: assessment.obstruction, wx: assessment.wx };
+  case 'ils': return { ils: assessment.ils };
+  case 'drivers': return { summary: assessment.summary };
+  default: return {};
+  }
+}
+function applyMetricSnapshot(target, snapshot, metric){
+  const updated = { ...target, feedback: { ...(target.feedback || {}) } };
+  switch(metric){
+  case 'ceiling':
+    updated.ceiling = snapshot.ceiling ?? null;
+    updated.skyClear = Boolean(snapshot.skyClear);
+    break;
+  case 'visibility':
+    updated.visibility = snapshot.visibility ?? null;
+    updated.visibilityRaw = snapshot.visibilityRaw ?? null;
+    updated.visibilityDisplay = snapshot.visibilityDisplay ?? '';
+    break;
+  case 'wind':
+    updated.wind = snapshot.wind || null;
+    break;
+  case 'obstruction':
+    updated.obstruction = snapshot.obstruction || null;
+    updated.wx = snapshot.wx || '';
+    break;
+  case 'ils':
+    updated.ils = snapshot.ils || updated.ils;
+    break;
+  case 'drivers':
+    updated.summary = snapshot.summary || updated.summary;
+    break;
+  }
+  return updated;
+}
+function ensureFeedbackSlot(assessment, metric){
+  if (!assessment.feedback) assessment.feedback = {};
+  if (!assessment.feedback[metric]){
+    assessment.feedback[metric] = { state: 'idle', history: [], currentSource: assessment.source || '' };
+  }
+  return assessment.feedback[metric];
+}
+function aiNextMetricCandidate({ assessment, record, metric }){
+  if (!record) return null;
+  const currentSnapshot = metricSnapshot(assessment, metric);
+  const fb = ensureFeedbackSlot(assessment, metric);
+  const seenKeys = new Set((fb.history || []).map(h => h.valueKey));
+  seenKeys.add(metricSnapshotKey(currentSnapshot, metric));
+  const tafView = summarizeWeatherWindow(record, assessment.targetMs, assessment.label, { useDecoders: true, forceSource: 'taf' });
+  const metarView = summarizeWeatherWindow(record, assessment.targetMs, assessment.label, { useDecoders: true, forceSource: 'metar' });
+  const conservativeTaf = aiPickMoreConservativeAssessment(assessment, tafView);
+  const conservativeMetar = aiPickMoreConservativeAssessment(assessment, metarView);
+  const candidates = [tafView, metarView, conservativeTaf, conservativeMetar].filter(Boolean);
+  for (const candidate of candidates){
+    const snap = metricSnapshot(candidate, metric);
+    const key = metricSnapshotKey(snap, metric);
+    if (!seenKeys.has(key)){
+      return { candidate, snapshot: snap, key };
+    }
+  }
+  return null;
+}
+function aiHandleMetricFeedback(icao, targetMs, metric, action){
   if (latestWeatherContext.mode !== 'ai') return;
   const assessment = latestWeatherContext.assessments.find(a => a.icao === icao && Math.abs((a.targetMs || 0) - targetMs) < 1500);
   const record = latestWeatherContext.weatherMap?.[icao];
   if (!assessment || !record) return;
-  const altSource = assessment.source === 'TAF' ? 'metar' : 'taf';
-  const alternative = summarizeWeatherWindow(record, assessment.targetMs, assessment.label, { useDecoders: true, forceSource: altSource });
-  const improved = aiPickMoreConservativeAssessment(assessment, alternative);
-  aiAdjustReliability(aiWeatherModel, icao, assessment.source, 1.2, 'user-flag');
-  aiQueuePrediction(improved);
-  persistAiWeatherModel(aiWeatherModel);
-  latestWeatherContext.assessments = latestWeatherContext.assessments.map(a => (a === assessment ? improved : a));
-  renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: true, aiMode: true });
+  ensureFeedbackSlot(assessment, metric);
+  const fb = assessment.feedback[metric];
+  const currentSnapshot = metricSnapshot(assessment, metric);
+  const currentKey = metricSnapshotKey(currentSnapshot, metric);
+  if (action === 'up'){
+    fb.history.forEach(entry => {
+      if (entry.source) aiAdjustReliability(aiWeatherModel, icao, entry.source, 0.9, `metric-${metric}-reject`);
+    });
+    const acceptedSource = fb.currentSource || assessment.source || '';
+    if (acceptedSource) aiAdjustReliability(aiWeatherModel, icao, acceptedSource, 1.1, `metric-${metric}-accept`);
+    aiQueuePrediction(assessment);
+    persistAiWeatherModel(aiWeatherModel);
+    fb.state = 'accepted';
+    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, aiMode: true });
+    return;
+  }
+  const rejectedSource = fb.currentSource || assessment.source || '';
+  if (action === 'flag' || action === 'down'){
+    const next = aiNextMetricCandidate({ assessment, record, metric });
+    fb.history.push({ valueKey: currentKey, source: rejectedSource });
+    if (rejectedSource) aiAdjustReliability(aiWeatherModel, icao, rejectedSource, 0.9, `metric-${metric}-flag`);
+    if (!next){
+      persistAiWeatherModel(aiWeatherModel);
+      renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, aiMode: true });
+      return;
+    }
+    const updated = applyMetricSnapshot(assessment, next.snapshot, metric);
+    updated.feedback = { ...assessment.feedback, [metric]: { ...fb, state: 'review', currentSource: next.candidate?.source || fb.currentSource, lastKey: next.key } };
+    const nextAssessments = latestWeatherContext.assessments.map(a => (a === assessment ? updated : a));
+    latestWeatherContext.assessments = nextAssessments;
+    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, nextAssessments, latestWeatherContext.rawSources, { showDecoders: false, aiMode: true });
+    return;
+  }
 }
 function metarTimeMs(metar){
   if (!metar) return null;
@@ -4967,26 +5069,54 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     if (rawEl) rawEl.innerHTML = '';
     return;
   }
-  const showDecoders = options.showDecoders !== false;
+  const showDecoders = options.showDecoders === true;
   const aiMode = options.aiMode === true;
+  if (aiMode){
+    assessments.forEach(a => { if (!a.feedback) a.feedback = {}; });
+  }
+  const buildFlagButton = (assessment, extraClass = '') => {
+    if (!aiMode) return '';
+    const cls = extraClass ? ` ${extraClass}` : '';
+    return `<button class="wx-flag${cls}" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="drivers" aria-label="Flag this weather result as incorrect">🚩 Flag</button>`;
+  };
+  const renderWxBox = (assessment, metricKey, labelHtml, valueHtml) => {
+    const feedback = assessment.feedback?.[metricKey];
+    if (aiMode){
+      let control = `<button class="wx-flag wx-flag-compact" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="Flag this weather result as incorrect">🚩 Flag</button>`;
+      if (feedback && feedback.state !== 'idle'){
+        control = `<div style="display:flex;gap:6px">
+          <button class="wx-vote wx-vote-down" type="button" data-ai-feedback="down" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="This result is still wrong">👎</button>
+          <button class="wx-vote wx-vote-up" type="button" data-ai-feedback="up" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="This result is correct">👍</button>
+        </div>`;
+      }
+      return `<div class="wx-box">
+        <div class="wx-box-head">
+          <div class="label">${labelHtml}</div>
+          ${control}
+        </div>
+        <div class="value">${valueHtml}</div>
+      </div>`;
+    }
+    return `<div class="wx-box"><div class="label">${labelHtml}</div><div class="value">${valueHtml}</div></div>`;
+  };
   const cards = assessments.map(a => {
-    const flagButton = aiMode ? `<button class="wx-flag" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(a.icao)}" data-ai-target="${a.targetMs}" data-ai-source="${escapeHtml(a.source || '')}" aria-label="Flag this weather result as incorrect">🚩 Flag</button>` : '';
     const statusContent = `<div class="status-row">
           <span class="status-badge ${a.rules?.className || ''}">${escapeHtml(a.rules?.label || '')}</span>
           ${a.probFlag ? `<span class="prob-flag ${a.rules?.className || ''}">${escapeHtml(a.probFlag)}</span>` : ''}
         </div>`;
-    const statusArea = aiMode ? `<div class="wx-actions">${statusContent}${flagButton}</div>` : statusContent;
+    const statusArea = `<div class="wx-actions">${statusContent}</div>`;
     if (a.noResults){
+      const noResultFlag = buildFlagButton(a);
       return `<div class="weather-card">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
           <div>
             <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">${escapeHtml(a.label)}</div>
-            <div style="font-weight:800;font-size:18px">${escapeHtml(a.name)} (${escapeHtml(a.icao)})</div>
+          <div style="font-weight:800;font-size:18px">${escapeHtml(a.name)} (${escapeHtml(a.icao)})</div>
             <div class="wx-meta">
               <span>${escapeHtml(a.targetText || '')}</span>
             </div>
           </div>
-          ${aiMode ? `<div class="wx-actions">${flagButton}</div>` : ''}
+          ${aiMode ? `<div class="wx-actions">${noResultFlag}</div>` : ''}
         </div>
         <div class="wx-error" style="margin-top:12px">${escapeHtml(a.noResultsReason || 'No results available for this airport.')}</div>
       </div>`;
@@ -5037,13 +5167,13 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         ${statusArea}
       </div>
       <div class="wx-metric">
-        <div class="wx-box"><div class="label">${labelWithInfo('Ceiling', INFO_COPY.weather.ceiling)}</div><div class="value">${escapeHtml(ceilDisplay)}</div></div>
-        <div class="wx-box"><div class="label">${labelWithInfo('Visibility', INFO_COPY.weather.visibility)}</div><div class="value">${escapeHtml(visDisplay)}</div></div>
-        <div class="wx-box"><div class="label">${labelWithInfo('Wind', INFO_COPY.weather.wind)}</div><div class="value">${escapeHtml(windDisplay)}</div></div>
-        <div class="wx-box"><div class="label">${labelWithInfo('Precip/Obstruction', INFO_COPY.weather.obstruction)}</div><div class="value">${escapeHtml(obstructionDisplay)}</div></div>
-        <div class="wx-box"><div class="label">ILS guidance</div><div class="value"><span class="ils-badge">${escapeHtml(a.ils.cat)}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(a.ils.reason)}</div></div></div>
-        <div class="wx-box"><div class="label">Drivers</div><div class="value" style="font-size:14px;line-height:1.4">${escapeHtml(a.summary)}</div></div>
-        ${showDecoders ? `<div class="wx-box"><div class="label">TAF decoders</div><div class="value">${renderDecoderIcons(a.tafIcons)}</div></div>` : ''}
+        ${renderWxBox(a, 'ceiling', labelWithInfo('Ceiling', INFO_COPY.weather.ceiling), escapeHtml(ceilDisplay))}
+        ${renderWxBox(a, 'visibility', labelWithInfo('Visibility', INFO_COPY.weather.visibility), escapeHtml(visDisplay))}
+        ${renderWxBox(a, 'wind', labelWithInfo('Wind', INFO_COPY.weather.wind), escapeHtml(windDisplay))}
+        ${renderWxBox(a, 'obstruction', labelWithInfo('Precip/Obstruction', INFO_COPY.weather.obstruction), escapeHtml(obstructionDisplay))}
+        ${renderWxBox(a, 'ils', 'ILS guidance', `<span class=\"ils-badge\">${escapeHtml(a.ils.cat)}</span><div style=\"font-size:12px;color:var(--muted);margin-top:4px\">${escapeHtml(a.ils.reason)}</div>`)}
+        ${renderWxBox(a, 'drivers', 'Drivers', `<span style=\"font-size:14px;line-height:1.4\">${escapeHtml(a.summary)}</span>`)}
+        ${showDecoders ? renderWxBox(a, 'taf-decoders', 'TAF decoders', renderDecoderIcons(a.tafIcons)) : ''}
       </div>
     </div>`;
   }).join('');
@@ -5103,12 +5233,13 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
     const assessments = isAiMode
       ? baseAssessments.map(a => aiEnhanceAssessmentWithAi(a, weatherMap?.[a.icao]))
       : baseAssessments;
+    const normalizedAssessments = assessments.map(a => ({ ...a, feedback: a.feedback || {} }));
     const rawSources = uniqueIcao.map(c => weatherMap[c]).filter(Boolean);
     if (isAiMode){
-      aiLearnFromWeatherFetch(weatherMap, assessments);
+      aiLearnFromWeatherFetch(weatherMap, normalizedAssessments);
     }
-    renderWeatherResults(outEl, rawEl, assessments, rawSources, { showDecoders: useDecoders, aiMode: isAiMode });
-    latestWeatherContext = { mode: weatherMode, assessments, weatherMap, rawSources, outEl, rawEl };
+    renderWeatherResults(outEl, rawEl, normalizedAssessments, rawSources, { showDecoders: false, aiMode: isAiMode });
+    latestWeatherContext = { mode: weatherMode, assessments: normalizedAssessments, weatherMap, rawSources, outEl, rawEl };
   } catch(err){
     console.error(err);
     const message = err.message || 'Weather lookup failed';
@@ -6057,9 +6188,14 @@ function init(){
   document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out', converterTarget:'modern' }); });
   document.getElementById('modern-wx-out')?.addEventListener('click', (e)=>{
     const flagTarget = e.target?.closest('[data-ai-flag]');
-    if (!flagTarget) return;
+    const voteTarget = e.target?.closest('[data-ai-feedback]');
+    if (!flagTarget && !voteTarget) return;
     e.preventDefault();
-    aiHandleFlaggedAssessment(flagTarget.dataset.aiIcao || '', Number(flagTarget.dataset.aiTarget || '0'));
+    if (flagTarget){
+      aiHandleMetricFeedback(flagTarget.dataset.aiIcao || '', Number(flagTarget.dataset.aiTarget || '0'), flagTarget.dataset.aiMetric || 'drivers', 'flag');
+    } else if (voteTarget){
+      aiHandleMetricFeedback(voteTarget.dataset.aiIcao || '', Number(voteTarget.dataset.aiTarget || '0'), voteTarget.dataset.aiMetric || 'drivers', voteTarget.dataset.aiFeedback || 'down');
+    }
   });
   document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
   const heroBanner = document.getElementById('modern-hero-banner');
