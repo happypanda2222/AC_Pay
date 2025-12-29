@@ -267,6 +267,9 @@
     .weather-card{background:var(--card);border:1px solid #1f2633;border-radius:14px;padding:12px;box-shadow:0 8px 26px rgba(0,0,0,.3)}
     .status-badge{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:12px;font-weight:800;font-size:12px;letter-spacing:.2px;text-transform:uppercase;border:1px solid transparent}
     .status-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .wx-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .wx-flag{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;border-radius:10px;border:1px solid #7f1d1d;background:#2f1616;color:#fecdd3;font-weight:800;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.25)}
+    .wx-flag:active{opacity:.9}
     .status-lifr{background:#2b1530;border-color:#7e22ce;color:#f3e8ff}
     .status-ifr{background:#351418;border-color:#ef4444;color:#ffe4e6}
     .status-mvfr{background:#2f260f;border-color:#eab308;color:#fef9c3}
@@ -640,6 +643,13 @@
             <div class="modern-panel">
               <h3>Weather brief</h3>
               <div class="stacked-fields">
+                <div>
+                  <label>Mode</label>
+                  <select id="modern-wx-mode">
+                    <option value="legacy" selected>Legacy</option>
+                    <option value="ai">AI</option>
+                  </select>
+                </div>
                 <div>
                   <label>Departure airport</label>
                   <input id="modern-wx-dep" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
