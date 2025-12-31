@@ -92,6 +92,7 @@ function expandFinConfigList(list){
 }
 
 const FIN_CONFIGS = expandFinConfigList([
+  { type: 'Test12', finStart: 1, finEnd: 1, j: 0, o: 0, y: 0, fdjs: 5, ofcr: 0, ccjs: 0 },
   { type: 'A220', finStart: 101, finEnd: 101, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A220', finStart: 102, finEnd: 102, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A220', finStart: 103, finEnd: 103, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
@@ -173,10 +174,10 @@ const FIN_CONFIGS = expandFinConfigList([
   { type: 'A320', finStart: 405, finEnd: 405, j: 14, o: 0, y: 132, fdjs: 2, ofcr: 0, ccjs: 6 },
   { type: 'A320', finStart: 415, finEnd: 415, j: 14, o: 0, y: 132, fdjs: 2, ofcr: 0, ccjs: 6 },
   { type: 'A320 Jetz', finStart: 416, finEnd: 416, j: 70, o: 0, y: 0, fdjs: 2, ofcr: 0, ccjs: 6 },
-  { type: 'A320', finStart: 417, finEnd: 417, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 417, finEnd: 417, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 4, notes: 'Cabin Jumps edited from 6, confirm.' },
   { type: 'A320', finStart: 418, finEnd: 418, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 6 },
   { type: 'A320', finStart: 419, finEnd: 419, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 6 },
-  { type: 'A320', finStart: 420, finEnd: 420, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 6 },
+  { type: 'A320', finStart: 420, finEnd: 420, j: 12, o: 0, y: 138, fdjs: 2, ofcr: 0, ccjs: 4, notes: 'Cabin jumps edited from 6, confirm.' },
   { type: 'A320', finStart: 421, finEnd: 421, j: 8, o: 0, y: 150, fdjs: 2, ofcr: 0, ccjs: 6 },
   { type: 'A320', finStart: 422, finEnd: 422, j: 8, o: 0, y: 150, fdjs: 2, ofcr: 0, ccjs: 6 },
   { type: 'A321', finStart: 451, finEnd: 451, j: 16, o: 0, y: 180, fdjs: 1, ofcr: 0, ccjs: 6 },
