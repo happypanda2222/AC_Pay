@@ -367,7 +367,7 @@ async function fetchFr24LiveContext({ registration, icao24 }){
     limit: 10,
     page: 1
   });
-  const resp = await fetch(url, { headers, cache: 'no-store' });
+  const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
   if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
   const json = await resp.json();
   const rows = json?.result?.response?.data;
