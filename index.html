@@ -261,6 +261,9 @@
     .two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end}
     .two-col>div,.row-4>div{display:flex;flex-direction:column;gap:6px}
     @media(max-width:620px){.two-col{grid-template-columns:1fr}}
+    .modern-timecalc .stacked-fields{gap:12px}
+    .modern-timecalc .two-col{align-items:flex-start}
+    .modern-timecalc .two-col>div{height:100%}
     /* Weather tab styling */
     .weather-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:12px}
     @media(max-width:960px){.weather-grid{grid-template-columns:1fr}}
@@ -546,6 +549,10 @@
                     <input id="modern-mon-vo" type="number" min="0" max="300" step="0.25" value="0">
                   </div>
                   <div>
+                    <label>VO credit minutes</label>
+                    <input id="modern-mon-vo-mins" type="number" min="0" max="59" step="1" value="0">
+                  </div>
+                  <div>
                     <label>TAFB (hrs)</label>
                     <input id="modern-mon-tafb" type="number" min="0" max="500" step="0.1" value="0">
                   </div>
@@ -674,7 +681,7 @@
             <div class="modern-panel">
               <h3>Field condition outlook</h3>
               <div id="modern-wx-out"></div>
-              <details class="drawer" id="modern-wx-raw"><summary>Show METAR/TAF inputs</summary><div id="modern-wx-raw-body"></div></details>
+              <details class="drawer hidden" id="modern-wx-raw"><summary>Show METAR/TAF inputs</summary><div id="modern-wx-raw-body"></div></details>
             </div>
           </div>
         </div>
@@ -895,7 +902,7 @@
 
           <div id="modern-time-calculator" class="modern-tab hidden">
             <div class="modern-grid">
-              <div class="modern-panel">
+              <div class="modern-panel modern-timecalc">
                 <h3>Time calculator</h3>
                 <div class="stacked-fields">
                   <div>
