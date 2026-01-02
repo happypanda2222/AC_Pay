@@ -464,7 +464,6 @@ function formatNumber(value, digits = 0){
 }
 
 const FIN_CONFIGS = expandFinConfigList([
-  { type: 'Test12', finStart: 1, finEnd: 1, j: 0, o: 0, y: 0, fdjs: 5, ofcr: 0, ccjs: 0 },
   { type: 'A220', finStart: 101, finEnd: 101, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A220', finStart: 102, finEnd: 102, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
   { type: 'A220', finStart: 103, finEnd: 103, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
@@ -582,7 +581,7 @@ const FIN_CONFIGS = expandFinConfigList([
   { type: 'A321 Rouge', finStart: 478, finEnd: 478, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
   { type: 'A321 Rouge', finStart: 479, finEnd: 479, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
   { type: 'A321 Rouge', finStart: 480, finEnd: 480, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
-  { type: 'A321 Rouge', finStart: 481, finEnd: 481, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
+  { type: 'A321 Rouge', finStart: 481, finEnd: 481, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5, reg: 'C-GKFA' },
   { type: 'A321 Rouge', finStart: 482, finEnd: 482, j: 12, o: 0, y: 184, fdjs: 2, ofcr: 0, ccjs: 5 },
   { type: 'A321', finStart: 483, finEnd: 483, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
   { type: 'A321', finStart: 484, finEnd: 484, j: 8, o: 0, y: 176, fdjs: 2, ofcr: 0, ccjs: 8 },
