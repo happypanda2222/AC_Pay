@@ -232,6 +232,14 @@ function normalizeFr24Timestamp(ts){
   return num > 1e12 ? Math.round(num / 1000) : Math.round(num);
 }
 
+function formatFr24DateTimeUtc(date){
+  const d = new Date(date);
+  if (!Number.isFinite(d.getTime())) return '';
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+    + `T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
 function parseFr24Date(value){
   if (value === null || value === undefined) return null;
   const parsed = Date.parse(value);
@@ -395,9 +403,10 @@ async function fetchFr24LiveContext({ registration, icao24 }){
     const from = new Date(now.getTime() - (24 * 60 * 60 * 1000));
     const to = now;
     const url = buildFr24Url('flight-summary/full', {
-      flight_datetime_from: from.toISOString(),
-      flight_datetime_to: to.toISOString(),
-      registrations: query
+      flight_datetime_from: formatFr24DateTimeUtc(from),
+      flight_datetime_to: formatFr24DateTimeUtc(to),
+      registrations: query,
+      limit: 200
     });
     const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
     if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
