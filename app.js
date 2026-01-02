@@ -3051,7 +3051,7 @@ function parseTafRawForecasts(rawTAF, icao){
     const [, dd, hh, mm] = match;
     return approximateUtcFromDayHour(Number(dd), Number(hh), Number(mm));
   };
-  const buildSegment = (segmentTokens, startMs, endMs, changeIndicator) => {
+  const buildSegment = (segmentTokens, startMs, endMs, changeIndicator, startIdx, endIdx) => {
     if (!startMs || !endMs || startMs === endMs) return null;
     const visToken = extractVisibilityToken(segmentTokens);
     const cloudTokens = segmentTokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}$/.test(t));
@@ -3070,21 +3070,28 @@ function parseTafRawForecasts(rawTAF, icao){
       wspd: wind?.speed ?? null,
       wgust: wind?.gust ?? null,
       wxString,
-      changeIndicator
+      changeIndicator,
+      cloudsExplicit: cloudTokens.length > 0,
+      visibilityExplicit: Boolean(visToken),
+      tokenRange: (Number.isInteger(startIdx) && Number.isInteger(endIdx) && endIdx > startIdx)
+        ? { start: startIdx, end: endIdx }
+        : null
     };
   };
 
   let i = validIdx + 1;
+  let baseTokensStartIdx = i;
   while (i < tokens.length){
     const token = tokens[i];
     if (/^FM\d{6}$/.test(token)){
       const nextStartMs = parseFmToken(token);
       if (nextStartMs){
-        const baseSeg = buildSegment(baseTokens, baseStartMs, nextStartMs, baseIndicator);
+        const baseSeg = buildSegment(baseTokens, baseStartMs, nextStartMs, baseIndicator, baseTokensStartIdx, i);
         if (baseSeg) baseSegments.push(baseSeg);
         baseTokens = [];
         baseStartMs = nextStartMs;
         baseIndicator = 'FM';
+        baseTokensStartIdx = i;
       }
       i += 1;
       continue;
@@ -3092,11 +3099,12 @@ function parseTafRawForecasts(rawTAF, icao){
     if (token === 'BECMG'){
       const range = parseDayHourRange(tokens[i + 1] || '');
       if (range){
-        const baseSeg = buildSegment(baseTokens, baseStartMs, range.startMs, baseIndicator);
+        const baseSeg = buildSegment(baseTokens, baseStartMs, range.startMs, baseIndicator, baseTokensStartIdx, i);
         if (baseSeg) baseSegments.push(baseSeg);
         baseTokens = [];
         baseStartMs = range.startMs;
         baseIndicator = 'BECMG';
+        baseTokensStartIdx = i;
         i += 2;
         continue;
       }
@@ -3114,12 +3122,13 @@ function parseTafRawForecasts(rawTAF, icao){
         continue;
       }
       const segmentTokens = [];
+      const segmentStartIdx = i;
       j += 1;
       while (j < tokens.length && !isChangeToken(tokens[j])){
         segmentTokens.push(tokens[j]);
         j += 1;
       }
-      const overlaySeg = buildSegment(segmentTokens, range.startMs, range.endMs, indicator);
+      const overlaySeg = buildSegment(segmentTokens, range.startMs, range.endMs, indicator, segmentStartIdx, j);
       if (overlaySeg) overlaySegments.push(overlaySeg);
       i = j;
       continue;
@@ -3127,7 +3136,7 @@ function parseTafRawForecasts(rawTAF, icao){
     baseTokens.push(token);
     i += 1;
   }
-  const finalBase = buildSegment(baseTokens, baseStartMs, validToMs, baseIndicator);
+  const finalBase = buildSegment(baseTokens, baseStartMs, validToMs, baseIndicator, baseTokensStartIdx, tokens.length);
   if (finalBase) baseSegments.push(finalBase);
   const isProbOverlay = (seg) => /^PROB/.test(String(seg?.changeIndicator || '').toUpperCase());
   const findCarrierSegment = (seg) => {
@@ -3141,11 +3150,19 @@ function parseTafRawForecasts(rawTAF, icao){
     if (!seg) return null;
     const carrier = findCarrierSegment(seg);
     if (!carrier) return seg;
+    const clouds = (Array.isArray(seg.clouds) && seg.clouds.length) ? seg.clouds : (carrier.clouds || []);
+    const visib = seg.visib ?? carrier.visib ?? null;
+    const visibRaw = seg.visibRaw ?? carrier.visibRaw ?? null;
     return {
       ...seg,
-      visib: seg.visib ?? carrier.visib ?? null,
+      visib,
+      visibRaw,
       vertVis: seg.vertVis ?? carrier.vertVis ?? null,
-      clouds: (Array.isArray(seg.clouds) && seg.clouds.length) ? seg.clouds : (carrier.clouds || [])
+      clouds,
+      cloudsExplicit: Boolean(seg.cloudsExplicit),
+      visibilityExplicit: Boolean(seg.visibilityExplicit),
+      cloudsCarried: !seg.cloudsExplicit && clouds.length > 0,
+      visibilityCarried: !seg.visibilityExplicit && (visib !== null || visibRaw !== null)
     };
   }).filter(Boolean);
   const fcsts = [...baseSegments, ...overlaysWithBase].filter(Boolean);
@@ -3897,9 +3914,10 @@ function tafScopedFcsts(ordered, targetMs){
   if (!Number.isFinite(cutoff)) return ordered;
   return ordered.filter(seg => Number.isFinite(seg?.timeFrom) && seg.timeFrom >= cutoff);
 }
-function ceilingWithCarry(fcsts, seg){
+function ceilingWithCarry(fcsts, seg, { allowCarry = true } = {}){
   const direct = extractCeilingFt(seg?.clouds, seg?.vertVis);
   if (direct !== null && direct !== undefined) return direct;
+  if (!allowCarry) return null;
   if (!Array.isArray(fcsts) || !seg) return null;
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return null;
@@ -3911,9 +3929,10 @@ function ceilingWithCarry(fcsts, seg){
   }
   return null;
 }
-function visibilityWithCarryFromOrdered(ordered, seg){
+function visibilityWithCarryFromOrdered(ordered, seg, { allowCarry = true } = {}){
   const direct = parseVisibilityToSM(seg?.visib);
   if (direct !== null && direct !== undefined) return direct;
+  if (!allowCarry) return null;
   if (!Array.isArray(ordered) || !seg) return null;
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return null;
@@ -3924,16 +3943,17 @@ function visibilityWithCarryFromOrdered(ordered, seg){
   }
   return null;
 }
-function visibilityWithCarry(fcsts, seg){
+function visibilityWithCarry(fcsts, seg, opts = {}){
   if (!seg) return null;
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return parseVisibilityToSM(seg?.visib);
   const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
-  return visibilityWithCarryFromOrdered(ordered, seg);
+  return visibilityWithCarryFromOrdered(ordered, seg, opts);
 }
-function visibilityRawWithCarryFromOrdered(ordered, seg){
+function visibilityRawWithCarryFromOrdered(ordered, seg, { allowCarry = true } = {}){
   const direct = segmentVisibilityRaw(seg);
   if (direct) return direct;
+  if (!allowCarry) return null;
   if (!Array.isArray(ordered) || !seg) return null;
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return null;
@@ -3944,12 +3964,12 @@ function visibilityRawWithCarryFromOrdered(ordered, seg){
   }
   return null;
 }
-function visibilityRawWithCarry(fcsts, seg){
+function visibilityRawWithCarry(fcsts, seg, opts = {}){
   if (!seg) return null;
   const segFrom = Number(seg.timeFrom);
   if (!Number.isFinite(segFrom)) return segmentVisibilityRaw(seg);
   const ordered = tafScopedFcsts(tafOrderedFcsts(fcsts), segFrom * 1000);
-  return visibilityRawWithCarryFromOrdered(ordered, seg);
+  return visibilityRawWithCarryFromOrdered(ordered, seg, opts);
 }
 function wxWithCarry(fcsts, seg){
   const direct = (seg?.wxString || (Array.isArray(seg?.weather) ? seg.weather.join(' ') : '')).trim();
@@ -4230,7 +4250,7 @@ function tafSegmentForTime(fcsts, targetMs, options = {}){
   }
   return ordered[ordered.length - 1];
 }
-function worstConditionsFromSegments(ordered, segments){
+function worstConditionsFromSegments(ordered, segments, { allowCarriedCeiling = true, allowCarriedVisibility = true } = {}){
   let worstCeiling = null;
   let worstVisibility = null;
   let worstVisibilityRaw = null;
@@ -4238,12 +4258,18 @@ function worstConditionsFromSegments(ordered, segments){
   let worstObstruction = null;
   let worstWxRaw = '';
   segments.forEach(seg => {
-    const ceiling = ceilingWithCarry(ordered, seg);
+    const ceiling = allowCarriedCeiling
+      ? ceilingWithCarry(ordered, seg)
+      : (seg?.cloudsExplicit ? extractCeilingFt(seg?.clouds, seg?.vertVis) : null);
     if (ceiling !== null && ceiling !== undefined){
       worstCeiling = worstCeiling === null ? ceiling : Math.min(worstCeiling, ceiling);
     }
-    const vis = visibilityWithCarryFromOrdered(ordered, seg);
-    const visRaw = visibilityRawWithCarryFromOrdered(ordered, seg);
+    const vis = allowCarriedVisibility
+      ? visibilityWithCarryFromOrdered(ordered, seg)
+      : (seg?.visibilityExplicit ? parseVisibilityToSM(seg?.visib) : null);
+    const visRaw = allowCarriedVisibility
+      ? visibilityRawWithCarryFromOrdered(ordered, seg)
+      : (seg?.visibilityExplicit ? segmentVisibilityRaw(seg) : null);
     if (vis !== null && vis !== undefined){
       if (worstVisibility === null || vis < worstVisibility){
         worstVisibility = vis;
@@ -4294,7 +4320,10 @@ function tafWorstConditionsForTime(fcsts, targetMs){
     : (matches.length ? matches : [tafSegmentForTime(ordered, targetMs, { excludeProb: true })].filter(Boolean));
   const probSegments = matches.filter(seg => tafIsProbSegment(seg));
   const worst = worstConditionsFromSegments(ordered, segments);
-  const probWorst = probSegments.length ? worstConditionsFromSegments(ordered, probSegments) : {
+  const probWorst = probSegments.length ? worstConditionsFromSegments(ordered, probSegments, {
+    allowCarriedCeiling: false,
+    allowCarriedVisibility: false
+  }) : {
     ceiling: null,
     visibility: null,
     visibilityRaw: null,
@@ -4324,6 +4353,25 @@ function formatZuluHourRange(startMs, endMs){
   const startHour = String(start.getUTCHours()).padStart(2, '0');
   const endHour = String(end.getUTCHours()).padStart(2, '0');
   return `${startHour}-${endHour}Z`;
+}
+function highlightTafSectionForTime(rawTAF, fcsts, targetMs){
+  const cleaned = String(rawTAF || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  const tokens = cleaned.split(' ').filter(Boolean);
+  if (!tokens.length) return escapeHtml(cleaned);
+  const ranges = (Array.isArray(fcsts) ? fcsts : [])
+    .filter(seg => Number.isFinite(seg?.timeFrom) && Number.isFinite(seg?.timeTo) && seg.tokenRange && targetMs >= seg.timeFrom * 1000 && targetMs < seg.timeTo * 1000)
+    .map(seg => seg.tokenRange)
+    .filter(r => Number.isInteger(r.start) && Number.isInteger(r.end) && r.end > r.start);
+  if (!ranges.length) return escapeHtml(cleaned);
+  const start = Math.min(...ranges.map(r => r.start));
+  const end = Math.max(...ranges.map(r => r.end));
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return escapeHtml(cleaned);
+  const parts = tokens.map((tok, idx) => {
+    const safe = escapeHtml(tok);
+    return (idx >= start && idx < end) ? `<mark class="taf-highlight">${safe}</mark>` : safe;
+  });
+  return parts.join(' ');
 }
 function driverLabelForSegment(seg){
   const change = String(seg?.changeIndicator || '').toUpperCase();
@@ -4424,13 +4472,19 @@ async function fetchWeatherForAirport(icao){
       console.warn(`TAF text fallback failed for ${icao}`, err);
       return null;
     });
+  const tafFromJson = tafJson
+    ? (buildTafFromRaw(tafJson.rawTAF || tafJson.raw_text || tafJson.taf || '', icao, 'feed')
+      || normalizeTafPayload(tafJson, icao)
+      || tafJson)
+    : null;
   const finalMetar = metarJson || metarFromText;
-  const finalTaf = tafJson || tafTxt;
-  let name = finalMetar?.name || finalTaf?.name || icao;
-  const weatherWarning = (!finalMetar && !finalTaf)
+  const finalTaf = tafFromJson || tafTxt;
+  const namedMetar = finalMetar ? { ...finalMetar, name: icao } : null;
+  const namedTaf = finalTaf ? { ...finalTaf, name: icao } : null;
+  const weatherWarning = (!namedMetar && !namedTaf)
     ? `No METAR/TAF found for ${icao}. Check the airport code or try again later.`
     : '';
-  return { icao, name, metar: finalMetar, taf: finalTaf, weatherWarning };
+  return { icao, name: icao, metar: namedMetar, taf: namedTaf, weatherWarning };
 }
 const weatherCache = new Map();
 let weatherPrefetchTimer = null;
@@ -4548,11 +4602,19 @@ async function fetchWeatherWithPriority(airports, fetcher){
   const targets = Array.from(new Set((airports || []).map(code => String(code || '').toUpperCase()).filter(Boolean)));
   await pauseWeatherPrefetch({ waitMs: WEATHER_PREFETCH_PAUSE_TIMEOUT_MS });
   try {
-    const result = {};
-    for (const icao of targets){
-      result[icao] = await fetcher(icao);
-    }
-    return result;
+    const entries = await Promise.all(targets.map(async (icao) => {
+      try {
+        const data = await fetcher(icao);
+        return [icao, data];
+      } catch (err){
+        console.warn(`Weather fetch failed for ${icao}`, err);
+        return [icao, null];
+      }
+    }));
+    return entries.reduce((acc, [icao, data]) => {
+      if (icao) acc[icao] = data;
+      return acc;
+    }, {});
   } finally {
     weatherPrefetchAbort = false;
     runWeatherPrefetchCycle();
@@ -4723,6 +4785,8 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const forceTaf = forceSource === 'taf';
   const useDecoders = options.useDecoders !== false;
   const hasMetar = Boolean(airportData?.metar);
+  const airportIcao = airportData?.icao || '';
+  const displayName = airportIcao || airportData?.name || '';
   let tafIcons = [false, false, false];
   let tafSeg = null;
   let tafProbLabelText = '';
@@ -4753,7 +4817,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
     return {
       label,
       icao: airportData?.icao || '',
-      name: airportData?.name || airportData?.icao || '',
+      name: displayName || airportData?.name || airportData?.icao || '',
       targetMs,
       targetText: formatZulu(targetMs),
       noResults: true,
@@ -4761,7 +4825,6 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
       tafIcons
     };
   }
-  const airportIcao = airportData?.icao || '';
   const metarMs = metarTimeMs(airportData.metar);
   const metarIsCurrent = metarMs ? Math.abs(targetMs - metarMs) <= 90 * 60000 : false;
   const forceTafOnly = forceTaf && tafSeg;
@@ -4799,15 +4862,15 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const driversSummary = source === 'TAF'
     ? buildTafDriversSummary(tafFcsts || [], targetMs, ceiling, vis, airportIcao)
     : '';
-  return {
-    label,
-    icao: airportData.icao,
-    name: airportData.name || airportData.icao,
-    targetMs,
-    targetText: formatZulu(targetMs),
-    source,
-    sourceDetail,
-    windowText,
+    return {
+      label,
+      icao: airportData.icao,
+      name: displayName || airportData.name || airportData.icao,
+      targetMs,
+      targetText: formatZulu(targetMs),
+      source,
+      sourceDetail,
+      windowText,
     ceiling,
     visibility: vis,
     visibilityRaw: visRaw,
@@ -4861,6 +4924,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     return kept.join(' ').trim();
   };
   const cards = assessments.map(a => {
+    const airportLabel = escapeHtml(a.icao || a.name || '');
     const statusContent = `<div class="status-row">
           <span class="status-badge ${a.rules?.className || ''}">${escapeHtml(a.rules?.label || '')}</span>
           ${a.probFlag ? `<span class="prob-flag ${a.rules?.className || ''}">${escapeHtml(a.probFlag)}</span>` : ''}
@@ -4871,7 +4935,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
           <div>
             <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">${escapeHtml(a.label)}</div>
-          <div style="font-weight:800;font-size:18px">${escapeHtml(a.name)} (${escapeHtml(a.icao)})</div>
+          <div style="font-weight:800;font-size:18px">${airportLabel}</div>
             <div class="wx-meta">
               <span>${escapeHtml(a.targetText || '')}</span>
             </div>
@@ -4918,7 +4982,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <div>
           <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">${escapeHtml(a.label)}</div>
-          <div style="font-weight:800;font-size:18px">${escapeHtml(a.name)} (${escapeHtml(a.icao)})</div>
+          <div style="font-weight:800;font-size:18px">${airportLabel}</div>
           <div class="wx-meta">
             <span>${escapeHtml(a.targetText)}</span>
             <span>${escapeHtml(a.sourceDetail || a.source)} · ${escapeHtml(a.windowText)}</span>
@@ -4939,12 +5003,24 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
   }).join('');
   outEl.innerHTML = cards;
   if (rawEl){
+    const assessmentsByIcao = assessments.reduce((acc, entry) => {
+      const key = entry?.icao;
+      if (!key) return acc;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(entry);
+      return acc;
+    }, {});
     const rawHtml = (rawSources || []).map(src => `
       <div class="wx-box">
-        <div class="label">${escapeHtml(src.name || src.icao)} (${escapeHtml(src.icao)})</div>
+        <div class="label">${escapeHtml(src.icao || src.name || '')}</div>
         <div class="value" style="font-size:13px;line-height:1.4">METAR: ${escapeHtml(src.metar?.rawOb || 'N/A')}</div>
         <div class="value" aria-hidden="true" style="height:8px"></div>
-        <div class="value" style="font-size:13px;line-height:1.4">TAF: ${escapeHtml(src.taf?.rawTAF || 'N/A')}</div>
+        ${(assessmentsByIcao[src.icao] || [null]).map(a => {
+          const tafText = src.taf?.rawTAF || '';
+          const highlighted = a ? (highlightTafSectionForTime(tafText, src.taf?.fcsts || [], a.targetMs) || escapeHtml(tafText || 'N/A')) : escapeHtml(tafText || 'N/A');
+          const label = a ? `${escapeHtml(a.label)} · ${escapeHtml(a.targetText || '')}` : 'TAF';
+          return `<div class="value" style="font-size:13px;line-height:1.4">TAF (${label}): ${highlighted || 'N/A'}</div>`;
+        }).join('')}
       </div>
     `).join('');
     rawEl.innerHTML = rawHtml;
