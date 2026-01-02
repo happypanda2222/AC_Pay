@@ -369,7 +369,16 @@ async function fetchFr24LiveContext({ registration, icao24 }){
   });
   const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
   if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
-  const json = await resp.json();
+  const noContent = resp.status === 204 || resp.headers.get('content-length') === '0';
+  if (noContent){
+    return { state: null, flights: [], icao24: normalizeRegistration(icao24 || query) };
+  }
+  let json;
+  try {
+    json = await resp.json();
+  } catch (err){
+    return { state: null, flights: [], icao24: normalizeRegistration(icao24 || query) };
+  }
   const rows = json?.result?.response?.data;
   if (!Array.isArray(rows) || rows.length === 0){
     return { state: null, flights: [], icao24: normalizeRegistration(icao24 || '') };
