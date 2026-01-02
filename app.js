@@ -408,10 +408,12 @@ const WEATHER_MAX_ATTEMPTS = 1 + WEATHER_STATION_ADDITIONAL_ATTEMPTS;
 const WEATHER_RETRY_DELAY_MS = 500;
 const WEATHER_PREFETCH_INTERVAL_MS = 5 * 60 * 1000;
 const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
-const WEATHER_PREFETCH_DELAY_MS = 250;
+const WEATHER_PREFETCH_DELAY_MS = 150;
+const WEATHER_PREFETCH_PAUSE_TIMEOUT_MS = 500;
 const MAJOR_CANADIAN_AIRPORTS = ['CYWG', 'CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYHZ', 'CYQB', 'CYQR'];
 const MAJOR_US_AIRPORTS = ['KJFK', 'KLAX', 'KORD', 'KATL', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
 const WEATHER_PREFETCH_SEQUENCE = [...MAJOR_CANADIAN_AIRPORTS, ...MAJOR_US_AIRPORTS];
+const WEATHER_WARMUP_AIRPORTS = ['YWG', 'YYZ'];
 const DEPARTURE_METAR_THRESHOLD_HRS = 1;
 const METAR_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`,
@@ -4152,7 +4154,7 @@ function ilsCategory(ceilingFt, visSm){
   if (ceil < 100 || vis < 0.3) return { cat:'CAT III', reason:'Ceiling/vis below CAT II mins' };
   if (ceil < 200 || vis < 0.5) return { cat:'CAT II', reason:'Ceiling or visibility below CAT I mins' };
   if (ceil < 1000 || vis < 3) return { cat:'CAT I', reason:'IFR conditions expected' };
-  return { cat:'CAT I / Visual', reason:'VMC; CAT I sufficient' };
+  return { cat:'CAT I / Visual', reason:'' };
 }
 function tafProbLabel(seg){
   const source = `${seg?.changeIndicator || ''} ${seg?.wxString || ''}`.toUpperCase();
@@ -4436,6 +4438,7 @@ let weatherPrefetchInFlight = false;
 let weatherPrefetchAbort = false;
 let weatherPrefetchCursor = 0;
 let weatherPrefetchCyclePromise = null;
+let weatherWarmupPromise = null;
 function cacheWeatherResult(icao, data){
   if (!icao || !data) return;
   weatherCache.set(String(icao).toUpperCase(), { data, fetchedAt: Date.now() });
@@ -4506,24 +4509,44 @@ async function runWeatherPrefetchCycle(){
   weatherPrefetchCyclePromise = cycle;
   return cycle;
 }
-async function pauseWeatherPrefetch(){
+async function pauseWeatherPrefetch({ waitMs = WEATHER_PREFETCH_PAUSE_TIMEOUT_MS } = {}){
   weatherPrefetchAbort = true;
   if (weatherPrefetchCyclePromise){
     try {
-      await weatherPrefetchCyclePromise;
+      const waitPromise = waitMs > 0
+        ? Promise.race([weatherPrefetchCyclePromise, sleep(waitMs)])
+        : weatherPrefetchCyclePromise;
+      await waitPromise;
     } catch (err){
       console.warn('Weather prefetch cycle ended with error', err);
     }
   }
 }
+function warmWeatherCache(airports){
+  const targets = Array.from(new Set((airports || []).map(code => String(code || '').toUpperCase()).filter(Boolean)));
+  if (!targets.length) return null;
+  weatherWarmupPromise = (async () => {
+    try {
+      await fetchWeatherWithPriority(targets, (icao) => getWeatherForAirport(icao, { forceRefresh: true }));
+    } catch (err){
+      console.warn('Weather warmup failed', err);
+    }
+  })();
+  return weatherWarmupPromise;
+}
 function startWeatherPrefetchLoop(){
-  runWeatherPrefetchCycle();
+  const warmup = warmWeatherCache(WEATHER_WARMUP_AIRPORTS);
+  if (warmup){
+    warmup.finally(() => runWeatherPrefetchCycle());
+  } else {
+    runWeatherPrefetchCycle();
+  }
   if (weatherPrefetchTimer) clearInterval(weatherPrefetchTimer);
   weatherPrefetchTimer = setInterval(runWeatherPrefetchCycle, WEATHER_PREFETCH_INTERVAL_MS);
 }
 async function fetchWeatherWithPriority(airports, fetcher){
   const targets = Array.from(new Set((airports || []).map(code => String(code || '').toUpperCase()).filter(Boolean)));
-  await pauseWeatherPrefetch();
+  await pauseWeatherPrefetch({ waitMs: WEATHER_PREFETCH_PAUSE_TIMEOUT_MS });
   try {
     const result = {};
     for (const icao of targets){
@@ -4816,6 +4839,27 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
   const renderWxBox = (assessment, metricKey, labelHtml, valueHtml) => {
     return `<div class="wx-box"><div class="label">${labelHtml}</div><div class="value">${valueHtml}</div></div>`;
   };
+  const stripVisibilityFromWxText = (wxRaw) => {
+    if (!wxRaw) return '';
+    const tokens = String(wxRaw).trim().split(/\s+/);
+    const kept = [];
+    for (let i = 0; i < tokens.length; i += 1){
+      const tok = tokens[i];
+      if (!tok) continue;
+      const upper = tok.toUpperCase();
+      if (upper === 'RMK') break;
+      const next = tokens[i + 1];
+      if (/^\d+$/.test(tok) && next && /^M?\d+\/\d+SM$/i.test(next)){
+        i += 1;
+        continue;
+      }
+      if (/^(P|M)?\d+(\.\d+)?SM$/i.test(tok) || /^M?\d+\/\d+SM$/i.test(tok) || /^\d{4}$/.test(tok) || /^CAVOK$/i.test(tok)){
+        continue;
+      }
+      kept.push(tok);
+    }
+    return kept.join(' ').trim();
+  };
   const cards = assessments.map(a => {
     const statusContent = `<div class="status-row">
           <span class="status-badge ${a.rules?.className || ''}">${escapeHtml(a.rules?.label || '')}</span>
@@ -4846,7 +4890,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         : '');
     const probWindText = prob.wind ? formatWind(prob.wind) : '';
     const probWxText = (prob.wxRaw || '').trim();
-    const probObstructionText = probWxText || (prob.obstruction?.token ? prob.obstruction.token : '');
+    const probObstructionText = prob.obstruction?.token ? prob.obstruction.token : stripVisibilityFromWxText(probWxText);
     const withProbSuffix = (baseText, probText) => {
       const normalize = (text) => String(text || '').trim().replace(/\s+/g, ' ').toUpperCase();
       const baseNorm = normalize(baseText);
@@ -4864,11 +4908,12 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
       : (a.skyClear ? 'SKC' : 'No ceiling');
     const visTxt = a.visibilityDisplay || formatVisibilityDisplay(a.visibility, a.visibilityRaw, { icao: a.icao });
     const windTxt = formatWind(a.wind);
-    const obstructionTxt = a.obstruction?.token ? a.obstruction.token : (a.wx || 'None reported');
+    const obstructionTxt = a.obstruction?.token ? a.obstruction.token : (stripVisibilityFromWxText(a.wx) || a.wx || 'None reported');
     const ceilDisplay = withProbSuffix(ceilTxt, probCeilingText);
     const visDisplay = withProbSuffix(visTxt, probVisText);
     const windDisplay = withProbSuffix(windTxt, probWindText);
-    const obstructionDisplay = withProbSuffix(obstructionTxt, probObstructionText);
+    const obstructionDisplay = withProbSuffix(obstructionTxt || 'None reported', probObstructionText);
+    const ilsReason = a.ils?.reason ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(a.ils.reason)}</div>` : '';
     return `<div class="weather-card">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <div>
@@ -4886,7 +4931,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         ${renderWxBox(a, 'visibility', labelWithInfo('Visibility', INFO_COPY.weather.visibility), escapeHtml(visDisplay))}
         ${renderWxBox(a, 'wind', labelWithInfo('Wind', INFO_COPY.weather.wind), escapeHtml(windDisplay))}
         ${renderWxBox(a, 'obstruction', labelWithInfo('Precip/Obstruction', INFO_COPY.weather.obstruction), escapeHtml(obstructionDisplay))}
-        ${renderWxBox(a, 'ils', 'ILS guidance', `<span class=\"ils-badge\">${escapeHtml(a.ils.cat)}</span><div style=\"font-size:12px;color:var(--muted);margin-top:4px\">${escapeHtml(a.ils.reason)}</div>`)}
+        ${renderWxBox(a, 'ils', 'ILS guidance', `<span class=\"ils-badge\">${escapeHtml(a.ils.cat)}</span>${ilsReason}`)}
         ${renderWxBox(a, 'drivers', 'Drivers', `<span style=\"font-size:14px;line-height:1.4\">${escapeHtml(a.summary)}</span>`)}
         ${showDecoders ? renderWxBox(a, 'taf-decoders', 'TAF decoders', renderDecoderIcons(a.tafIcons)) : ''}
       </div>
