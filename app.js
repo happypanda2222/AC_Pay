@@ -658,7 +658,7 @@ const FIN_CONFIGS = expandFinConfigList([
   { type: '777-300', finStart: 739, finEnd: 739, j: 40, o: 24, y: 336, fdjs: 2, ofcr: 2, ccjs: 16 },
   { type: '777-300', finStart: 740, finEnd: 740, j: 40, o: 24, y: 336, fdjs: 2, ofcr: 2, ccjs: 16 },
   { type: '777-300', finStart: 741, finEnd: 741, j: 40, o: 24, y: 336, fdjs: 2, ofcr: 2, ccjs: 16 },
-  { type: '777-300', finStart: 742, finEnd: 742, j: 40, o: 24, y: 336, fdjs: 2, ofcr: 2, ccjs: 16 },
+  { type: '777-300', finStart: 742, finEnd: 742, j: 40, o: 24, y: 336, fdjs: 2, ofcr: 2, ccjs: 16, reg: 'C-FIVS' },
   { type: '777-300HD', finStart: 743, finEnd: 743, j: 28, o: 24, y: 398, fdjs: 2, ofcr: 2, ccjs: 16 },
   { type: '777-300HD', finStart: 744, finEnd: 744, j: 28, o: 24, y: 398, fdjs: 2, ofcr: 2, ccjs: 16 },
   { type: '777-300HD', finStart: 745, finEnd: 745, j: 28, o: 24, y: 398, fdjs: 2, ofcr: 2, ccjs: 16 },
