@@ -403,12 +403,13 @@ const FOM_AUGMENTED_FDP_TABLE = [
   { additionalCrew: 2, facility: 1, max: 18 }
 ];
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
-const WEATHER_MAX_ATTEMPTS = 5;
+const WEATHER_STATION_ADDITIONAL_ATTEMPTS = 5;
+const WEATHER_MAX_ATTEMPTS = 1 + WEATHER_STATION_ADDITIONAL_ATTEMPTS;
 const WEATHER_RETRY_DELAY_MS = 500;
 const WEATHER_PREFETCH_INTERVAL_MS = 5 * 60 * 1000;
 const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
 const WEATHER_PREFETCH_DELAY_MS = 250;
-const MAJOR_CANADIAN_AIRPORTS = ['CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYWG', 'CYHZ', 'CYQB', 'CYQR'];
+const MAJOR_CANADIAN_AIRPORTS = ['CYWG', 'CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYHZ', 'CYQB', 'CYQR'];
 const MAJOR_US_AIRPORTS = ['KJFK', 'KLAX', 'KORD', 'KATL', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
 const WEATHER_PREFETCH_SEQUENCE = [...MAJOR_CANADIAN_AIRPORTS, ...MAJOR_US_AIRPORTS];
 const DEPARTURE_METAR_THRESHOLD_HRS = 1;
@@ -1206,7 +1207,11 @@ function computeMonthly(params){
   const creditHours = Number.isFinite(+params.creditH) ? +params.creditH : +params.credits;
   const creditMinutes = Number.isFinite(+params.creditM) ? +params.creditM : 0;
   const credits = Math.max(0, (+creditHours) + Math.max(0, Math.min(59, +creditMinutes)) / 60);
-  const voCredits = Math.max(0, +params.voCredits || 0);
+  const voHoursRaw = Number.isFinite(+params.voCredits) ? +params.voCredits : 0;
+  const voMinutesRaw = Number.isFinite(+params.voCreditMinutes)
+    ? +params.voCreditMinutes
+    : (Number.isFinite(+params.voCreditsMinutes) ? +params.voCreditsMinutes : (Number.isFinite(+params.voMinutes) ? +params.voMinutes : 0));
+  const voCredits = Math.max(0, voHoursRaw + Math.max(0, Math.min(59, voMinutesRaw)) / 60);
   // Regular pay hours (<=85), overtime beyond 85, and VO credits (all double time)
   const regHours = Math.min(85, credits);
   const overtime = Math.max(0, credits - 85);
@@ -4665,7 +4670,7 @@ function handleWeatherFeedback(icao, targetMs, metric, action){
   if (action === 'up'){
     fb.history.push({ valueKey: currentKey, source: currentSource });
     fb.state = 'accepted';
-    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: true });
+    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: false });
     return;
   }
   if (action === 'flag' || action === 'down'){
@@ -4673,14 +4678,14 @@ function handleWeatherFeedback(icao, targetMs, metric, action){
     fb.history.push({ valueKey: currentKey, source: currentSource });
     if (!next){
       fb.state = 'flagged';
-      renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: true });
+      renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, latestWeatherContext.assessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: false });
       return;
     }
     const updated = applyMetricSnapshot(assessment, next.snapshot, metric);
     updated.feedback = { ...assessment.feedback, [metric]: { ...fb, state: 'review', currentSource: next.candidate?.source || fb.currentSource, lastKey: next.key } };
     const nextAssessments = latestWeatherContext.assessments.map(a => (a === assessment ? updated : a));
     latestWeatherContext.assessments = nextAssessments;
-    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, nextAssessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: true });
+    renderWeatherResults(latestWeatherContext.outEl, latestWeatherContext.rawEl, nextAssessments, latestWeatherContext.rawSources, { showDecoders: false, enableFeedback: false });
   }
 }
 function metarTimeMs(metar){
@@ -4808,33 +4813,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     return;
   }
   const showDecoders = options.showDecoders === true;
-  const feedbackEnabled = options.enableFeedback !== false;
-  if (feedbackEnabled){
-    assessments.forEach(a => { if (!a.feedback) a.feedback = {}; });
-  }
-  const buildFlagButton = (assessment, extraClass = '') => {
-    if (!feedbackEnabled) return '';
-    const cls = extraClass ? ` ${extraClass}` : '';
-    return `<button class="wx-flag${cls}" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="drivers" aria-label="Flag this weather result as incorrect">🚩</button>`;
-  };
   const renderWxBox = (assessment, metricKey, labelHtml, valueHtml) => {
-    const feedback = assessment.feedback?.[metricKey];
-    if (feedbackEnabled){
-      let control = `<button class="wx-flag wx-flag-compact" type="button" data-ai-flag="true" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="Flag this weather result as incorrect">🚩</button>`;
-      if (feedback && feedback.state !== 'idle'){
-        control = `<div style="display:flex;gap:6px">
-          <button class="wx-vote wx-vote-down" type="button" data-ai-feedback="down" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="This result is still wrong">👎</button>
-          <button class="wx-vote wx-vote-up" type="button" data-ai-feedback="up" data-ai-icao="${escapeHtml(assessment.icao)}" data-ai-target="${assessment.targetMs}" data-ai-metric="${escapeHtml(metricKey)}" aria-label="This result is correct">👍</button>
-        </div>`;
-      }
-      return `<div class="wx-box">
-        <div class="wx-box-head">
-          <div class="label">${labelHtml}</div>
-          ${control}
-        </div>
-        <div class="value">${valueHtml}</div>
-      </div>`;
-    }
     return `<div class="wx-box"><div class="label">${labelHtml}</div><div class="value">${valueHtml}</div></div>`;
   };
   const cards = assessments.map(a => {
@@ -4844,7 +4823,6 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         </div>`;
     const statusArea = `<div class="wx-actions">${statusContent}</div>`;
     if (a.noResults){
-      const noResultFlag = buildFlagButton(a);
       return `<div class="weather-card">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
           <div>
@@ -4854,7 +4832,6 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
               <span>${escapeHtml(a.targetText || '')}</span>
             </div>
           </div>
-          ${feedbackEnabled ? `<div class="wx-actions">${noResultFlag}</div>` : ''}
         </div>
         <div class="wx-error" style="margin-top:12px">${escapeHtml(a.noResultsReason || 'No results available for this airport.')}</div>
       </div>`;
@@ -4941,7 +4918,10 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
     : `Retrying weather fetch (attempt ${attempt}/${WEATHER_MAX_ATTEMPTS})…`;
   if (outEl) outEl.innerHTML = `<div class="muted-note">${escapeHtml(attemptMsg)}</div>`;
   if (rawEl) rawEl.innerHTML = '';
-  if (rawDetails) rawDetails.open = false;
+  if (rawDetails){
+    rawDetails.open = false;
+    rawDetails.classList.add('hidden');
+  }
   try {
     const depCode = document.getElementById(depId)?.value || '';
     const arrCode = document.getElementById(arrId)?.value || '';
@@ -4964,8 +4944,11 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
     ];
     const normalizedAssessments = baseAssessments.map(a => ({ ...a, feedback: a.feedback || {} }));
     const rawSources = uniqueIcao.map(c => weatherMap[c]).filter(Boolean);
-    renderWeatherResults(outEl, rawEl, normalizedAssessments, rawSources, { showDecoders: false, enableFeedback: true });
+    renderWeatherResults(outEl, rawEl, normalizedAssessments, rawSources, { showDecoders: false, enableFeedback: false });
     latestWeatherContext = { assessments: normalizedAssessments, weatherMap, rawSources, outEl, rawEl };
+    if (rawDetails && rawSources.length){
+      rawDetails.classList.remove('hidden');
+    }
   } catch(err){
     console.error(err);
     const message = err.message || 'Weather lookup failed';
@@ -5010,7 +4993,7 @@ const INFO_COPY = {
   monthly: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
     credits: 'Monthly credit hours plus minutes (converted to hours) paid at regular rate up to 85 hours.',
-    voCredits: 'VO credit hours that are always paid at double time.',
+    voCredits: 'VO credit hours and minutes (converted to hours) that are always paid at double time.',
     gross: 'Monthly gross combining regular hours at the hourly rate, overtime beyond 85 hours at double time and VO credits at double time.',
     net: 'Monthly take-home after tax, CPP/QPP, EI, health, union dues, pension and ESOP, plus the ESOP match and TAFB.',
     payAdvance: 'Requested advance minus tax/CPP/QPP/EI withheld on that advance cheque alone (annualized over 12 similar paycheques).',
@@ -5553,6 +5536,7 @@ function calcMonthly(){
       creditH: +document.getElementById('mon-hrs').value,
       creditM: +document.getElementById('mon-mins').value,
       voCredits: +document.getElementById('mon-vo').value,
+      voCreditMinutes: +(document.getElementById('mon-vo-mins')?.value || 0),
       tafb: +document.getElementById('mon-tafb').value,
       esopPct: +document.getElementById('mon-esop').value,
       adv: +document.getElementById('mon-adv').value,
@@ -5763,6 +5747,7 @@ function calcMonthlyModern(){
       creditH: +document.getElementById('modern-mon-hrs').value,
       creditM: +document.getElementById('modern-mon-mins').value,
       voCredits: +document.getElementById('modern-mon-vo').value,
+      voCreditMinutes: +document.getElementById('modern-mon-vo-mins').value,
       tafb: +document.getElementById('modern-mon-tafb').value,
       esopPct: +document.getElementById('modern-mon-esop').value,
       adv: +document.getElementById('modern-mon-adv').value,
@@ -5912,17 +5897,6 @@ function init(){
   document.getElementById('modern-rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestModern(); });
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
   document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out', converterTarget:'modern' }); });
-  document.getElementById('modern-wx-out')?.addEventListener('click', (e)=>{
-    const flagTarget = e.target?.closest('[data-ai-flag]');
-    const voteTarget = e.target?.closest('[data-ai-feedback]');
-    if (!flagTarget && !voteTarget) return;
-    e.preventDefault();
-    if (flagTarget){
-      handleWeatherFeedback(flagTarget.dataset.aiIcao || '', Number(flagTarget.dataset.aiTarget || '0'), flagTarget.dataset.aiMetric || 'drivers', 'flag');
-    } else if (voteTarget){
-      handleWeatherFeedback(voteTarget.dataset.aiIcao || '', Number(voteTarget.dataset.aiTarget || '0'), voteTarget.dataset.aiMetric || 'drivers', voteTarget.dataset.aiFeedback || 'down');
-    }
-  });
   document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
@@ -5957,8 +5931,6 @@ function init(){
   toggleDutyModeFields('modern-duty-mode','modern-duty');
   updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility');
   toggleRestFields('modern-rest-duty-type','modern-rest-unaug-fields');
-  calcDutyModern();
-  calcRestModern();
   initTimeConverterModeSwitch({ selectId: 'modern-time-mode', utcGroupId: 'modern-time-utc-group', otherGroupId: 'modern-time-other-group', noteId: 'modern-time-note' });
   attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
   attachAirportToAirportConverter({ fromAirportId: 'modern-time-from-airport', toAirportId: 'modern-time-to-airport', fromTimeId: 'modern-time-from', toTimeId: 'modern-time-to', noteId: 'modern-time-note' });
