@@ -71,6 +71,8 @@ const CAPITAL_GAINS_INCLUSION = 0.5;
 const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
 const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
+const AIRPORT_DATA_URL = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
+const FIN_FLIGHT_MAP = { width: 760, height: 380 };
 
 function expandFinConfig(config){
   if (!config) return [];
@@ -89,6 +91,93 @@ function expandFinConfig(config){
 function expandFinConfigList(list){
   if (!Array.isArray(list)) return [];
   return list.flatMap(expandFinConfig);
+}
+
+let airportIndexPromise = null;
+const finFlightStore = new Map();
+
+function normalizeRegistration(reg){
+  return String(reg ?? '').trim().toUpperCase();
+}
+
+async function loadAirportIndex(){
+  if (airportIndexPromise) return airportIndexPromise;
+  airportIndexPromise = fetch(AIRPORT_DATA_URL, { cache: 'force-cache' })
+    .then((resp) => {
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return resp.json();
+    })
+    .then((json) => {
+      const index = {};
+      Object.keys(json || {}).forEach((icao) => {
+        const entry = json[icao];
+        if (!entry || typeof entry.lat !== 'number' || typeof entry.lon !== 'number') return;
+        index[icao.toUpperCase()] = { icao: icao.toUpperCase(), lat: entry.lat, lon: entry.lon, name: entry.name || icao };
+      });
+      return index;
+    })
+    .catch((err) => {
+      airportIndexPromise = null;
+      throw err;
+    });
+  return airportIndexPromise;
+}
+
+function deg2rad(deg){
+  return deg * (Math.PI / 180);
+}
+
+function haversineNm(lat1, lon1, lat2, lon2){
+  if (![lat1, lon1, lat2, lon2].every((n) => Number.isFinite(n))) return null;
+  const R = 6371e3; // meters
+  const φ1 = deg2rad(lat1);
+  const φ2 = deg2rad(lat2);
+  const Δφ = deg2rad(lat2 - lat1);
+  const Δλ = deg2rad(lon2 - lon1);
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return (R * c) / 1852; // nautical miles
+}
+
+async function findAirportByIcao(icao){
+  const code = normalizeRegistration(icao);
+  if (!code) return null;
+  const index = await loadAirportIndex();
+  return index[code] || null;
+}
+
+async function findNearestAirport(lat, lon){
+  const index = await loadAirportIndex();
+  let nearest = null;
+  let best = Infinity;
+  Object.values(index).forEach((apt) => {
+    const dist = haversineNm(lat, lon, apt.lat, apt.lon);
+    if (dist !== null && dist < best){
+      best = dist;
+      nearest = { ...apt, distanceNm: dist };
+    }
+  });
+  return nearest;
+}
+
+function metersToFeet(value){
+  if (!Number.isFinite(value)) return null;
+  return value * 3.28084;
+}
+
+function metersPerSecondToKnots(value){
+  if (!Number.isFinite(value)) return null;
+  return value * 1.94384;
+}
+
+function metersPerSecondToFpm(value){
+  if (!Number.isFinite(value)) return null;
+  return value * 196.8504;
+}
+
+function formatNumber(value, digits = 0){
+  if (!Number.isFinite(value)) return '—';
+  return value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
 
 const FIN_CONFIGS = expandFinConfigList([
@@ -1647,12 +1736,13 @@ function normalizeFinConfig(config){
   const fdjs = Number(config.fdjs);
   const ofcr = Number(config.ofcr);
   const ccjs = Number(config.ccjs);
+  const reg = normalizeRegistration(config.reg);
   const notesRaw = typeof config.notes === 'string' ? config.notes : '';
   const notes = notesRaw.trim();
   if (!type) return null;
   const numbers = [j, o, y, fdjs, ofcr, ccjs];
   if (numbers.some(n => !Number.isFinite(n))) return null;
-  return { type, finStart, finEnd, j, o, y, fdjs, ofcr, ccjs, notes, deleted: false };
+  return { type, finStart, finEnd, j, o, y, fdjs, ofcr, ccjs, reg, notes, deleted: false };
 }
 
 function getFinConfigs(){
@@ -1675,7 +1765,7 @@ function finConfigsEqual(a, b){
   if (a.deleted && b.deleted){
     return a.finStart === b.finStart && a.finEnd === b.finEnd && String(a.type ?? '') === String(b.type ?? '');
   }
-  const fields = ['type','finStart','finEnd','j','o','y','fdjs','ofcr','ccjs','notes'];
+  const fields = ['type','finStart','finEnd','j','o','y','fdjs','ofcr','ccjs','reg','notes'];
   return fields.every(key => String(a[key] ?? '') === String(b[key] ?? ''));
 }
 
@@ -1763,6 +1853,9 @@ function formatFinConfigForSource(row){
     `ofcr: ${row.ofcr}`,
     `ccjs: ${row.ccjs}`
   ];
+  if (row.reg){
+    fields.push(`reg: '${esc(row.reg)}'`);
+  }
   if (row.notes){
     fields.push(`notes: '${esc(row.notes)}'`);
   }
@@ -2050,6 +2143,7 @@ function finFormValuesFromRow(row, fin){
     fdjs: Number.isFinite(row?.fdjs) ? row.fdjs : 0,
     ofcr: Number.isFinite(row?.ofcr) ? row.ofcr : 0,
     ccjs: Number.isFinite(row?.ccjs) ? row.ccjs : 0,
+    reg: normalizeRegistration(row?.reg),
     notes: typeof row?.notes === 'string' ? row.notes : ''
   };
 }
@@ -2061,6 +2155,10 @@ function renderFinForm(values){
         <div>
           <label>Aircraft type</label>
           <input type="text" inputmode="text" data-fin-field="type" value="${escapeHtml(values.type)}">
+        </div>
+        <div>
+          <label>Reg.</label>
+          <input type="text" inputmode="text" autocapitalize="characters" data-fin-field="reg" value="${escapeHtml(values.reg)}" placeholder="e.g., C-FIVS">
         </div>
         <div>
           <label>Fin number</label>
@@ -2134,9 +2232,258 @@ function renderFinCard({ label, display, edit, editOnly = false }){
   `;
 }
 
+async function fetchRegistrationMetadata(reg){
+  const url = `https://api.adsbdb.com/v0/aircraft/${encodeURIComponent(reg)}`;
+  const resp = await fetch(url, { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`Registration lookup failed (HTTP ${resp.status})`);
+  const json = await resp.json();
+  const icao24 = normalizeRegistration(json?.response?.aircraft?.mode_s);
+  if (!icao24) throw new Error('No ICAO address found for that registration.');
+  return { icao24, model: json?.response?.aircraft?.icao_type || '' };
+}
+
+async function fetchAircraftState(icao24){
+  try {
+    const resp = await fetch('https://opensky-network.org/api/states/all', { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`State lookup failed (HTTP ${resp.status})`);
+    const json = await resp.json();
+    const match = (json?.states || []).find((row) => normalizeRegistration(row[0]) === normalizeRegistration(icao24));
+    if (!match) return null;
+    return {
+      icao24: normalizeRegistration(icao24),
+      callsign: (match[1] || '').trim(),
+      originCountry: match[2] || '',
+      timePosition: match[3] || 0,
+      lastContact: match[4] || 0,
+      lon: match[5],
+      lat: match[6],
+      baroAltitude: match[7],
+      onGround: !!match[8],
+      velocity: match[9],
+      heading: match[10],
+      verticalRate: match[11]
+    };
+  } catch (err){
+    console.warn('Failed to fetch aircraft state', err);
+    return null;
+  }
+}
+
+async function fetchRecentFlights(icao24){
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const begin = now - (48 * 3600);
+    const end = now + (6 * 3600);
+    const url = `https://opensky-network.org/api/flights/aircraft?icao24=${encodeURIComponent(icao24)}&begin=${begin}&end=${end}`;
+    const resp = await fetch(url, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`Flight history failed (HTTP ${resp.status})`);
+    const json = await resp.json();
+    return Array.isArray(json) ? json : [];
+  } catch (err){
+    console.warn('Failed to fetch flight history', err);
+    return [];
+  }
+}
+
+function splitFlightTimeline(flights, nowSec){
+  const sorted = (flights || []).slice().sort((a, b) => (a.firstSeen || 0) - (b.firstSeen || 0));
+  const previous = [...sorted].reverse().find((flight) => (flight.lastSeen || 0) < nowSec) || null;
+  const current = [...sorted].reverse().find((flight) => {
+    const start = flight.firstSeen || 0;
+    const end = flight.lastSeen || start;
+    return start <= nowSec && end >= nowSec;
+  }) || null;
+  const next = sorted.find((flight) => (flight.firstSeen || 0) > nowSec) || null;
+  return { previous, current, next };
+}
+
+function formatFlightLabel(flight){
+  if (!flight) return 'Unavailable';
+  const dep = flight.estDepartureAirport || '—';
+  const arr = flight.estArrivalAirport || '—';
+  return `${dep} → ${arr}`;
+}
+
+function renderFlightMapSvg({ state, departure, arrival }){
+  if (!state) return '<div class="muted-note">No live track available.</div>';
+  const width = FIN_FLIGHT_MAP.width;
+  const height = FIN_FLIGHT_MAP.height;
+  const project = (lat, lon) => {
+    const x = Math.min(Math.max(((lon + 180) / 360) * width, 0), width);
+    const y = Math.min(Math.max(((90 - lat) / 180) * height, 0), height);
+    return { x, y };
+  };
+  const points = [];
+  let routePath = '';
+  if (departure && arrival){
+    const dep = project(departure.lat, departure.lon);
+    const arr = project(arrival.lat, arrival.lon);
+    routePath = `<line x1="${dep.x}" y1="${dep.y}" x2="${arr.x}" y2="${arr.y}" stroke="#5ce1ff" stroke-width="2" stroke-dasharray="6 4" />`;
+    points.push(`<circle cx="${dep.x}" cy="${dep.y}" r="6" fill="#1fa4ff" stroke="#0b3a5b" stroke-width="2"><title>${escapeHtml(departure.icao)}</title></circle>`);
+    points.push(`<circle cx="${arr.x}" cy="${arr.y}" r="6" fill="#1fa4ff" stroke="#0b3a5b" stroke-width="2"><title>${escapeHtml(arrival.icao)}</title></circle>`);
+  }
+  const cur = (Number.isFinite(state.lat) && Number.isFinite(state.lon)) ? project(state.lat, state.lon) : null;
+  if (cur){
+    points.push(`<circle cx="${cur.x}" cy="${cur.y}" r="8" fill="#ff5a5f" stroke="#0b121c" stroke-width="3"><title>Current position</title></circle>`);
+  }
+  return `
+    <svg viewBox="0 0 ${width} ${height}" class="fin-map-canvas" role="img" aria-label="Flight map">
+      <defs>
+        <linearGradient id="finMapBg" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#0b1624"/>
+          <stop offset="100%" stop-color="#0a111b"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="${width}" height="${height}" fill="url(#finMapBg)" />
+      <g stroke="#1f2633" stroke-width="1" opacity="0.5">
+        ${[...Array(7)].map((_, i) => {
+          const y = (height / 6) * i;
+          return `<line x1="0" y1="${y.toFixed(2)}" x2="${width}" y2="${y.toFixed(2)}" />`;
+        }).join('')}
+        ${[...Array(13)].map((_, i) => {
+          const x = (width / 12) * i;
+          return `<line x1="${x.toFixed(2)}" y1="0" x2="${x.toFixed(2)}" y2="${height}" />`;
+        }).join('')}
+      </g>
+      ${routePath}
+      ${points.join('\n')}
+    </svg>
+  `;
+}
+
+async function hydrateFinLocation(outEl, fin, reg){
+  const valueEl = outEl.querySelector('[data-fin-location-value]');
+  const statusEl = outEl.querySelector('[data-fin-location-status]');
+  const locationCard = outEl.querySelector('.fin-location-card');
+  if (!valueEl || !statusEl || !locationCard) return;
+  const requestId = `${fin}-${Date.now()}`;
+  outEl.dataset.finLocationRequest = requestId;
+  valueEl.textContent = 'Loading…';
+  statusEl.textContent = 'Looking up registration…';
+  locationCard.dataset.finFlightAvailable = 'false';
+  finFlightStore.delete(fin);
+  try {
+    const [meta] = await Promise.all([fetchRegistrationMetadata(reg), loadAirportIndex()]);
+    if (outEl.dataset.finLocationRequest !== requestId) return;
+    statusEl.textContent = 'Checking live position…';
+    const [state, flights] = await Promise.all([fetchAircraftState(meta.icao24), fetchRecentFlights(meta.icao24)]);
+    if (outEl.dataset.finLocationRequest !== requestId) return;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const timeline = splitFlightTimeline(flights, nowSec);
+    const airportIndex = await loadAirportIndex();
+    const getAirport = (code) => (code ? airportIndex[normalizeRegistration(code)] || null : null);
+    const departureAirport = getAirport(timeline.current?.estDepartureAirport);
+    const arrivalAirport = getAirport(timeline.current?.estArrivalAirport);
+    const nearest = (state && Number.isFinite(state.lat) && Number.isFinite(state.lon))
+      ? await findNearestAirport(state.lat, state.lon)
+      : null;
+    const locationLabel = state
+      ? (state.onGround ? (nearest?.icao || 'On ground') : 'In Flight')
+      : 'No live position found';
+    const flightAvailable = Boolean(state && !state.onGround);
+    valueEl.textContent = locationLabel;
+    locationCard.dataset.finFlightAvailable = flightAvailable ? 'true' : 'false';
+    locationCard.classList.toggle('fin-location-active', flightAvailable);
+    statusEl.textContent = state
+      ? (state.onGround ? 'Last seen on the ground.' : 'Tap for live map.')
+      : 'No current transponder signal.';
+    const totalNm = (departureAirport && arrivalAirport)
+      ? haversineNm(departureAirport.lat, departureAirport.lon, arrivalAirport.lat, arrivalAirport.lon)
+      : null;
+    const coveredNm = (departureAirport && state && Number.isFinite(state.lat) && Number.isFinite(state.lon))
+      ? haversineNm(departureAirport.lat, departureAirport.lon, state.lat, state.lon)
+      : null;
+    const progressPct = (totalNm && coveredNm !== null)
+      ? Math.max(0, Math.min(100, Math.round((coveredNm / totalNm) * 100)))
+      : null;
+    finFlightStore.set(fin, {
+      fin,
+      reg,
+      icao24: meta.icao24,
+      state,
+      nearestAirport: nearest,
+      previousFlight: timeline.previous,
+      nextFlight: timeline.next,
+      currentFlight: timeline.current,
+      departureAirport,
+      arrivalAirport,
+      progressPct
+    });
+    const panel = outEl.querySelector('[data-fin-flight-panel]');
+    if (panel){
+      panel.dataset.finFlightFin = String(fin);
+      panel.classList.add('hidden');
+      panel.setAttribute('aria-hidden', 'true');
+    }
+  } catch (err){
+    console.warn('Fin tracking failed', err);
+    if (outEl.dataset.finLocationRequest !== requestId) return;
+    valueEl.textContent = 'Unavailable';
+    statusEl.textContent = err?.message || 'Live data unavailable.';
+    locationCard.dataset.finFlightAvailable = 'false';
+    locationCard.classList.remove('fin-location-active');
+  }
+}
+
+function populateFlightPanel(outEl, fin){
+  const context = finFlightStore.get(fin);
+  const panel = outEl.querySelector('[data-fin-flight-panel]');
+  if (!context || !panel) return;
+  panel.dataset.finFlightFin = String(fin);
+  panel.classList.remove('hidden');
+  panel.setAttribute('aria-hidden', 'false');
+  const map = panel.querySelector('[data-fin-flight-map]');
+  if (map){
+    map.innerHTML = renderFlightMapSvg({
+      state: context.state,
+      departure: context.departureAirport,
+      arrival: context.arrivalAirport
+    });
+  }
+  const title = panel.querySelector('[data-fin-flight-title]');
+  if (title){
+    title.textContent = `${context.reg} • ${context.icao24}`;
+  }
+  const route = panel.querySelector('[data-fin-flight-route]');
+  if (route){
+    route.textContent = formatFlightLabel(context.currentFlight);
+  }
+  const progress = panel.querySelector('[data-fin-flight-progress]');
+  if (progress){
+    progress.textContent = context.progressPct !== null ? `${context.progressPct}% complete` : 'Progress unavailable.';
+  }
+  const stats = panel.querySelector('[data-fin-flight-stats]');
+  if (stats){
+    const speed = metersPerSecondToKnots(context.state?.velocity);
+    const alt = metersToFeet(context.state?.baroAltitude);
+    stats.textContent = `${formatNumber(speed)} kts / ${formatNumber(alt)} ft`;
+  }
+  const vs = panel.querySelector('[data-fin-flight-vspeed]');
+  if (vs){
+    const vr = metersPerSecondToFpm(context.state?.verticalRate);
+    vs.textContent = Number.isFinite(vr) ? `${formatNumber(vr)} fpm vertical` : 'Vertical speed unavailable.';
+  }
+  const prev = panel.querySelector('[data-fin-flight-prev]');
+  if (prev){
+    prev.textContent = formatFlightLabel(context.previousFlight);
+  }
+  const next = panel.querySelector('[data-fin-flight-next]');
+  if (next){
+    next.textContent = formatFlightLabel(context.nextFlight);
+  }
+}
+
+function hideFlightPanel(outEl){
+  const panel = outEl.querySelector('[data-fin-flight-panel]');
+  if (!panel) return;
+  panel.classList.add('hidden');
+  panel.setAttribute('aria-hidden', 'true');
+}
+
 function getFinFormData(form){
   const getValue = (field) => form.querySelector(`[data-fin-field="${field}"]`)?.value ?? '';
   const finStart = Number(getValue('finStart'));
+  const reg = normalizeRegistration(getValue('reg'));
   return {
     type: getValue('type'),
     finStart,
@@ -2147,6 +2494,7 @@ function getFinFormData(form){
     fdjs: Number(getValue('fdjs')),
     ofcr: Number(getValue('ofcr')),
     ccjs: Number(getValue('ccjs')),
+    reg,
     notes: getValue('notes').trim()
   };
 }
@@ -2158,6 +2506,13 @@ function validateFinConfig(config){
   const numericFields = ['j', 'o', 'y', 'fdjs', 'ofcr', 'ccjs'];
   for (const field of numericFields){
     if (!Number.isFinite(config[field])) return 'Enter numeric values for all fields.';
+  }
+  const reg = normalizeRegistration(config.reg);
+  if (reg && !/^[A-Z0-9-]+$/.test(reg)){
+    return 'Registration can use letters, numbers, or dashes.';
+  }
+  if (reg.length > 12){
+    return 'Registration must be 12 characters or fewer.';
   }
   const notes = String(config.notes ?? '');
   if (notes.length > 2000) return 'Notes must be 2000 characters or fewer.';
@@ -2350,6 +2705,11 @@ function renderFinResult(outEl, finValue){
       edit: `<input type="text" inputmode="text" data-fin-field="type" value="${escapeHtml(values.type)}">`
     }),
     renderFinCard({
+      label: 'Reg.',
+      display: values.reg ? escapeHtml(values.reg) : '—',
+      edit: `<input type="text" inputmode="text" autocapitalize="characters" data-fin-field="reg" value="${escapeHtml(values.reg)}" placeholder="e.g., C-FIVS">`
+    }),
+    renderFinCard({
       label: 'Fin number',
       display: `${fin}`,
       edit: `<input type="number" min="1" inputmode="numeric" data-fin-field="finStart" value="${values.finStart}">`,
@@ -2406,12 +2766,58 @@ function renderFinResult(outEl, finValue){
           <textarea data-fin-field="notes" rows="3" maxlength="2000" placeholder="Add reference info or reminders for this fin">${escapeHtml(values.notes)}</textarea>
         </div>
       </div>
+      <div class="fin-card fin-location-card">
+        <div class="metric-label">Current location</div>
+        <div class="metric-value" data-fin-location-value>—</div>
+        <div class="muted-note" data-fin-location-status>${values.reg ? 'Looking up registration…' : 'Add a registration to track this fin.'}</div>
+      </div>
       <div class="fin-actions">
         ${actions}
       </div>
       <div class="wx-error hidden" data-fin-error></div>
+      <div class="fin-flight-panel hidden" data-fin-flight-panel aria-hidden="true">
+        <div class="fin-flight-panel-head">
+          <div>
+            <div class="metric-label">Live flight map</div>
+            <div class="muted-note" data-fin-flight-title>Waiting for location…</div>
+          </div>
+          <button type="button" class="convert-btn" data-fin-flight-close>Back</button>
+        </div>
+        <div class="fin-flight-map" data-fin-flight-map role="img" aria-label="Fin flight map"></div>
+        <div class="fin-flight-grid">
+          <div class="fin-flight-card">
+            <div class="metric-label">Route</div>
+            <div class="metric-value" data-fin-flight-route>—</div>
+            <div class="muted-note" data-fin-flight-progress></div>
+          </div>
+          <div class="fin-flight-card">
+            <div class="metric-label">Speed / Altitude</div>
+            <div class="metric-value" data-fin-flight-stats>—</div>
+            <div class="muted-note" data-fin-flight-vspeed></div>
+          </div>
+          <div class="fin-flight-card">
+            <div class="metric-label">Previous flight</div>
+            <div class="metric-value" data-fin-flight-prev>—</div>
+          </div>
+          <div class="fin-flight-card">
+            <div class="metric-label">Next flight</div>
+            <div class="metric-value" data-fin-flight-next>—</div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
+  const locationCard = outEl.querySelector('.fin-location-card');
+  if (locationCard){
+    const statusEl = locationCard.querySelector('[data-fin-location-status]');
+    locationCard.dataset.finFlightAvailable = 'false';
+    locationCard.classList.remove('fin-location-active');
+    if (!editing && values.reg){
+      hydrateFinLocation(outEl, fin, values.reg);
+    } else if (statusEl){
+      statusEl.textContent = values.reg ? 'Live tracking disabled while editing.' : 'Add a registration to track this fin.';
+    }
+  }
 }
 
 function attachFinLookup({ inputId, outId }){
@@ -2425,6 +2831,20 @@ function attachFinLookup({ inputId, outId }){
   }
   if (!out.dataset.finBound){
     out.addEventListener('click', (event) => {
+      const locCard = event.target?.closest('.fin-location-card');
+      if (locCard){
+        const finValue = input?.value?.trim() ?? '';
+        const fin = Number(finValue);
+        if (locCard.dataset.finFlightAvailable === 'true' && Number.isFinite(fin)){
+          populateFlightPanel(out, fin);
+        }
+        return;
+      }
+      const closeBtn = event.target?.closest('[data-fin-flight-close]');
+      if (closeBtn){
+        hideFlightPanel(out);
+        return;
+      }
       const action = event.target?.closest('[data-fin-action]')?.dataset?.finAction;
       if (!action) return;
       const finValue = input?.value?.trim() ?? '';
