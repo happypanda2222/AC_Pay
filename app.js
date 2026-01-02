@@ -194,6 +194,7 @@ function buildFr24Headers(){
   const config = getFr24ApiConfig();
   const userHeaders = normalizeFr24Headers(config.headers);
   const headers = { Accept: 'application/json', ...userHeaders };
+  const apiVersionHeader = config.apiVersion || FLIGHTRADAR24_DEFAULT_VERSION;
   const setIfMissing = (name, value) => {
     if (!value) return;
     const exists = Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase());
@@ -203,10 +204,13 @@ function buildFr24Headers(){
   };
   if (isOfficialFr24Base(config.baseUrl)){
     setIfMissing('Authorization', config.apiToken ? `Bearer ${config.apiToken}` : null);
-    setIfMissing('API-Version', config.apiVersion || FLIGHTRADAR24_DEFAULT_VERSION);
+    setIfMissing('Accept-Version', apiVersionHeader);
+    setIfMissing('API-Version', apiVersionHeader);
+    setIfMissing('API Version', apiVersionHeader);
   } else {
     setIfMissing('X-RapidAPI-Key', config.apiKey);
     setIfMissing('X-RapidAPI-Host', config.apiHost);
+    setIfMissing('Accept-Version', apiVersionHeader);
   }
   return headers;
 }
@@ -226,6 +230,13 @@ function normalizeFr24Timestamp(ts){
   const num = Number(ts);
   if (!Number.isFinite(num)) return null;
   return num > 1e12 ? Math.round(num / 1000) : Math.round(num);
+}
+
+function parseFr24Date(value){
+  if (value === null || value === undefined) return null;
+  const parsed = Date.parse(value);
+  if (Number.isFinite(parsed)) return Math.round(parsed / 1000);
+  return normalizeFr24Timestamp(value);
 }
 
 function populateFr24ConfigForm(){
@@ -327,6 +338,21 @@ function mapFr24LiveState(entry, fallbackIcao24){
   };
 }
 
+function mapFr24SummaryFlight(entry){
+  if (!entry) return null;
+  const departure = entry.orig_icao || entry.orig_iata || null;
+  const arrival = entry.dest_icao_actual || entry.dest_icao || entry.dest_iata_actual || entry.dest_iata || null;
+  const firstSeen = parseFr24Date(entry.first_seen || entry.datetime_takeoff);
+  const lastSeen = parseFr24Date(entry.last_seen || entry.datetime_landed || entry.datetime_arrival);
+  if (!departure && !arrival && firstSeen === null && lastSeen === null) return null;
+  return {
+    estDepartureAirport: normalizeRegistration(departure) || null,
+    estArrivalAirport: normalizeRegistration(arrival) || null,
+    firstSeen: firstSeen ?? 0,
+    lastSeen: (lastSeen ?? firstSeen ?? 0)
+  };
+}
+
 function mapFr24Flight(entry){
   if (!entry) return null;
   const toUnix = (value) => normalizeFr24Timestamp(value) ?? 0;
@@ -361,26 +387,70 @@ async function fetchFr24LiveContext({ registration, icao24 }){
   if (requiresKey && !hasAuthHeader){
     throw new Error('FlightRadar24 API token or key not configured. Add it in the FlightRadar24 API settings.');
   }
-  const url = buildFr24Url('common/v1/flight/list.json', {
-    query,
-    fetchBy: 'reg',
-    limit: 10,
-    page: 1
-  });
-  const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
-  if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
-  const json = await resp.json();
-  const rows = json?.result?.response?.data;
-  if (!Array.isArray(rows) || rows.length === 0){
-    return { state: null, flights: [], icao24: normalizeRegistration(icao24 || '') };
+
+  const attempts = [];
+
+  const fetchFlightSummary = async () => {
+    const now = new Date();
+    const from = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+    const to = now;
+    const url = buildFr24Url('flight-summary/full', {
+      flight_datetime_from: from.toISOString(),
+      flight_datetime_to: to.toISOString(),
+      registrations: query
+    });
+    const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+    if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
+    const json = await resp.json();
+    const rows = Array.isArray(json?.data) ? json.data : [];
+    if (!rows.length) return { state: null, flights: [], icao24: normalizeRegistration(icao24 || query) };
+    const flights = rows.map(mapFr24SummaryFlight).filter(Boolean);
+    const activeEntry = rows.find((row) => row?.flight_ended === false) || rows[0];
+    return {
+      state: null,
+      flights,
+      icao24: normalizeRegistration(activeEntry?.hex || activeEntry?.reg || icao24 || query)
+    };
+  };
+
+  const fetchLegacyList = async () => {
+    const url = buildFr24Url('common/v1/flight/list.json', {
+      query,
+      fetchBy: 'reg',
+      limit: 10,
+      page: 1
+    });
+    const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+    if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
+    const json = await resp.json();
+    const rows = json?.result?.response?.data;
+    if (!Array.isArray(rows) || rows.length === 0){
+      return { state: null, flights: [], icao24: normalizeRegistration(icao24 || query) };
+    }
+    const flights = rows.map(mapFr24Flight).filter(Boolean);
+    const liveEntry = rows.find((row) => Boolean(row?.status?.live)) || rows[0];
+    const state = mapFr24LiveState(liveEntry, icao24);
+    const resolvedIcao24 = normalizeRegistration(
+      state?.icao24 || liveEntry?.aircraft?.hex || liveEntry?.aircraft?.modeS || icao24 || query
+    );
+    return { state, flights, icao24: resolvedIcao24 };
+  };
+
+  if (isOfficialFr24Base(config.baseUrl)){
+    attempts.push(fetchFlightSummary);
   }
-  const flights = rows.map(mapFr24Flight).filter(Boolean);
-  const liveEntry = rows.find((row) => Boolean(row?.status?.live)) || rows[0];
-  const state = mapFr24LiveState(liveEntry, icao24);
-  const resolvedIcao24 = normalizeRegistration(
-    state?.icao24 || liveEntry?.aircraft?.hex || liveEntry?.aircraft?.modeS || icao24 || ''
-  );
-  return { state, flights, icao24: resolvedIcao24 };
+  attempts.push(fetchLegacyList);
+
+  let lastErr = null;
+  for (const attempt of attempts){
+    try {
+      return await attempt();
+    } catch (err){
+      lastErr = err;
+    }
+  }
+
+  throw lastErr || new Error('FlightRadar24 lookup failed.');
 }
 
 async function loadAirportIndex(){
