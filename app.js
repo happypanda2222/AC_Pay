@@ -73,6 +73,7 @@ const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const AIRPORT_DATA_URL = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
 const FIN_FLIGHT_MAP = { width: 760, height: 380 };
+const CORS_PROXY = 'https://cors.isomorphic-git.org/';
 
 function expandFinConfig(config){
   if (!config) return [];
@@ -98,6 +99,25 @@ const finFlightStore = new Map();
 
 function normalizeRegistration(reg){
   return String(reg ?? '').trim().toUpperCase();
+}
+
+async function fetchWithCorsFallback(url, options = {}){
+  const proxiedUrl = url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}`;
+  const attempt = async (target) => {
+    const resp = await fetch(target, options);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp;
+  };
+  try {
+    return await attempt(url);
+  } catch (err){
+    if (url.startsWith(CORS_PROXY)) throw new Error('Live data temporarily unavailable. Please try again later.');
+    try {
+      return await attempt(proxiedUrl);
+    } catch (proxyErr){
+      throw new Error('Live data temporarily unavailable. Please try again later.');
+    }
+  }
 }
 
 async function loadAirportIndex(){
@@ -2234,8 +2254,7 @@ function renderFinCard({ label, display, edit, editOnly = false }){
 
 async function fetchRegistrationMetadata(reg){
   const url = `https://api.adsbdb.com/v0/aircraft/${encodeURIComponent(reg)}`;
-  const resp = await fetch(url, { cache: 'no-store' });
-  if (!resp.ok) throw new Error(`Registration lookup failed (HTTP ${resp.status})`);
+  const resp = await fetchWithCorsFallback(url, { cache: 'no-store' });
   const json = await resp.json();
   const icao24 = normalizeRegistration(json?.response?.aircraft?.mode_s);
   if (!icao24) throw new Error('No ICAO address found for that registration.');
@@ -2244,8 +2263,7 @@ async function fetchRegistrationMetadata(reg){
 
 async function fetchAircraftState(icao24){
   try {
-    const resp = await fetch('https://opensky-network.org/api/states/all', { cache: 'no-store' });
-    if (!resp.ok) throw new Error(`State lookup failed (HTTP ${resp.status})`);
+    const resp = await fetchWithCorsFallback('https://opensky-network.org/api/states/all', { cache: 'no-store' });
     const json = await resp.json();
     const match = (json?.states || []).find((row) => normalizeRegistration(row[0]) === normalizeRegistration(icao24));
     if (!match) return null;
@@ -2275,8 +2293,7 @@ async function fetchRecentFlights(icao24){
     const begin = now - (48 * 3600);
     const end = now + (6 * 3600);
     const url = `https://opensky-network.org/api/flights/aircraft?icao24=${encodeURIComponent(icao24)}&begin=${begin}&end=${end}`;
-    const resp = await fetch(url, { cache: 'no-store' });
-    if (!resp.ok) throw new Error(`Flight history failed (HTTP ${resp.status})`);
+    const resp = await fetchWithCorsFallback(url, { cache: 'no-store' });
     const json = await resp.json();
     return Array.isArray(json) ? json : [];
   } catch (err){
@@ -2419,7 +2436,10 @@ async function hydrateFinLocation(outEl, fin, reg){
     console.warn('Fin tracking failed', err);
     if (outEl.dataset.finLocationRequest !== requestId) return;
     valueEl.textContent = 'Unavailable';
-    statusEl.textContent = err?.message || 'Live data unavailable.';
+    const friendly = err?.message && err.message !== 'Failed to fetch'
+      ? err.message
+      : 'Live tracking unavailable right now.';
+    statusEl.textContent = friendly;
     locationCard.dataset.finFlightAvailable = 'false';
     locationCard.classList.remove('fin-location-active');
   }
@@ -2703,12 +2723,17 @@ function renderFinResult(outEl, finValue){
       label: 'Aircraft type',
       display: escapeHtml(values.type),
       edit: `<input type="text" inputmode="text" data-fin-field="type" value="${escapeHtml(values.type)}">`
-    }),
-    renderFinCard({
+    })
+  ];
+  const showRegCard = editing || Boolean(values.reg);
+  if (showRegCard){
+    cards.push(renderFinCard({
       label: 'Reg.',
       display: values.reg ? escapeHtml(values.reg) : '—',
       edit: `<input type="text" inputmode="text" autocapitalize="characters" data-fin-field="reg" value="${escapeHtml(values.reg)}" placeholder="e.g., C-FIVS">`
-    }),
+    }));
+  }
+  cards.push(
     renderFinCard({
       label: 'Fin number',
       display: `${fin}`,
@@ -2730,7 +2755,7 @@ function renderFinResult(outEl, finValue){
       display: seats,
       edit: renderFinSeatInputs(values)
     })
-  ];
+  );
   if (isWidebodyType(row.type) || editing){
     cards.push(renderFinCard({
       label: 'Bunks',
@@ -2744,6 +2769,16 @@ function renderFinResult(outEl, finValue){
   const notesBody = notesText
     ? `<div class="fin-notes-body">${escapeHtml(notesText).replace(/\n/g, '<br>')}</div>`
     : '<div class="fin-notes-body muted-note">No notes added for this fin.</div>';
+  const showLocationCard = Boolean(values.reg) && !editing;
+  const locationCardHtml = showLocationCard
+    ? `
+      <div class="fin-card fin-location-card">
+        <div class="metric-label">Current location</div>
+        <div class="metric-value" data-fin-location-value>—</div>
+        <div class="muted-note" data-fin-location-status>Looking up registration…</div>
+      </div>
+    `
+    : '';
   const actions = editing
     ? `
       <button type="button" class="btn" data-fin-action="save">Save fin</button>
@@ -2766,11 +2801,7 @@ function renderFinResult(outEl, finValue){
           <textarea data-fin-field="notes" rows="3" maxlength="2000" placeholder="Add reference info or reminders for this fin">${escapeHtml(values.notes)}</textarea>
         </div>
       </div>
-      <div class="fin-card fin-location-card">
-        <div class="metric-label">Current location</div>
-        <div class="metric-value" data-fin-location-value>—</div>
-        <div class="muted-note" data-fin-location-status>${values.reg ? 'Looking up registration…' : 'Add a registration to track this fin.'}</div>
-      </div>
+      ${locationCardHtml}
       <div class="fin-actions">
         ${actions}
       </div>
@@ -2812,11 +2843,10 @@ function renderFinResult(outEl, finValue){
     const statusEl = locationCard.querySelector('[data-fin-location-status]');
     locationCard.dataset.finFlightAvailable = 'false';
     locationCard.classList.remove('fin-location-active');
-    if (!editing && values.reg){
-      hydrateFinLocation(outEl, fin, values.reg);
-    } else if (statusEl){
-      statusEl.textContent = values.reg ? 'Live tracking disabled while editing.' : 'Add a registration to track this fin.';
+    if (statusEl){
+      statusEl.textContent = 'Looking up registration…';
     }
+    hydrateFinLocation(outEl, fin, values.reg);
   }
 }
 
