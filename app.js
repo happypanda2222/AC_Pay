@@ -405,13 +405,13 @@ const FOM_AUGMENTED_FDP_TABLE = [
 const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
 const WEATHER_STATION_ADDITIONAL_ATTEMPTS = 5;
 const WEATHER_MAX_ATTEMPTS = 1 + WEATHER_STATION_ADDITIONAL_ATTEMPTS;
-const WEATHER_RETRY_DELAY_MS = 500;
+const WEATHER_RETRY_DELAY_MS = 100;
 const WEATHER_PREFETCH_INTERVAL_MS = 5 * 60 * 1000;
 const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
-const WEATHER_PREFETCH_DELAY_MS = 150;
-const WEATHER_PREFETCH_PAUSE_TIMEOUT_MS = 500;
+const WEATHER_PREFETCH_DELAY_MS = 100;
+const WEATHER_PREFETCH_PAUSE_TIMEOUT_MS = 100;
 const MAJOR_CANADIAN_AIRPORTS = ['CYWG', 'CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYHZ', 'CYQB', 'CYQR'];
-const MAJOR_US_AIRPORTS = ['KJFK', 'KLAX', 'KORD', 'KATL', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
+const MAJOR_US_AIRPORTS = ['KMCO', 'KTPA', 'KFLL', 'KLAS', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
 const WEATHER_PREFETCH_SEQUENCE = [...MAJOR_CANADIAN_AIRPORTS, ...MAJOR_US_AIRPORTS];
 const WEATHER_WARMUP_AIRPORTS = ['YWG', 'YYZ'];
 const DEPARTURE_METAR_THRESHOLD_HRS = 1;
@@ -4151,9 +4151,9 @@ function classifyFlightRules(ceilingFt, visSm){
 function ilsCategory(ceilingFt, visSm){
   const ceil = (ceilingFt === null || ceilingFt === undefined) ? Infinity : ceilingFt;
   const vis = (visSm === null || visSm === undefined) ? Infinity : visSm;
-  if (ceil < 100 || vis < 0.3) return { cat:'CAT III', reason:'Ceiling/vis below CAT II mins' };
-  if (ceil < 200 || vis < 0.5) return { cat:'CAT II', reason:'Ceiling or visibility below CAT I mins' };
-  if (ceil < 1000 || vis < 3) return { cat:'CAT I', reason:'IFR conditions expected' };
+  if (ceil < 100 || vis < 0.3) return { cat:'CAT III', reason:'' };
+  if (ceil < 200 || vis < 0.5) return { cat:'CAT II', reason:'' };
+  if (ceil < 1000 || vis < 3) return { cat:'CAT I', reason:'' };
   return { cat:'CAT I / Visual', reason:'' };
 }
 function tafProbLabel(seg){
