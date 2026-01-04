@@ -669,6 +669,7 @@ const WEATHER_PREFETCH_INTERVAL_MS = 5 * 60 * 1000;
 const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
 const WEATHER_PREFETCH_DELAY_MS = 100;
 const WEATHER_PREFETCH_PAUSE_TIMEOUT_MS = 100;
+const WEATHER_PREFETCH_ENABLED = ['localhost', '127.0.0.1'].includes(location.hostname);
 const MAJOR_CANADIAN_AIRPORTS = ['CYWG', 'CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYHZ', 'CYQB', 'CYQR'];
 const MAJOR_US_AIRPORTS = ['KMCO', 'KTPA', 'KFLL', 'KLAS', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
 const WEATHER_PREFETCH_SEQUENCE = [...MAJOR_CANADIAN_AIRPORTS, ...MAJOR_US_AIRPORTS];
@@ -701,10 +702,12 @@ const CORS_PROXY_PREFIXES = [
   'https://corsproxy.io/?',
   'https://thingproxy.freeboard.io/fetch/'
 ];
+const WEATHER_ALLOW_DIRECT_FOR_FORCED_PROXY = false;
 const HOME_BASE_CODES = new Set(['YYZ', 'CYYZ']);
 let airportLookupPromise = null;
 let airportTimezonePromise = null;
 const AIRPORT_TZ_FALLBACK = { YYZ: 'America/Toronto', CYYZ: 'America/Toronto' };
+let airportTimezoneCache = { ...AIRPORT_TZ_FALLBACK };
 const IATA_FALLBACK_MAP = {
   ABJ:'DIAP', ADD:'HAAB', AKL:'NZAA', AMS:'EHAM', ANU:'TAPA', ATL:'KATL', AUA:'TNCA', AUH:'OMAA', AZS:'MDCY',
   BAH:'OBBI', BCN:'LEBL', BDA:'TXKF', BDL:'KBDL', BGI:'TBPB', BJM:'HBBA', BKK:'VTBS', BNA:'KBNA', BOG:'SKBO',
@@ -2638,24 +2641,34 @@ function formatFinHeading(heading){
   return `${Math.round(heading)}°`;
 }
 
-function pickFinLandingEpoch(position, flight){
-  const normalizeEpoch = (value) => {
-    const parsed = parseFr24Date(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const eta = normalizeEpoch(position?.eta);
-  const estimatedArrival = normalizeEpoch(flight?.estimatedArrivalTime);
-  const arrival = normalizeEpoch(flight?.arrivalTime);
-  const nowSec = Date.now() / 1000;
-  const candidates = [eta, estimatedArrival, arrival].filter((value) => Number.isFinite(value));
-  if (!candidates.length) return null;
-  const future = candidates.filter((value) => value > (nowSec - 300));
-  if (!future.length) return null;
-  return Math.min(...future);
+function getCachedAirportTimeZone(code){
+  const lookup = airportTimezoneCache || AIRPORT_TZ_FALLBACK;
+  const key = String(code || '').toUpperCase();
+  return lookup[key] || (key.length === 3 ? lookup[`C${key}`] : null) || null;
 }
 
-function formatFinLandingMinutes(position, flight){
-  const eta = pickFinLandingEpoch(position, flight);
+async function ensureAirportTimezonesLoaded(){
+  try {
+    await loadAirportTimezones();
+  } catch (err){
+    console.warn('Time zone preload failed', err);
+  }
+}
+
+function finArrivalCode(flight){
+  if (!flight || typeof flight !== 'object') return '';
+  return flight.arrival?.icao || flight.arrival?.iata || flight.arrival?.code || '';
+}
+
+function pickFinEtaFromPosition(position){
+  const eta = Number(position?.eta);
+  if (!Number.isFinite(eta)) return null;
+  const nowSec = Date.now() / 1000;
+  return eta > (nowSec - 300) ? eta : null;
+}
+
+function formatFinLandingMinutes(position){
+  const eta = pickFinEtaFromPosition(position);
   if (!Number.isFinite(eta)) return '—';
   const remainingMs = (eta * 1000) - Date.now();
   if (!Number.isFinite(remainingMs)) return '—';
@@ -2666,12 +2679,19 @@ function formatFinLandingMinutes(position, flight){
 }
 
 function formatFinLandingLocalTime(position, flight){
-  const eta = pickFinLandingEpoch(position, flight);
+  const eta = pickFinEtaFromPosition(position);
   if (!Number.isFinite(eta)) return '';
   const landingDate = new Date(eta * 1000);
   if (!Number.isFinite(landingDate.getTime())) return '';
-  const timeStr = landingDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-  return timeStr ? `${timeStr} local` : '';
+  const arrivalCode = finArrivalCode(flight);
+  const timeZone = getCachedAirportTimeZone(arrivalCode);
+  const options = { hour: '2-digit', minute: '2-digit', hour12: false };
+  if (timeZone) options.timeZone = timeZone;
+  const timeStr = new Intl.DateTimeFormat(undefined, options).format(landingDate);
+  if (!timeStr) return '';
+  const label = formatAirportCode(flight?.arrival, finAirportCodeMode);
+  const suffix = label && label !== '—' ? `${label} local` : 'arrival local';
+  return `${timeStr} ${suffix}`;
 }
 
 function normalizeLongitude(lon){
@@ -2908,7 +2928,7 @@ function renderFinLiveDetails(container, mapContainer, snapshot, positions){
     { label: 'Vertical speed', value: formatFinVerticalSpeed(latest.verticalRate) },
     { label: 'Groundspeed', value: formatFinSpeed(latest.speed) },
     { label: 'Heading', value: formatFinHeading(latest.heading) },
-    { label: 'Landing in', value: formatFinLandingMinutes(latest, snapshot?.currentFlight), sub: landingLocal },
+    { label: 'Landing in', value: formatFinLandingMinutes(latest), sub: landingLocal },
     { label: 'Updated', value: latest.timestamp ? formatLocalDateTime(latest.timestamp) : '—', action: 'refresh' }
   ];
   container.innerHTML = `
@@ -2950,6 +2970,7 @@ async function loadFinLivePositions(registration, snapshot){
   const normalizedReg = normalizeRegistration(registration);
   const liveEl = document.getElementById('fin-flight-live');
   const mapEl = document.getElementById('fin-flight-map');
+  await ensureAirportTimezonesLoaded();
   if (liveEl) liveEl.innerHTML = '<div class="muted-note">Fetching live position…</div>';
   if (!snapshot?.inflight){
     renderFinLiveDetails(liveEl, mapEl, snapshot, []);
@@ -3298,7 +3319,7 @@ function renderFinLocationPreview(summaryEl, snapshot, registration){
     const route = formatFinRoute(snapshot.currentFlight);
     const meta = snapshot.currentFlight?.flightNumber ? ` • ${snapshot.currentFlight.flightNumber}` : '';
     const livePosition = getLatestLivePosition(registration);
-    const landing = formatFinLandingMinutes(livePosition, snapshot.currentFlight);
+    const landing = formatFinLandingMinutes(livePosition);
     const landingText = landing !== '—' ? ` • Landing in ${landing}` : '';
     statusEl.textContent = `${route}${meta}${landingText}`;
     return;
@@ -4218,12 +4239,13 @@ function buildCorsTargets(url, forceProxy){
     unique.push(target);
   };
   const alreadyProxied = CORS_PROXY_PREFIXES.some(prefix => url.startsWith(prefix));
-  if (!forceProxy || alreadyProxied) add(url);
+  const allowDirect = (!forceProxy || alreadyProxied || WEATHER_ALLOW_DIRECT_FOR_FORCED_PROXY);
+  if (allowDirect) add(url);
   if (!alreadyProxied){
     for (const buildProxyUrl of CORS_PROXY_BUILDERS){
       add(buildProxyUrl(url));
     }
-    if (forceProxy) add(url);
+    if (forceProxy && WEATHER_ALLOW_DIRECT_FOR_FORCED_PROXY) add(url);
   }
   return unique;
 }
@@ -4803,11 +4825,13 @@ async function loadAirportTimezones(){
           if (icao) map[String(icao).toUpperCase()] = tz;
         });
       }
+      airportTimezoneCache = map;
       return map;
     })
     .catch(err => {
       console.warn('Airport timezone fetch failed; using fallback map only.', err);
-      return { ...AIRPORT_TZ_FALLBACK };
+      airportTimezoneCache = { ...AIRPORT_TZ_FALLBACK };
+      return { ...airportTimezoneCache };
     });
   return airportTimezonePromise;
 }
@@ -5929,6 +5953,7 @@ async function prefetchWeatherSequenceFromCursor(){
   if (!weatherPrefetchAbort) weatherPrefetchCursor = 0;
 }
 async function runWeatherPrefetchCycle(){
+  if (!WEATHER_PREFETCH_ENABLED) return null;
   if (weatherPrefetchInFlight) return weatherPrefetchCyclePromise;
   weatherPrefetchInFlight = true;
   weatherPrefetchAbort = false;
@@ -5969,6 +5994,7 @@ function warmWeatherCache(airports){
   return weatherWarmupPromise;
 }
 function startWeatherPrefetchLoop(){
+  if (!WEATHER_PREFETCH_ENABLED) return;
   const warmup = warmWeatherCache(WEATHER_WARMUP_AIRPORTS);
   if (warmup){
     warmup.finally(() => runWeatherPrefetchCycle());
