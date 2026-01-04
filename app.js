@@ -96,6 +96,7 @@ const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
 const FLIGHTRADAR24_DEFAULT_BASE = 'https://fr24api.flightradar24.com/api';
 const FLIGHTRADAR24_DEFAULT_VERSION = 'v1';
+const FLIGHTRADAR24_PUBLIC_BASE = 'https://api.flightradar24.com';
 const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
 let finAirportCodeMode = 'icao';
@@ -2794,6 +2795,55 @@ function mapFr24LivePosition(entry){
   };
 }
 
+function mapFr24PublicLivePosition(entry, callsign){
+  if (!entry || typeof entry !== 'object') return null;
+  const meters = entry.altitude?.meters;
+  const altitude = Number.isFinite(entry.altitude?.feet)
+    ? entry.altitude.feet
+    : (Number.isFinite(meters) ? meters * 3.28084 : entry.alt);
+  const kmh = entry.speed?.horizontal?.kmh;
+  const speed = Number.isFinite(entry.speed?.horizontal?.kts)
+    ? entry.speed.horizontal.kts
+    : (Number.isFinite(kmh) ? kmh * 0.539957 : (entry.spd ?? entry.speed));
+  const shaped = {
+    lat: entry.lat ?? entry.latitude ?? entry.position?.latitude,
+    lon: entry.lon ?? entry.lng ?? entry.longitude ?? entry.position?.longitude,
+    altitude,
+    speed,
+    heading: entry.hd ?? entry.heading ?? entry.direction ?? entry.dir,
+    timestamp: entry.ts ?? entry.timestamp ?? entry.updated ?? entry.time,
+    eta: entry.eta ?? entry.est_arrival ?? entry.arrival?.estimated?.utc
+  };
+  const mapped = mapFr24LivePosition(shaped);
+  if (!mapped) return null;
+  if (callsign && !mapped.callsign){
+    mapped.callsign = callsign;
+  }
+  return mapped;
+}
+
+async function fetchFr24PublicLivePositions(registration){
+  const normalizedReg = normalizeRegistration(registration);
+  if (!normalizedReg) throw new Error('Enter a registration to fetch live positions.');
+  const searchReg = normalizedReg.replace(/[^A-Z0-9]/gi, '');
+  const url = `${FLIGHTRADAR24_PUBLIC_BASE}/common/v1/flight/list.json?query=${encodeURIComponent(searchReg)}&fetchBy=reg&limit=1`;
+  const resp = await fetchWithCorsFallback(url, { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`FlightRadar24 public API error ${resp.status}`);
+  const json = await resp.json();
+  const flights = json?.result?.response?.data;
+  if (!Array.isArray(flights) || !flights.length) return { positions: [], registration: normalizedReg };
+  const match = flights.find((flight) => normalizeRegistration(flight?.aircraft?.registration) === normalizedReg) || flights[0];
+  const callsign = match?.identification?.callsign || match?.identification?.number?.default || '';
+  const trail = Array.isArray(match?.trail) ? [...match.trail].reverse() : [];
+  const trailPositions = trail.map((item) => mapFr24PublicLivePosition(item, callsign)).filter(Boolean);
+  let livePositions = trailPositions;
+  if (!livePositions.length && match?.status?.live?.position){
+    const mapped = mapFr24PublicLivePosition(match.status.live, callsign);
+    livePositions = mapped ? [mapped] : [];
+  }
+  return { positions: livePositions, registration: normalizedReg };
+}
+
 async function fetchFr24LivePositions(registration){
   const normalizedReg = normalizeRegistration(registration);
   if (!normalizedReg) throw new Error('Enter a registration to fetch live positions.');
@@ -2808,13 +2858,27 @@ async function fetchFr24LivePositions(registration){
     throw new Error('FlightRadar24 API token not configured. Add it in the FlightRadar24 API settings.');
   }
   const url = buildFr24Url('live/flight-positions/full', { registration: normalizedReg });
-  const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
-  if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
-  const json = await resp.json();
-  const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
-  const positions = rows.map(mapFr24LivePosition).filter(Boolean);
-  FIN_LIVE_POSITION_CACHE.set(normalizedReg, { positions, fetchedAt: Date.now() });
-  return { positions, registration: normalizedReg };
+  try {
+    const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+    if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
+    const json = await resp.json();
+    const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+    const positions = rows.map(mapFr24LivePosition).filter(Boolean);
+    FIN_LIVE_POSITION_CACHE.set(normalizedReg, { positions, fetchedAt: Date.now() });
+    return { positions, registration: normalizedReg };
+  } catch (primaryErr){
+    console.warn('Primary live positions failed; trying public FR24 feed.', primaryErr);
+    try {
+      const fallback = await fetchFr24PublicLivePositions(normalizedReg);
+      const fallbackPositions = Array.isArray(fallback?.positions) ? fallback.positions : [];
+      FIN_LIVE_POSITION_CACHE.set(normalizedReg, { positions: fallbackPositions, fetchedAt: Date.now() });
+      return { positions: fallbackPositions, registration: normalizedReg };
+    } catch (fallbackErr){
+      const error = new Error(primaryErr?.message || 'Live data unavailable.');
+      error.cause = fallbackErr;
+      throw error;
+    }
+  }
 }
 
 function getLatestLivePosition(registration){
