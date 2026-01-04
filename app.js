@@ -82,6 +82,9 @@ const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
 const FLIGHTRADAR24_DEFAULT_BASE = 'https://fr24api.flightradar24.com/api';
 const FLIGHTRADAR24_DEFAULT_VERSION = 'v1';
+const FIN_FLIGHT_CACHE = new Map();
+let finAirportCodeMode = 'icao';
+const finHiddenContext = { page: null, fin: null, registration: '' };
 
 function normalizeFr24Headers(value){
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -2351,12 +2354,75 @@ function formatLocalDateTime(ts){
   });
 }
 
+function mapFr24Airport(airport){
+  if (!airport || typeof airport !== 'object') return { code: null, icao: null, iata: null, name: null, city: null };
+  const iataRaw = airport.iata || airport.iata_code || airport.airport_iata || airport.code_iata || airport.iata_code_limited;
+  const iata = typeof iataRaw === 'string' ? iataRaw.trim().toUpperCase() : '';
+  const icao = normalizeRegistration(
+    airport.icao
+    || airport.icao_code
+    || airport.airport_icao
+    || airport.code_icao
+    || airport.code
+  );
+  const fallback = typeof airport.code === 'string' ? airport.code.trim() : '';
+  return {
+    code: icao || iata || fallback || null,
+    icao: icao || null,
+    iata: iata || null,
+    name: typeof airport.name === 'string' ? airport.name : null,
+    city: typeof airport.city === 'string' ? airport.city : null
+  };
+}
+
+function formatAirportCode(airport, mode = finAirportCodeMode){
+  if (!airport) return '—';
+  const preferred = mode === 'iata' ? (airport.iata || airport.icao || airport.code) : (airport.icao || airport.iata || airport.code);
+  return preferred || '—';
+}
+
+function formatFinRoute(flight, mode = finAirportCodeMode){
+  const dep = formatAirportCode(flight?.departure, mode);
+  const arr = formatAirportCode(flight?.arrival, mode);
+  return `${dep} → ${arr}`;
+}
+
+function sortFlightsByRecency(flights){
+  const copy = Array.isArray(flights) ? [...flights] : [];
+  return copy.sort((a, b) => {
+    const aTime = Number.isFinite(a?.arrivalTime) ? a.arrivalTime : a?.departureTime ?? 0;
+    const bTime = Number.isFinite(b?.arrivalTime) ? b.arrivalTime : b?.departureTime ?? 0;
+    return bTime - aTime;
+  });
+}
+
+function buildFinLocationSnapshot(flights){
+  const sorted = sortFlightsByRecency(flights);
+  const active = sorted.find((flight) => flight.status === 'active') || null;
+  const current = active || sorted[0] || null;
+  const airport = current
+    ? (current.status === 'planned'
+      ? (current.departure || current.arrival || null)
+      : (current.arrival || current.departure || null))
+    : null;
+  return {
+    flights: sorted,
+    currentFlight: current,
+    inflight: current?.status === 'active',
+    airport
+  };
+}
+
 function mapFr24FullSummaryFlight(entry){
   if (!entry) return null;
-  const dep = normalizeRegistration(entry.orig_icao || entry.orig_iata);
-  const arr = normalizeRegistration(
-    entry.dest_icao_actual || entry.dest_icao || entry.dest_iata_actual || entry.dest_iata
-  );
+  const departure = mapFr24Airport(entry?.airport?.origin || entry?.airport?.departure || {
+    icao: entry.orig_icao,
+    iata: entry.orig_iata
+  });
+  const arrival = mapFr24Airport(entry?.airport?.destination || entry?.airport?.arrival || entry?.airport?.destination_airport || {
+    icao: entry.dest_icao_actual || entry.dest_icao,
+    iata: entry.dest_iata_actual || entry.dest_iata
+  });
   const departureTime = parseFr24Date(entry.first_seen ?? entry.datetime_takeoff);
   const arrivalTime = parseFr24Date(entry.last_seen ?? entry.datetime_landed ?? entry.datetime_arrival);
   const status = entry.flight_ended === false
@@ -2365,10 +2431,10 @@ function mapFr24FullSummaryFlight(entry){
   const flightNumber = entry.callsign || entry.call_sign || entry.flight || entry.flight_number || '';
   const registration = normalizeRegistration(entry.reg || entry.registration || entry.aircraft_registration);
   const icao24 = normalizeRegistration(entry.hex || entry.icao24 || entry.mode_s);
-  if (!dep && !arr && departureTime === null && arrivalTime === null && !flightNumber) return null;
+  if (!departure.code && !arrival.code && departureTime === null && arrivalTime === null && !flightNumber) return null;
   return {
-    departure: dep || null,
-    arrival: arr || null,
+    departure,
+    arrival,
     departureTime: departureTime ?? null,
     arrivalTime: arrivalTime ?? null,
     status,
@@ -2385,7 +2451,7 @@ function describeFr24Status(status){
 }
 
 function renderFinSummaryRow(flight){
-  const route = `${flight.departure || '—'} → ${flight.arrival || '—'}`;
+  const route = formatFinRoute(flight);
   const status = describeFr24Status(flight.status);
   const times = [
     flight.departureTime ? `Dep ${formatLocalDateTime(flight.departureTime)}` : null,
@@ -2399,6 +2465,92 @@ function renderFinSummaryRow(flight){
       <div class="muted-note">${escapeHtml(times || 'Times unavailable')}</div>
     </div>
   `;
+}
+
+function cacheFinFlights(registration, flights){
+  const sorted = sortFlightsByRecency(flights);
+  finFlightCache.set(registration, { flights: sorted, fetchedAt: Date.now() });
+  return sorted;
+}
+
+function renderFinFlightList(container, flights){
+  if (!container) return;
+  if (!flights.length){
+    container.innerHTML = '<div class="muted-note">No recent flights.</div>';
+    return;
+  }
+  container.innerHTML = flights.map(renderFinSummaryRow).join('');
+}
+
+function renderFinCurrentFlight(container, snapshot){
+  if (!container) return;
+  if (!snapshot.currentFlight){
+    container.innerHTML = '<div class="muted-note">No flights available for this fin.</div>';
+    return;
+  }
+  if (!snapshot.inflight){
+    container.innerHTML = '<div class="muted-note">Not currently in flight. Most recent flights below.</div>';
+    return;
+  }
+  const current = snapshot.currentFlight;
+  const title = snapshot.inflight ? 'In Flight' : describeFr24Status(current.status);
+  const route = formatFinRoute(current);
+  const meta = [current.flightNumber, current.registration || current.icao24].filter(Boolean).join(' • ');
+  const times = [
+    current.departureTime ? `Dep ${formatLocalDateTime(current.departureTime)}` : null,
+    current.arrivalTime ? `Arr ${formatLocalDateTime(current.arrivalTime)}` : null
+  ].filter(Boolean).join(' • ');
+  container.innerHTML = `
+    <div class="metric-label">${escapeHtml(title)}</div>
+    <div class="metric-value">${escapeHtml(route)}</div>
+    <div class="fin-flight-meta">${escapeHtml(meta || 'No identifiers available')}</div>
+    <div class="fin-flight-times">${escapeHtml(times || (snapshot.inflight ? 'Enroute time unavailable' : 'Times unavailable'))}</div>
+  `;
+}
+
+function updateFinFlightPage(registration){
+  if (finHiddenContext.page !== 'flight') return;
+  const normalizedReg = normalizeRegistration(registration);
+  if (!normalizedReg || finHiddenContext.registration !== normalizedReg) return;
+  const cache = finFlightCache.get(normalizedReg);
+  const flights = cache?.flights || [];
+  const snapshot = buildFinLocationSnapshot(flights);
+  const currentEl = document.getElementById('fin-flight-current');
+  const recentEl = document.getElementById('fin-flight-recent');
+  const statusEl = document.getElementById('fin-flight-status');
+  renderFinCurrentFlight(currentEl, snapshot);
+  renderFinFlightList(recentEl, snapshot.flights);
+  if (statusEl){
+    const fetchedText = cache?.fetchedAt ? `Updated ${formatLocalDateTime(Math.round(cache.fetchedAt / 1000))}.` : '';
+    const tail = flights.length ? fetchedText : 'No live data available.';
+    statusEl.textContent = tail;
+  }
+  refreshFinCodeToggleButtons();
+}
+
+function refreshFinCodeToggleButtons(){
+  document.querySelectorAll('[data-fin-code-mode]').forEach((btn) => {
+    const mode = btn.dataset.finCodeMode;
+    const active = mode === finAirportCodeMode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+}
+
+function setFinAirportCodeMode(mode){
+  finAirportCodeMode = mode === 'iata' ? 'iata' : 'icao';
+  refreshFinCodeToggleButtons();
+  document.querySelectorAll('[data-fin-location]').forEach((card) => {
+    const reg = card.dataset.finRegistration || '';
+    const flights = reg ? finFlightCache.get(reg)?.flights || [] : [];
+    if (flights.length){
+      const snapshot = buildFinLocationSnapshot(flights);
+      renderFinLocationPreview(card, snapshot, reg);
+    }
+  });
+  if (finHiddenContext.page === 'flight'){
+    updateFinFlightPage(finHiddenContext.registration);
+  }
 }
 
 async function fetchFr24FlightSummary(registration){
@@ -2430,31 +2582,63 @@ async function fetchFr24FlightSummary(registration){
   return { flights, registration: normalizedReg };
 }
 
-async function hydrateFinSummary(outEl, fin, reg){
-  const summaryEl = outEl.querySelector('[data-fin-summary]');
-  const statusEl = outEl.querySelector('[data-fin-summary-status]');
-  const listEl = outEl.querySelector('[data-fin-summary-list]');
-  if (!summaryEl || !statusEl || !listEl) return;
+function renderFinLocationPreview(summaryEl, snapshot, registration){
+  const statusEl = summaryEl.querySelector('[data-fin-location-status]');
+  const displayEl = summaryEl.querySelector('[data-fin-location-display]');
+  summaryEl.dataset.finRegistration = registration || '';
+  if (!statusEl || !displayEl) return;
+  if (!snapshot.flights.length){
+    displayEl.textContent = '—';
+    statusEl.textContent = `No recent flights found for ${registration || 'this fin'}.`;
+    return;
+  }
+  if (snapshot.inflight){
+    displayEl.textContent = 'In Flight';
+    const route = formatFinRoute(snapshot.currentFlight);
+    const meta = snapshot.currentFlight?.flightNumber ? ` • ${snapshot.currentFlight.flightNumber}` : '';
+    statusEl.textContent = `${route}${meta}`;
+    return;
+  }
+  const code = formatAirportCode(snapshot.airport, finAirportCodeMode);
+  displayEl.textContent = code || 'Unknown location';
+  const label = snapshot.currentFlight?.status === 'planned' ? 'Planned' : 'Last arrival';
+  statusEl.textContent = `${label}: ${formatFinRoute(snapshot.currentFlight)}`;
+}
+
+async function hydrateFinLocation(outEl, fin, reg){
+  const summaryEl = outEl.querySelector('[data-fin-location]');
+  const statusEl = outEl.querySelector('[data-fin-location-status]');
+  const displayEl = outEl.querySelector('[data-fin-location-display]');
+  if (!summaryEl || !statusEl || !displayEl) return;
+  const normalizedReg = normalizeRegistration(reg);
   const requestId = `${fin}-${Date.now()}`;
-  summaryEl.dataset.finSummaryRequest = requestId;
-  listEl.innerHTML = '';
-  statusEl.textContent = 'Fetching FlightRadar24 summary…';
+  summaryEl.dataset.finLocationRequest = requestId;
+  summaryEl.dataset.finRegistration = normalizedReg || '';
+  summaryEl.dataset.finFin = fin;
+  const cachedFlights = normalizedReg ? finFlightCache.get(normalizedReg)?.flights || [] : [];
+  if (cachedFlights.length){
+    const cachedSnapshot = buildFinLocationSnapshot(cachedFlights);
+    renderFinLocationPreview(summaryEl, cachedSnapshot, normalizedReg);
+  } else {
+    displayEl.textContent = normalizedReg ? '—' : 'No registration';
+    statusEl.textContent = normalizedReg
+      ? 'Fetching FlightRadar24 summary…'
+      : 'Add a registration to track this fin.';
+  }
+  if (!normalizedReg) return;
   try {
-    const { flights, registration } = await fetchFr24FlightSummary(reg);
-    if (summaryEl.dataset.finSummaryRequest !== requestId) return;
-    if (!flights.length){
-      statusEl.textContent = `No recent flights found for ${registration}.`;
-      return;
-    }
-    const displayed = flights.slice(0, 3);
-    listEl.innerHTML = displayed.map(renderFinSummaryRow).join('');
-    const suffix = flights.length > displayed.length ? ` (showing ${displayed.length} of ${flights.length})` : '';
-    statusEl.textContent = `Latest flights for ${registration}${suffix}.`;
+    const { flights, registration } = await fetchFr24FlightSummary(normalizedReg);
+    if (summaryEl.dataset.finLocationRequest !== requestId) return;
+    const sorted = cacheFinFlights(registration, flights);
+    const snapshot = buildFinLocationSnapshot(sorted);
+    renderFinLocationPreview(summaryEl, snapshot, registration);
+    updateFinFlightPage(registration);
   } catch (err){
-    if (summaryEl.dataset.finSummaryRequest !== requestId) return;
+    if (summaryEl.dataset.finLocationRequest !== requestId) return;
     const friendly = err?.message && err.message !== 'Failed to fetch'
       ? err.message
       : 'FlightRadar24 summary unavailable right now.';
+    displayEl.textContent = '—';
     statusEl.textContent = friendly;
   }
 }
@@ -2639,10 +2823,14 @@ function closeFinDeleteOverlay(){
 
 function renderFinResult(outEl, finValue){
   if (!outEl) return;
+  outEl.dataset.finRegistration = '';
   const previousFin = Number(outEl.dataset.finCurrent ?? NaN);
   const fin = Number(finValue);
-  const sameFin = Number.isFinite(fin) && Number.isFinite(previousFin) && previousFin === fin;
-  const editing = sameFin && outEl.dataset.finEditing === 'true';
+  const finChanged = Number.isFinite(fin) && Number.isFinite(previousFin) && previousFin !== fin;
+  if (finChanged){
+    outEl.dataset.finEditing = 'false';
+  }
+  const editing = outEl.dataset.finEditing === 'true';
   outEl.dataset.finCurrent = Number.isFinite(fin) ? String(fin) : '';
   if (finValue === '' || finValue === null || finValue === undefined){
     outEl.dataset.finEditing = 'false';
@@ -2731,11 +2919,14 @@ function renderFinResult(outEl, finValue){
   const showSummaryCard = Boolean(values.reg) && !editing;
   const summaryCardHtml = showSummaryCard
     ? `
-      <div class="fin-card fin-summary-card" data-fin-summary>
-        <div class="metric-label">Flight summary</div>
-        <div class="fin-summary-list" data-fin-summary-list></div>
-        <div class="muted-note" data-fin-summary-status aria-live="polite">Fetching FlightRadar24 summary…</div>
-      </div>
+      <button class="fin-summary-card fin-location-card" data-fin-location type="button" aria-label="Open live flight details">
+        <div class="metric-label">Live location</div>
+        <div class="fin-location-value" data-fin-location-display>Checking position…</div>
+        <div class="fin-location-meta">
+          <span class="dot" aria-hidden="true"></span>
+          <span data-fin-location-status aria-live="polite">Fetching FlightRadar24 data…</span>
+        </div>
+      </button>
     `
     : '';
   const actions = editing
@@ -2767,9 +2958,10 @@ function renderFinResult(outEl, finValue){
       <div class="wx-error hidden" data-fin-error></div>
     </div>
   `;
-  const summaryCard = outEl.querySelector('[data-fin-summary]');
+  outEl.dataset.finRegistration = values.reg || '';
+  const summaryCard = outEl.querySelector('[data-fin-location]');
   if (summaryCard){
-    hydrateFinSummary(outEl, fin, values.reg);
+    hydrateFinLocation(outEl, fin, values.reg);
   }
 }
 
@@ -2784,10 +2976,15 @@ function attachFinLookup({ inputId, outId }){
   }
   if (!out.dataset.finBound){
     out.addEventListener('click', (event) => {
-      const action = event.target?.closest('[data-fin-action]')?.dataset?.finAction;
-      if (!action) return;
       const finValue = input?.value?.trim() ?? '';
       const fin = Number(finValue);
+      const locationTrigger = event.target?.closest('[data-fin-location]');
+      if (locationTrigger){
+        openFinHiddenPage('flight', { fin, registration: out.dataset.finRegistration || '' });
+        return;
+      }
+      const action = event.target?.closest('[data-fin-action]')?.dataset?.finAction;
+      if (!action) return;
       const form = out.querySelector('[data-fin-form]');
       if (!form) return;
       const errorEl = form.querySelector('[data-fin-error]');
@@ -2936,10 +3133,12 @@ function setModernPrimaryTab(which){
   const weatherPane = document.getElementById('modern-weather');
   const dutyPane = document.getElementById('modern-duty-rest');
   const finPane = document.getElementById('modern-fin');
+  const finHiddenPane = document.getElementById('modern-fin-hidden');
   const showPay = which === 'modern-pay';
   const showWeather = which === 'modern-weather';
   const showDuty = which === 'modern-duty-rest';
   const showFin = which === 'modern-fin';
+  const showingHiddenFin = showFin && finHiddenContext.page !== null;
   payBtn?.classList.toggle('active', showPay);
   weatherBtn?.classList.toggle('active', showWeather);
   dutyBtn?.classList.toggle('active', showDuty);
@@ -2947,7 +3146,8 @@ function setModernPrimaryTab(which){
   payPane?.classList.toggle('hidden', !showPay);
   weatherPane?.classList.toggle('hidden', !showWeather);
   dutyPane?.classList.toggle('hidden', !showDuty);
-  finPane?.classList.toggle('hidden', !showFin);
+  finPane?.classList.toggle('hidden', !showFin || showingHiddenFin);
+  finHiddenPane?.classList.toggle('hidden', !showFin || !showingHiddenFin);
   if (showPay) setModernSubTab(currentModernSubTab);
   if (showDuty) setModernDutyTab(currentModernDutyTab);
 }
@@ -2989,6 +3189,83 @@ function setModernDutyTab(which){
       pane.classList.add('hidden');
     }
   });
+}
+
+function openFinHiddenPage(page, { fin, registration } = {}){
+  const normalizedReg = normalizeRegistration(registration);
+  finHiddenContext.page = page;
+  finHiddenContext.fin = Number.isFinite(fin) ? fin : null;
+  finHiddenContext.registration = normalizedReg || '';
+  const title = document.getElementById('fin-hidden-title');
+  const mainPane = document.getElementById('modern-fin');
+  const hiddenPane = document.getElementById('modern-fin-hidden');
+  document.querySelectorAll('[data-fin-hidden-page]').forEach((el) => {
+    el.classList.toggle('hidden', el.dataset.finHiddenPage !== page);
+  });
+  if (title){
+    if (page === 'api'){
+      title.textContent = 'FlightRadar24 API';
+    } else if (page === 'flight'){
+      const prefix = finHiddenContext.fin ? `Fin ${finHiddenContext.fin}` : 'Live flight';
+      title.textContent = `${prefix} details`;
+    } else {
+      title.textContent = 'Fin tools';
+    }
+  }
+  if (mainPane && hiddenPane){
+    mainPane.classList.add('hidden');
+    hiddenPane.classList.remove('hidden');
+  }
+  if (page === 'api'){
+    populateFr24ConfigForm();
+  }
+  if (page === 'flight'){
+    refreshFinCodeToggleButtons();
+    loadFinFlightDetails(finHiddenContext.registration);
+  }
+}
+
+function closeFinHiddenPage(){
+  finHiddenContext.page = null;
+  finHiddenContext.fin = null;
+  finHiddenContext.registration = '';
+  const mainPane = document.getElementById('modern-fin');
+  const hiddenPane = document.getElementById('modern-fin-hidden');
+  if (mainPane) mainPane.classList.remove('hidden');
+  if (hiddenPane) hiddenPane.classList.add('hidden');
+}
+
+async function loadFinFlightDetails(registration, { forceRefresh = false } = {}){
+  const normalizedReg = normalizeRegistration(registration);
+  finHiddenContext.registration = normalizedReg || '';
+  const statusEl = document.getElementById('fin-flight-status');
+  const currentEl = document.getElementById('fin-flight-current');
+  const recentEl = document.getElementById('fin-flight-recent');
+  const cachedFlights = normalizedReg ? finFlightCache.get(normalizedReg)?.flights || [] : [];
+  const cachedSnapshot = buildFinLocationSnapshot(cachedFlights);
+  renderFinCurrentFlight(currentEl, cachedSnapshot);
+  renderFinFlightList(recentEl, cachedSnapshot.flights);
+  if (!normalizedReg){
+    if (statusEl) statusEl.textContent = 'Add a registration to track this fin.';
+    return;
+  }
+  if (cachedFlights.length && !forceRefresh){
+    if (statusEl) statusEl.textContent = 'Showing cached data.';
+    return;
+  }
+  if (statusEl) statusEl.textContent = 'Fetching live data…';
+  try {
+    const { flights, registration: regOut } = await fetchFr24FlightSummary(normalizedReg);
+    cacheFinFlights(regOut, flights);
+    updateFinFlightPage(regOut);
+  } catch (err){
+    if (statusEl){
+      const friendly = err?.message && err.message !== 'Failed to fetch'
+        ? err.message
+        : 'Live flight data unavailable right now.';
+      statusEl.textContent = friendly;
+    }
+  }
 }
 
 function extractUtcTimeValue(label){
@@ -6378,6 +6655,11 @@ function init(){
   document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
   document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out', converterTarget:'modern' }); });
   document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
+  document.getElementById('modern-fin-api-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); openFinHiddenPage('api'); setModernPrimaryTab('modern-fin'); });
+  document.getElementById('fin-hidden-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); closeFinHiddenPage(); setModernPrimaryTab('modern-fin'); });
+  document.querySelectorAll('[data-fin-code-mode]').forEach((btn) => {
+    btn.addEventListener('click', (e) => { hapticTap(e.currentTarget); setFinAirportCodeMode(btn.dataset.finCodeMode); });
+  });
   document.getElementById('fr24-save')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); handleFr24ConfigSave(); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
@@ -6416,6 +6698,7 @@ function init(){
   attachTimeConverter({ airportId: 'modern-time-airport', localId: 'modern-time-local', utcId: 'modern-time-utc', noteId: 'modern-time-note' });
   attachAirportToAirportConverter({ fromAirportId: 'modern-time-from-airport', toAirportId: 'modern-time-to-airport', fromTimeId: 'modern-time-from', toTimeId: 'modern-time-to', noteId: 'modern-time-note' });
   attachFinLookup({ inputId: 'modern-fin-input', outId: 'modern-fin-out' });
+  refreshFinCodeToggleButtons();
   populateFr24ConfigForm();
   investigateBackgroundFinSync();
   // After initializing defaults and tie logic, automatically select the
