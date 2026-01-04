@@ -2414,6 +2414,13 @@ function formatLocalDateTime(ts){
 
 function mapFr24Airport(airport){
   if (!airport || typeof airport !== 'object') return { code: null, icao: null, iata: null, name: null, city: null };
+  const pickNumber = (...values) => {
+    for (const value of values){
+      const num = Number(value);
+      if (Number.isFinite(num)) return num;
+    }
+    return null;
+  };
   const iataRaw = airport.iata || airport.iata_code || airport.airport_iata || airport.code_iata || airport.iata_code_limited;
   const iata = typeof iataRaw === 'string' ? iataRaw.trim().toUpperCase() : '';
   const icao = normalizeRegistration(
@@ -2429,7 +2436,20 @@ function mapFr24Airport(airport){
     icao: icao || null,
     iata: iata || null,
     name: typeof airport.name === 'string' ? airport.name : null,
-    city: typeof airport.city === 'string' ? airport.city : null
+    city: typeof airport.city === 'string' ? airport.city : null,
+    lat: pickNumber(
+      airport.lat,
+      airport.latitude,
+      airport.lat_deg,
+      airport.airport_lat
+    ),
+    lon: pickNumber(
+      airport.lon,
+      airport.lng,
+      airport.longitude,
+      airport.long_deg,
+      airport.airport_lon
+    )
   };
 }
 
@@ -2529,13 +2549,15 @@ function cacheFinFlights(registration, flights){
   return sorted;
 }
 
-function renderFinFlightList(container, flights){
+function renderFinFlightList(container, flights, { hideActive = false } = {}){
   if (!container) return;
-  if (!flights.length){
+  const list = Array.isArray(flights) ? flights : [];
+  const visible = hideActive ? list.filter((flight) => flight.status !== 'active') : list;
+  if (!visible.length){
     container.innerHTML = '<div class="muted-note">No recent flights.</div>';
     return;
   }
-  container.innerHTML = flights.map(renderFinSummaryRow).join('');
+  container.innerHTML = visible.map(renderFinSummaryRow).join('');
 }
 
 function renderFinCurrentFlight(container, snapshot){
@@ -2588,12 +2610,128 @@ function formatFinLandingMinutes(position){
   return `${minutes} min`;
 }
 
-function buildFinStaticMapUrl(position){
-  if (!position || !Number.isFinite(position.lat) || !Number.isFinite(position.lon)) return '';
-  const lat = Math.max(-85, Math.min(85, position.lat));
-  const lon = Math.max(-180, Math.min(180, position.lon));
-  const marker = `${lat},${lon},lightblue1`;
-  return `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lon}&zoom=5&size=640x360&maptype=mapnik&markers=${marker}`;
+function normalizeLongitude(lon){
+  let value = lon;
+  while (value <= -180) value += 360;
+  while (value > 180) value -= 360;
+  return value;
+}
+
+function pickCenterLongitude(lons){
+  if (!lons.length) return 0;
+  const radVals = lons.map((lon) => normalizeLongitude(lon) * (Math.PI / 180));
+  const avgSin = radVals.reduce((sum, v) => sum + Math.sin(v), 0) / radVals.length;
+  const avgCos = radVals.reduce((sum, v) => sum + Math.cos(v), 0) / radVals.length;
+  return Math.atan2(avgSin, avgCos) * (180 / Math.PI);
+}
+
+function projectPoint(lat, lon, centerLon, width, height){
+  const clampedLat = Math.max(-85, Math.min(85, lat));
+  const lonDelta = normalizeLongitude(lon - centerLon);
+  const x = ((lonDelta + 180) / 360) * width;
+  const y = ((90 - clampedLat) / 180) * height;
+  return { x, y };
+}
+
+function buildGreatCirclePath(from, to, centerLon, width, height){
+  const toRad = (deg) => deg * (Math.PI / 180);
+  const toDeg = (rad) => rad * (180 / Math.PI);
+  const lat1 = toRad(from.lat);
+  const lon1 = toRad(from.lon);
+  const lat2 = toRad(to.lat);
+  const lon2 = toRad(to.lon);
+  const d = 2 * Math.asin(Math.sqrt(
+    Math.sin((lat2 - lat1) / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2
+  ));
+  if (!Number.isFinite(d) || d === 0) return '';
+  const steps = 96;
+  const commands = [];
+  for (let i = 0; i <= steps; i += 1){
+    const f = i / steps;
+    const A = Math.sin((1 - f) * d) / Math.sin(d);
+    const B = Math.sin(f * d) / Math.sin(d);
+    const x = A * Math.cos(lat1) * Math.cos(lon1) + B * Math.cos(lat2) * Math.cos(lon2);
+    const y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
+    const z = A * Math.sin(lat1) + B * Math.sin(lat2);
+    const lat = toDeg(Math.atan2(z, Math.sqrt(x ** 2 + y ** 2)));
+    const lon = toDeg(Math.atan2(y, x));
+    const { x: px, y: py } = projectPoint(lat, lon, centerLon, width, height);
+    commands.push(`${i === 0 ? 'M' : 'L'}${px.toFixed(2)},${py.toFixed(2)}`);
+  }
+  return commands.join(' ');
+}
+
+function buildFinStaticMapUrl(position, flight){
+  const hasPosition = position && Number.isFinite(position.lat) && Number.isFinite(position.lon);
+  const dep = flight?.departure;
+  const arr = flight?.arrival;
+  const hasDep = dep && Number.isFinite(dep.lat) && Number.isFinite(dep.lon);
+  const hasArr = arr && Number.isFinite(arr.lat) && Number.isFinite(arr.lon);
+  if (!hasPosition || !hasDep || !hasArr) return '';
+  const width = 640;
+  const height = 360;
+  const centerLon = pickCenterLongitude(
+    [dep.lon, arr.lon, position.lon].filter((lon) => Number.isFinite(lon))
+  );
+  const depPt = projectPoint(dep.lat, dep.lon, centerLon, width, height);
+  const arrPt = projectPoint(arr.lat, arr.lon, centerLon, width, height);
+  const posPt = projectPoint(position.lat, position.lon, centerLon, width, height);
+  const path = buildGreatCirclePath(dep, arr, centerLon, width, height);
+  const heading = Number.isFinite(position.heading) ? position.heading : 0;
+  const headingRad = (heading - 90) * (Math.PI / 180);
+  const planeSize = 11;
+  const nose = {
+    x: posPt.x + Math.cos(headingRad) * planeSize,
+    y: posPt.y + Math.sin(headingRad) * planeSize
+  };
+  const tail = {
+    x: posPt.x - Math.cos(headingRad) * planeSize * 0.6,
+    y: posPt.y - Math.sin(headingRad) * planeSize * 0.6
+  };
+  const left = {
+    x: tail.x + Math.cos(headingRad + (Math.PI / 2)) * planeSize * 0.55,
+    y: tail.y + Math.sin(headingRad + (Math.PI / 2)) * planeSize * 0.55
+  };
+  const right = {
+    x: tail.x + Math.cos(headingRad - (Math.PI / 2)) * planeSize * 0.55,
+    y: tail.y + Math.sin(headingRad - (Math.PI / 2)) * planeSize * 0.55
+  };
+  const planePath = `M${nose.x.toFixed(2)},${nose.y.toFixed(2)} L${left.x.toFixed(2)},${left.y.toFixed(2)} L${tail.x.toFixed(2)},${tail.y.toFixed(2)} L${right.x.toFixed(2)},${right.y.toFixed(2)} Z`;
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Live route map">
+      <defs>
+        <linearGradient id="fin-sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#0f172a" />
+          <stop offset="100%" stop-color="#0b121c" />
+        </linearGradient>
+      </defs>
+      <rect width="${width}" height="${height}" fill="url(#fin-sky)" />
+      <g stroke="#1f2937" stroke-width="1" opacity="0.35">
+        ${[-60, -30, 0, 30, 60].map((lat) => {
+          const y = projectPoint(lat, centerLon, centerLon, width, height).y;
+          return `<line x1="0" y1="${y.toFixed(1)}" x2="${width}" y2="${y.toFixed(1)}" />`;
+        }).join('')}
+        ${[-120, -60, 0, 60, 120].map((lon) => {
+          const x = projectPoint(0, centerLon + lon, centerLon, width, height).x;
+          return `<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${height}" />`;
+        }).join('')}
+      </g>
+      ${path ? `<path d="${path}" fill="none" stroke="#60a5fa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />` : ''}
+      <g fill="#38bdf8" stroke="#0f172a" stroke-width="2">
+        <circle cx="${depPt.x.toFixed(2)}" cy="${depPt.y.toFixed(2)}" r="6" />
+        <circle cx="${arrPt.x.toFixed(2)}" cy="${arrPt.y.toFixed(2)}" r="6" />
+      </g>
+      <g fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="${planePath}" fill="#38bdf8" />
+      </g>
+      <g font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#e2e8f0" stroke="#0f172a" stroke-width="3" paint-order="stroke">
+        <text x="${depPt.x.toFixed(2)}" y="${(depPt.y - 10).toFixed(2)}" text-anchor="middle">${escapeHtml(formatAirportCode(dep))}</text>
+        <text x="${arrPt.x.toFixed(2)}" y="${(arrPt.y - 10).toFixed(2)}" text-anchor="middle">${escapeHtml(formatAirportCode(arr))}</text>
+      </g>
+    </svg>
+  `.trim();
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
 function renderFinLiveDetails(container, mapContainer, snapshot, positions){
@@ -2633,11 +2771,11 @@ function renderFinLiveDetails(container, mapContainer, snapshot, positions){
       `).join('')}
     </div>
   `;
-  const mapUrl = buildFinStaticMapUrl(latest);
+  const mapUrl = buildFinStaticMapUrl(latest, snapshot?.currentFlight);
   if (mapUrl){
     mapContainer.innerHTML = `<img src="${escapeHtml(mapUrl)}" alt="Latest position map">`;
   } else {
-    mapContainer.innerHTML = '';
+    mapContainer.innerHTML = '<div class="muted-note">Map unavailable for this flight.</div>';
   }
 }
 
@@ -2691,7 +2829,7 @@ function updateFinFlightPage(registration){
   const liveEl = document.getElementById('fin-flight-live');
   const mapEl = document.getElementById('fin-flight-map');
   renderFinCurrentFlight(currentEl, snapshot);
-  renderFinFlightList(recentEl, snapshot.flights);
+  renderFinFlightList(recentEl, snapshot.flights, { hideActive: snapshot.inflight });
   const liveCache = FIN_LIVE_POSITION_CACHE.get(normalizedReg);
   renderFinLiveDetails(liveEl, mapEl, snapshot, liveCache?.positions || []);
   if (snapshot.inflight && !(liveCache?.positions?.length)){
@@ -3641,7 +3779,7 @@ async function loadFinFlightDetails(registration, { forceRefresh = false } = {})
   const cachedFlights = normalizedReg ? FIN_FLIGHT_CACHE.get(normalizedReg)?.flights || [] : [];
   const cachedSnapshot = buildFinLocationSnapshot(cachedFlights);
   renderFinCurrentFlight(currentEl, cachedSnapshot);
-  renderFinFlightList(recentEl, cachedSnapshot.flights);
+  renderFinFlightList(recentEl, cachedSnapshot.flights, { hideActive: cachedSnapshot.inflight });
   if (!normalizedReg){
     if (statusEl) statusEl.textContent = 'Add a registration to track this fin.';
     return;
