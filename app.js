@@ -75,7 +75,10 @@ const CORS_PROXY = 'https://cors.isomorphic-git.org/';
 const CORS_PROXY_FALLBACKS = [
   { label: 'direct', build: (url) => url },
   { label: 'isomorphic', build: (url) => url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}` },
-  { label: 'corsproxy.io', build: (url) => url.startsWith('https://corsproxy.io/?') ? url : `https://corsproxy.io/?${encodeURIComponent(url)}` },
+  { label: 'corsproxy.io', build: (url) => {
+    const safeUrl = url.startsWith('http') ? url : `https://${url}`;
+    return safeUrl.startsWith('https://corsproxy.io/?') ? safeUrl : `https://corsproxy.io/?${safeUrl}`;
+  } },
   { label: 'allorigins', build: (url) => url.startsWith('https://api.allorigins.win/raw?url=') ? url : `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` }
 ];
 const FR24_SUMMARY_LOOKBACK_HOURS = 72;
@@ -135,6 +138,7 @@ async function fetchWithCorsFallback(url, options = {}){
   const trimmedUrl = String(url || '').trim();
   const attempts = [];
   const seen = new Set();
+  let lastError = null;
   for (const proxy of CORS_PROXY_FALLBACKS){
     const target = proxy.build(trimmedUrl);
     if (!target || seen.has(target)) continue;
@@ -145,10 +149,17 @@ async function fetchWithCorsFallback(url, options = {}){
       return resp;
     } catch (err){
       attempts.push(`${proxy.label}: ${err?.message || err}`);
+      lastError = err;
     }
   }
-  const detail = attempts.length ? ` (${attempts.join(' | ')})` : '';
-  throw new Error(`Live data temporarily unavailable. Please try again later.${detail}`);
+  if (attempts.length){
+    console.warn('Live data request failed across all proxies', { url: trimmedUrl, attempts, lastError });
+  }
+  const friendly = 'Live data temporarily unavailable. Please try again later.';
+  const error = new Error(friendly);
+  if (attempts.length) error.attempts = attempts;
+  if (lastError) error.cause = lastError;
+  throw error;
 }
 
 function getFr24ApiConfig(){
@@ -2607,13 +2618,19 @@ async function loadFinLivePositions(registration, snapshot){
       }
     });
   } catch (err){
+    const cachedPositions = FIN_LIVE_POSITION_CACHE.get(normalizedReg)?.positions || [];
+    if (cachedPositions.length){
+      renderFinLiveDetails(liveEl, mapEl, snapshot, cachedPositions);
+    }
     if (liveEl){
       const friendly = err?.message && err.message !== 'Failed to fetch'
         ? err.message
-        : 'Live position unavailable right now.';
+        : (cachedPositions.length
+          ? 'Live position refresh unavailable right now; showing last known data.'
+          : 'Live position unavailable right now.');
       liveEl.innerHTML = `<div class="muted-note">${escapeHtml(friendly)}</div>`;
     }
-    if (mapEl) mapEl.classList.add('hidden');
+    if (mapEl) mapEl.classList.toggle('hidden', !cachedPositions.length);
   }
 }
 
