@@ -252,6 +252,19 @@ function parseFr24Date(value){
   return normalizeFr24Timestamp(value);
 }
 
+function deriveFr24FlightStatus(entry, departureTime, arrivalTime){
+  if (!entry) return 'planned';
+  if (entry.flight_ended === false) return 'active';
+  if (entry.flight_ended === true) return 'completed';
+  const statusText = String(entry.status ?? entry.flight_status ?? entry.flightstatus ?? '').toLowerCase();
+  const compactStatus = statusText.replace(/[\s_-]+/g, '');
+  if (['active', 'enroute', 'inair', 'inflight'].some((needle) => compactStatus.includes(needle))) return 'active';
+  if (statusText.includes('landed') || statusText.includes('arrived')) return 'completed';
+  if (Number.isFinite(departureTime) && !Number.isFinite(arrivalTime)) return 'active';
+  if (Number.isFinite(departureTime) && Number.isFinite(arrivalTime)) return 'completed';
+  return 'planned';
+}
+
 function populateFr24ConfigForm(){
   const config = getFr24ApiConfig();
   const baseInput = document.getElementById('fr24-base-url');
@@ -2437,9 +2450,7 @@ function mapFr24FullSummaryFlight(entry){
   });
   const departureTime = parseFr24Date(entry.first_seen ?? entry.datetime_takeoff);
   const arrivalTime = parseFr24Date(entry.last_seen ?? entry.datetime_landed ?? entry.datetime_arrival);
-  const status = entry.flight_ended === false
-    ? 'active'
-    : (entry.flight_ended === true ? 'completed' : 'planned');
+  const status = deriveFr24FlightStatus(entry, departureTime, arrivalTime);
   const flightNumber = entry.callsign || entry.call_sign || entry.flight || entry.flight_number || '';
   const registration = normalizeRegistration(entry.reg || entry.registration || entry.aircraft_registration);
   const icao24 = normalizeRegistration(entry.hex || entry.icao24 || entry.mode_s);
