@@ -2658,9 +2658,11 @@ function formatFinLandingMinutes(position, flight){
   const eta = pickFinLandingEpoch(position, flight);
   if (!Number.isFinite(eta)) return '—';
   const remainingMs = (eta * 1000) - Date.now();
-  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return '—';
-  const minutes = Math.max(1, Math.round(remainingMs / 60000));
-  return `${minutes} min`;
+  if (!Number.isFinite(remainingMs)) return '—';
+  const totalMinutes = Math.max(0, Math.round(remainingMs / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}:${minutes.toString().padStart(2, '0')}`;
 }
 
 function formatFinLandingLocalTime(position, flight){
