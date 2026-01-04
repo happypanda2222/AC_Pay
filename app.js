@@ -74,7 +74,7 @@ const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const CORS_PROXY = 'https://cors.isomorphic-git.org/';
 const CORS_PROXY_FALLBACKS = [
   { label: 'direct', build: (url) => url, allowsAuth: true },
-  { label: 'isomorphic', build: (url) => url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}`, allowsAuth: false },
+  { label: 'isomorphic', build: (url) => url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}`, allowsAuth: true },
   { label: 'corsproxy.io', build: (url) => {
     const safeUrl = url.startsWith('http') ? url : `https://${url}`;
     return safeUrl.startsWith('https://corsproxy.io/?') ? safeUrl : `https://corsproxy.io/?${safeUrl}`;
