@@ -2416,6 +2416,7 @@ function mapFr24Airport(airport){
   if (!airport || typeof airport !== 'object') return { code: null, icao: null, iata: null, name: null, city: null };
   const pickNumber = (...values) => {
     for (const value of values){
+      if (value === null || value === undefined) continue;
       const num = Number(value);
       if (Number.isFinite(num)) return num;
     }
@@ -2954,6 +2955,7 @@ async function fetchFr24FlightSummary(registration){
 function mapFr24LivePosition(entry){
   const pickNumber = (...values) => {
     for (const value of values){
+      if (value === null || value === undefined) continue;
       const num = Number(value);
       if (Number.isFinite(num)) return num;
     }
