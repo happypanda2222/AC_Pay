@@ -72,14 +72,25 @@ const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
 const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const CORS_PROXY = 'https://cors.isomorphic-git.org/';
+function normalizeProxyTarget(url){
+  const safeUrl = String(url || '').trim();
+  if (!safeUrl) return '';
+  return safeUrl.startsWith('http') ? safeUrl : `https://${safeUrl}`;
+}
 const CORS_PROXY_FALLBACKS = [
-  { label: 'direct', build: (url) => url, allowsAuth: true },
-  { label: 'isomorphic', build: (url) => url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}`, allowsAuth: true },
+  { label: 'direct', build: (url) => normalizeProxyTarget(url), allowsAuth: true },
+  { label: 'isomorphic', build: (url) => {
+    const safeUrl = normalizeProxyTarget(url);
+    return safeUrl.startsWith(CORS_PROXY) ? safeUrl : `${CORS_PROXY}${safeUrl}`;
+  }, allowsAuth: true },
+  { label: 'allorigins', build: (url) => {
+    const safeUrl = normalizeProxyTarget(url);
+    return safeUrl ? `https://api.allorigins.win/raw?url=${encodeURIComponent(safeUrl)}` : '';
+  }, allowsAuth: true },
   { label: 'corsproxy.io', build: (url) => {
-    const safeUrl = url.startsWith('http') ? url : `https://${url}`;
+    const safeUrl = normalizeProxyTarget(url);
     return safeUrl.startsWith('https://corsproxy.io/?') ? safeUrl : `https://corsproxy.io/?${safeUrl}`;
-  }, allowsAuth: false },
-  { label: 'allorigins', build: (url) => url.startsWith('https://api.allorigins.win/raw?url=') ? url : `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, allowsAuth: false }
+  }, allowsAuth: false }
 ];
 const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
@@ -134,8 +145,20 @@ function normalizeRegistration(reg){
   return String(reg ?? '').trim().toUpperCase();
 }
 
+function cloneFetchOptions(options){
+  if (!options) return {};
+  const cloned = { ...options };
+  if (options.headers instanceof Headers){
+    cloned.headers = new Headers(options.headers);
+  } else if (options.headers && typeof options.headers === 'object'){
+    cloned.headers = { ...options.headers };
+  }
+  return cloned;
+}
+
 async function fetchWithCorsFallback(url, options = {}){
-  const trimmedUrl = String(url || '').trim();
+  const trimmedUrl = normalizeProxyTarget(url);
+  if (!trimmedUrl) throw new Error('Missing URL for live data request.');
   const headers = options?.headers;
   const headerEntries = headers instanceof Headers
     ? Array.from(headers.entries())
@@ -150,7 +173,7 @@ async function fetchWithCorsFallback(url, options = {}){
     if (!target || seen.has(target)) continue;
     seen.add(target);
     try {
-      const resp = await fetch(target, options);
+      const resp = await fetch(target, cloneFetchOptions(options));
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       return resp;
     } catch (err){
@@ -161,7 +184,10 @@ async function fetchWithCorsFallback(url, options = {}){
   if (attempts.length){
     console.warn('Live data request failed across all proxies', { url: trimmedUrl, attempts, lastError });
   }
-  const friendly = 'Live data temporarily unavailable. Please try again later.';
+  const attemptLabels = attempts.map(entry => entry.split(':')[0]).filter(Boolean);
+  const friendly = attempts.length
+    ? `Live data temporarily unavailable. Tried ${Array.from(new Set(attemptLabels)).join(', ')}.`
+    : 'Live data temporarily unavailable. Please try again later.';
   const error = new Error(friendly);
   if (attempts.length) error.attempts = attempts;
   if (lastError) error.cause = lastError;
