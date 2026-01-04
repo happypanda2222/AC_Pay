@@ -81,7 +81,6 @@ const CORS_PROXY_FALLBACKS = [
 const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
 const FLIGHTRADAR24_DEFAULT_BASE = 'https://fr24api.flightradar24.com/api';
-const FLIGHTRADAR24_DEFAULT_HOST = 'flightradar24.p.rapidapi.com';
 const FLIGHTRADAR24_DEFAULT_VERSION = 'v1';
 
 function normalizeFr24Headers(value){
@@ -149,7 +148,6 @@ async function fetchWithCorsFallback(url, options = {}){
 }
 
 function getFr24ApiConfig(){
-  const fallbackApiKey = window.AC_PAY_FR24_API_KEY || '';
   try {
     const stored = JSON.parse(localStorage.getItem(FLIGHTRADAR24_CONFIG_KEY) || '{}');
     return {
@@ -158,8 +156,6 @@ function getFr24ApiConfig(){
       apiVersion: typeof stored.apiVersion === 'string' && stored.apiVersion.trim()
         ? stored.apiVersion.trim()
         : FLIGHTRADAR24_DEFAULT_VERSION,
-      apiKey: stored.apiKey || fallbackApiKey,
-      apiHost: stored.apiHost || FLIGHTRADAR24_DEFAULT_HOST,
       headers: normalizeFr24Headers(stored.headers)
     };
   } catch (err){
@@ -168,8 +164,6 @@ function getFr24ApiConfig(){
       baseUrl: FLIGHTRADAR24_DEFAULT_BASE,
       apiToken: '',
       apiVersion: FLIGHTRADAR24_DEFAULT_VERSION,
-      apiKey: fallbackApiKey,
-      apiHost: FLIGHTRADAR24_DEFAULT_HOST,
       headers: {}
     };
   }
@@ -205,15 +199,9 @@ function buildFr24Headers(){
       headers[name] = value;
     }
   };
-  if (isOfficialFr24Base(config.baseUrl)){
-    setIfMissing('Authorization', config.apiToken ? `Bearer ${config.apiToken}` : null);
-    setIfMissing('Accept-Version', apiVersionHeader);
-    setIfMissing('API-Version', apiVersionHeader);
-  } else {
-    setIfMissing('X-RapidAPI-Key', config.apiKey);
-    setIfMissing('X-RapidAPI-Host', config.apiHost);
-    setIfMissing('Accept-Version', apiVersionHeader);
-  }
+  setIfMissing('Authorization', config.apiToken ? `Bearer ${config.apiToken}` : null);
+  setIfMissing('Accept-Version', apiVersionHeader);
+  setIfMissing('API-Version', apiVersionHeader);
   return headers;
 }
 
@@ -254,15 +242,11 @@ function populateFr24ConfigForm(){
   const baseInput = document.getElementById('fr24-base-url');
   const tokenInput = document.getElementById('fr24-token');
   const versionInput = document.getElementById('fr24-version');
-  const rapidKeyInput = document.getElementById('fr24-rapid-key');
-  const rapidHostInput = document.getElementById('fr24-rapid-host');
   const extraHeadersInput = document.getElementById('fr24-extra-headers');
   const statusEl = document.getElementById('fr24-status');
   if (baseInput) baseInput.value = config.baseUrl || FLIGHTRADAR24_DEFAULT_BASE;
   if (tokenInput) tokenInput.value = config.apiToken || '';
   if (versionInput) versionInput.value = config.apiVersion || FLIGHTRADAR24_DEFAULT_VERSION;
-  if (rapidKeyInput) rapidKeyInput.value = config.apiKey || '';
-  if (rapidHostInput) rapidHostInput.value = config.apiHost || '';
   if (extraHeadersInput){
     const headers = normalizeFr24Headers(config.headers);
     extraHeadersInput.value = Object.keys(headers).length ? JSON.stringify(headers, null, 2) : '';
@@ -277,8 +261,6 @@ function handleFr24ConfigSave(){
   const baseInput = document.getElementById('fr24-base-url');
   const tokenInput = document.getElementById('fr24-token');
   const versionInput = document.getElementById('fr24-version');
-  const rapidKeyInput = document.getElementById('fr24-rapid-key');
-  const rapidHostInput = document.getElementById('fr24-rapid-host');
   const extraHeadersInput = document.getElementById('fr24-extra-headers');
   let extraHeaders = {};
   if (extraHeadersInput && extraHeadersInput.value.trim()){
@@ -299,14 +281,10 @@ function handleFr24ConfigSave(){
     baseUrl: baseInput?.value ?? FLIGHTRADAR24_DEFAULT_BASE,
     apiToken: tokenInput?.value?.trim() ?? '',
     apiVersion: versionInput?.value?.trim() || FLIGHTRADAR24_DEFAULT_VERSION,
-    apiKey: rapidKeyInput?.value?.trim() ?? '',
-    apiHost: rapidHostInput?.value?.trim() ?? '',
     headers: extraHeaders
   });
   if (statusEl){
-    const authSummary = saved.apiToken
-      ? 'Bearer token'
-      : (saved.apiKey ? 'RapidAPI key' : 'no credentials');
+    const authSummary = saved.apiToken ? 'Bearer token' : 'no credentials';
     statusEl.textContent = `Saved. Using ${saved.baseUrl} with ${authSummary}.`;
   }
 }
@@ -2430,11 +2408,11 @@ async function fetchFr24FlightSummary(registration){
   const headers = buildFr24Headers();
   const hasAuthHeader = Object.keys(headers || {}).some((key) => {
     const lower = key.toLowerCase();
-    return lower === 'authorization' || lower === 'x-rapidapi-key' || lower === 'x-api-key';
+    return lower === 'authorization' || lower === 'x-api-key';
   });
-  const requiresKey = (config.baseUrl || '').toLowerCase().includes('flightradar24');
-  if (requiresKey && !hasAuthHeader){
-    throw new Error('FlightRadar24 API token or key not configured. Add it in the FlightRadar24 API settings.');
+  const requiresAuth = (config.baseUrl || '').toLowerCase().includes('flightradar24');
+  if (requiresAuth && !hasAuthHeader){
+    throw new Error('FlightRadar24 API token not configured. Add it in the FlightRadar24 API settings.');
   }
   const now = new Date();
   const from = new Date(now.getTime() - (FR24_SUMMARY_LOOKBACK_HOURS * 60 * 60 * 1000));
