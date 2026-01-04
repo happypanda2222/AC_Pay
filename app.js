@@ -2441,14 +2441,32 @@ function mapFr24Airport(airport){
       airport.lat,
       airport.latitude,
       airport.lat_deg,
-      airport.airport_lat
+      airport.airport_lat,
+      airport.position?.lat,
+      airport.position?.latitude,
+      airport.position?.lat_deg,
+      airport.location?.lat,
+      airport.location?.latitude,
+      airport.location?.lat_deg,
+      airport.geo?.lat,
+      airport.geo?.latitude
     ),
     lon: pickNumber(
       airport.lon,
       airport.lng,
       airport.longitude,
       airport.long_deg,
-      airport.airport_lon
+      airport.airport_lon,
+      airport.position?.lon,
+      airport.position?.lng,
+      airport.position?.longitude,
+      airport.position?.long_deg,
+      airport.location?.lon,
+      airport.location?.lng,
+      airport.location?.longitude,
+      airport.geo?.lon,
+      airport.geo?.lng,
+      airport.geo?.longitude
     )
   };
 }
@@ -2610,6 +2628,15 @@ function formatFinLandingMinutes(position){
   return `${minutes} min`;
 }
 
+function formatFinLandingLocalTime(position){
+  const eta = Number(position?.eta);
+  if (!Number.isFinite(eta)) return '';
+  const landingDate = new Date(eta * 1000);
+  if (!Number.isFinite(landingDate.getTime())) return '';
+  const timeStr = landingDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return timeStr ? `${timeStr} local` : '';
+}
+
 function normalizeLongitude(lon){
   let value = lon;
   while (value <= -180) value += 360;
@@ -2668,16 +2695,16 @@ function buildFinStaticMapUrl(position, flight){
   const arr = flight?.arrival;
   const hasDep = dep && Number.isFinite(dep.lat) && Number.isFinite(dep.lon);
   const hasArr = arr && Number.isFinite(arr.lat) && Number.isFinite(arr.lon);
-  if (!hasPosition || !hasDep || !hasArr) return '';
+  if (!hasPosition) return '';
   const width = 640;
   const height = 360;
   const centerLon = pickCenterLongitude(
-    [dep.lon, arr.lon, position.lon].filter((lon) => Number.isFinite(lon))
+    [position.lon, dep?.lon, arr?.lon].filter((lon) => Number.isFinite(lon))
   );
-  const depPt = projectPoint(dep.lat, dep.lon, centerLon, width, height);
-  const arrPt = projectPoint(arr.lat, arr.lon, centerLon, width, height);
+  const depPt = hasDep ? projectPoint(dep.lat, dep.lon, centerLon, width, height) : null;
+  const arrPt = hasArr ? projectPoint(arr.lat, arr.lon, centerLon, width, height) : null;
   const posPt = projectPoint(position.lat, position.lon, centerLon, width, height);
-  const path = buildGreatCirclePath(dep, arr, centerLon, width, height);
+  const path = hasDep && hasArr ? buildGreatCirclePath(dep, arr, centerLon, width, height) : '';
   const heading = Number.isFinite(position.heading) ? position.heading : 0;
   const headingRad = (heading - 90) * (Math.PI / 180);
   const planeSize = 11;
@@ -2719,16 +2746,18 @@ function buildFinStaticMapUrl(position, flight){
       </g>
       ${path ? `<path d="${path}" fill="none" stroke="#60a5fa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />` : ''}
       <g fill="#38bdf8" stroke="#0f172a" stroke-width="2">
-        <circle cx="${depPt.x.toFixed(2)}" cy="${depPt.y.toFixed(2)}" r="6" />
-        <circle cx="${arrPt.x.toFixed(2)}" cy="${arrPt.y.toFixed(2)}" r="6" />
+        ${depPt ? `<circle cx="${depPt.x.toFixed(2)}" cy="${depPt.y.toFixed(2)}" r="6" />` : ''}
+        ${arrPt ? `<circle cx="${arrPt.x.toFixed(2)}" cy="${arrPt.y.toFixed(2)}" r="6" />` : ''}
       </g>
       <g fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="${planePath}" fill="#38bdf8" />
       </g>
-      <g font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#e2e8f0" stroke="#0f172a" stroke-width="3" paint-order="stroke">
-        <text x="${depPt.x.toFixed(2)}" y="${(depPt.y - 10).toFixed(2)}" text-anchor="middle">${escapeHtml(formatAirportCode(dep))}</text>
-        <text x="${arrPt.x.toFixed(2)}" y="${(arrPt.y - 10).toFixed(2)}" text-anchor="middle">${escapeHtml(formatAirportCode(arr))}</text>
-      </g>
+      ${(depPt || arrPt) ? `
+        <g font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#e2e8f0" stroke="#0f172a" stroke-width="3" paint-order="stroke">
+          ${depPt ? `<text x="${depPt.x.toFixed(2)}" y="${(depPt.y - 10).toFixed(2)}" text-anchor="middle">${escapeHtml(formatAirportCode(dep))}</text>` : ''}
+          ${arrPt ? `<text x="${arrPt.x.toFixed(2)}" y="${(arrPt.y - 10).toFixed(2)}" text-anchor="middle">${escapeHtml(formatAirportCode(arr))}</text>` : ''}
+        </g>
+      ` : ''}
     </svg>
   `.trim();
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
@@ -2752,25 +2781,48 @@ function renderFinLiveDetails(container, mapContainer, snapshot, positions){
     mapContainer.innerHTML = '';
     return;
   }
+  const landingLocal = formatFinLandingLocalTime(latest);
   const cards = [
     { label: 'Position', value: `${latest.lat.toFixed(2)}, ${latest.lon.toFixed(2)}` },
     { label: 'Altitude', value: formatFinAltitude(latest.altitude) },
     { label: 'Groundspeed', value: formatFinSpeed(latest.speed) },
     { label: 'Heading', value: formatFinHeading(latest.heading) },
-    { label: 'Landing in', value: formatFinLandingMinutes(latest) },
-    { label: 'Updated', value: latest.timestamp ? formatLocalDateTime(latest.timestamp) : '—' }
+    { label: 'Landing in', value: formatFinLandingMinutes(latest), sub: landingLocal },
+    { label: 'Updated', value: latest.timestamp ? formatLocalDateTime(latest.timestamp) : '—', action: 'refresh' }
   ];
   container.innerHTML = `
     ${latest.callsign ? `<div class="muted-note">Callsign ${escapeHtml(latest.callsign)}</div>` : ''}
     <div class="fin-live-grid">
       ${cards.map((card) => `
-        <div class="fin-live-card">
+        <div class="fin-live-card${card.action === 'refresh' ? ' is-actionable' : ''}" ${card.action === 'refresh' ? 'data-fin-live-refresh role="button" tabindex="0" aria-label="Refresh live flight data"' : ''}>
           <div class="metric-label">${escapeHtml(card.label)}</div>
-          <div class="metric-value">${escapeHtml(card.value)}</div>
+          <div class="metric-value">
+            ${escapeHtml(card.value)}
+            ${card.sub ? `<div class="fin-live-sub">${escapeHtml(card.sub)}</div>` : ''}
+          </div>
         </div>
       `).join('')}
     </div>
   `;
+  const refreshCard = container.querySelector('[data-fin-live-refresh]');
+  if (refreshCard){
+    const triggerRefresh = () => {
+      const reg = finHiddenContext.registration;
+      if (!reg) return;
+      const statusNote = document.getElementById('fin-flight-status');
+      if (statusNote) statusNote.textContent = 'Refreshing live data…';
+      const flights = FIN_FLIGHT_CACHE.get(reg)?.flights || [];
+      const snapshot = buildFinLocationSnapshot(flights);
+      loadFinLivePositions(reg, snapshot);
+    };
+    refreshCard.addEventListener('click', triggerRefresh);
+    refreshCard.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' '){
+        event.preventDefault();
+        triggerRefresh();
+      }
+    });
+  }
   const mapUrl = buildFinStaticMapUrl(latest, snapshot?.currentFlight);
   if (mapUrl){
     mapContainer.innerHTML = `<img src="${escapeHtml(mapUrl)}" alt="Latest position map">`;
@@ -3784,8 +3836,16 @@ async function loadFinFlightDetails(registration, { forceRefresh = false } = {})
     if (statusEl) statusEl.textContent = 'Add a registration to track this fin.';
     return;
   }
+  const refreshLiveFromCache = async (snapshot) => {
+    updateFinFlightPage(normalizedReg);
+    const liveCache = FIN_LIVE_POSITION_CACHE.get(normalizedReg);
+    if (snapshot.inflight && !(liveCache?.positions?.length)){
+      await loadFinLivePositions(normalizedReg, snapshot);
+    }
+  };
   if (cachedFlights.length && !forceRefresh){
     if (statusEl) statusEl.textContent = 'Showing cached data.';
+    await refreshLiveFromCache(cachedSnapshot);
     return;
   }
   if (statusEl) statusEl.textContent = 'Fetching live data…';
