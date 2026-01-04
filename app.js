@@ -4200,28 +4200,50 @@ function tieYearStepFromStepModernVO(){
 function escapeHtml(str=''){
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+function shouldForceProxy(url){
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    return host === 'aviationweather.gov';
+  } catch (err){
+    return false;
+  }
+}
+function buildCorsTargets(url, forceProxy){
+  const unique = [];
+  const add = (target) => {
+    if (!target) return;
+    if (unique.includes(target)) return;
+    unique.push(target);
+  };
+  const alreadyProxied = CORS_PROXY_PREFIXES.some(prefix => url.startsWith(prefix));
+  if (!forceProxy || alreadyProxied) add(url);
+  if (!alreadyProxied){
+    for (const buildProxyUrl of CORS_PROXY_BUILDERS){
+      add(buildProxyUrl(url));
+    }
+    if (forceProxy) add(url);
+  }
+  return unique;
+}
 async function fetchJsonWithCorsFallback(url, cache='no-store'){
-  const attempt = async (target, note) => {
+  const attempt = async (target) => {
     const resp = await fetch(target, { cache, mode:'cors' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     return resp.json();
   };
-  try {
-    return await attempt(url, 'direct');
-  } catch(err){
-    console.warn(`Direct fetch failed for ${url}; retrying via proxy`, err);
-    if (CORS_PROXY_PREFIXES.some(prefix => url.startsWith(prefix))) throw err;
-    let lastErr = err;
-    for (const buildProxyUrl of CORS_PROXY_BUILDERS){
-      const proxyUrl = buildProxyUrl(url);
-      try {
-        return await attempt(proxyUrl, 'proxy');
-      } catch(proxyErr){
-        lastErr = proxyErr;
-      }
+  const forceProxy = shouldForceProxy(url);
+  const targets = buildCorsTargets(url, forceProxy);
+  let lastErr = null;
+  for (const target of targets){
+    try {
+      return await attempt(target);
+    } catch(err){
+      lastErr = err;
+      const note = target === url ? 'direct' : 'proxy';
+      console.warn(`${note} fetch failed for ${url} via ${target}`, err);
     }
-    throw lastErr;
   }
+  throw lastErr;
 }
 async function fetchTextWithCorsFallback(url, cache='no-store'){
   const attempt = async (target) => {
@@ -4229,22 +4251,19 @@ async function fetchTextWithCorsFallback(url, cache='no-store'){
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     return resp.text();
   };
-  try {
-    return await attempt(url);
-  } catch(err){
-    console.warn(`Direct text fetch failed for ${url}; retrying via proxy`, err);
-    if (CORS_PROXY_PREFIXES.some(prefix => url.startsWith(prefix))) throw err;
-    let lastErr = err;
-    for (const buildProxyUrl of CORS_PROXY_BUILDERS){
-      const proxyUrl = buildProxyUrl(url);
-      try {
-        return await attempt(proxyUrl);
-      } catch(proxyErr){
-        lastErr = proxyErr;
-      }
+  const forceProxy = shouldForceProxy(url);
+  const targets = buildCorsTargets(url, forceProxy);
+  let lastErr = null;
+  for (const target of targets){
+    try {
+      return await attempt(target);
+    } catch(err){
+      lastErr = err;
+      const note = target === url ? 'direct' : 'proxy';
+      console.warn(`${note} text fetch failed for ${url} via ${target}`, err);
     }
-    throw lastErr;
   }
+  throw lastErr;
 }
 function extractVisibilityToken(tokens){
   if (!Array.isArray(tokens)) return null;
