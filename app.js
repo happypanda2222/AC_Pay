@@ -79,6 +79,10 @@ function normalizeProxyTarget(url){
 }
 const CORS_PROXY_FALLBACKS = [
   { label: 'direct', build: (url) => normalizeProxyTarget(url), allowsAuth: true },
+  { label: 'corsproxy.io', build: (url) => {
+    const safeUrl = normalizeProxyTarget(url);
+    return safeUrl.startsWith('https://corsproxy.io/?') ? safeUrl : `https://corsproxy.io/?${safeUrl}`;
+  }, allowsAuth: true },
   { label: 'isomorphic', build: (url) => {
     const safeUrl = normalizeProxyTarget(url);
     return safeUrl.startsWith(CORS_PROXY) ? safeUrl : `${CORS_PROXY}${safeUrl}`;
@@ -86,11 +90,7 @@ const CORS_PROXY_FALLBACKS = [
   { label: 'allorigins', build: (url) => {
     const safeUrl = normalizeProxyTarget(url);
     return safeUrl ? `https://api.allorigins.win/raw?url=${encodeURIComponent(safeUrl)}` : '';
-  }, allowsAuth: true },
-  { label: 'corsproxy.io', build: (url) => {
-    const safeUrl = normalizeProxyTarget(url);
-    return safeUrl.startsWith('https://corsproxy.io/?') ? safeUrl : `https://corsproxy.io/?${safeUrl}`;
-  }, allowsAuth: false }
+  }, allowsAuth: true }
 ];
 const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
