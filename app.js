@@ -2469,7 +2469,7 @@ function renderFinSummaryRow(flight){
 
 function cacheFinFlights(registration, flights){
   const sorted = sortFlightsByRecency(flights);
-  finFlightCache.set(registration, { flights: sorted, fetchedAt: Date.now() });
+  FIN_FLIGHT_CACHE.set(registration, { flights: sorted, fetchedAt: Date.now() });
   return sorted;
 }
 
@@ -2512,7 +2512,7 @@ function updateFinFlightPage(registration){
   if (finHiddenContext.page !== 'flight') return;
   const normalizedReg = normalizeRegistration(registration);
   if (!normalizedReg || finHiddenContext.registration !== normalizedReg) return;
-  const cache = finFlightCache.get(normalizedReg);
+  const cache = FIN_FLIGHT_CACHE.get(normalizedReg);
   const flights = cache?.flights || [];
   const snapshot = buildFinLocationSnapshot(flights);
   const currentEl = document.getElementById('fin-flight-current');
@@ -2542,7 +2542,7 @@ function setFinAirportCodeMode(mode){
   refreshFinCodeToggleButtons();
   document.querySelectorAll('[data-fin-location]').forEach((card) => {
     const reg = card.dataset.finRegistration || '';
-    const flights = reg ? finFlightCache.get(reg)?.flights || [] : [];
+    const flights = reg ? FIN_FLIGHT_CACHE.get(reg)?.flights || [] : [];
     if (flights.length){
       const snapshot = buildFinLocationSnapshot(flights);
       renderFinLocationPreview(card, snapshot, reg);
@@ -2615,7 +2615,7 @@ async function hydrateFinLocation(outEl, fin, reg){
   summaryEl.dataset.finLocationRequest = requestId;
   summaryEl.dataset.finRegistration = normalizedReg || '';
   summaryEl.dataset.finFin = fin;
-  const cachedFlights = normalizedReg ? finFlightCache.get(normalizedReg)?.flights || [] : [];
+  const cachedFlights = normalizedReg ? FIN_FLIGHT_CACHE.get(normalizedReg)?.flights || [] : [];
   if (cachedFlights.length){
     const cachedSnapshot = buildFinLocationSnapshot(cachedFlights);
     renderFinLocationPreview(summaryEl, cachedSnapshot, normalizedReg);
@@ -3241,7 +3241,7 @@ async function loadFinFlightDetails(registration, { forceRefresh = false } = {})
   const statusEl = document.getElementById('fin-flight-status');
   const currentEl = document.getElementById('fin-flight-current');
   const recentEl = document.getElementById('fin-flight-recent');
-  const cachedFlights = normalizedReg ? finFlightCache.get(normalizedReg)?.flights || [] : [];
+  const cachedFlights = normalizedReg ? FIN_FLIGHT_CACHE.get(normalizedReg)?.flights || [] : [];
   const cachedSnapshot = buildFinLocationSnapshot(cachedFlights);
   renderFinCurrentFlight(currentEl, cachedSnapshot);
   renderFinFlightList(recentEl, cachedSnapshot.flights);
