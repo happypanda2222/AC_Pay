@@ -209,7 +209,6 @@ function buildFr24Headers(){
     setIfMissing('Authorization', config.apiToken ? `Bearer ${config.apiToken}` : null);
     setIfMissing('Accept-Version', apiVersionHeader);
     setIfMissing('API-Version', apiVersionHeader);
-    setIfMissing('API Version', apiVersionHeader);
   } else {
     setIfMissing('X-RapidAPI-Key', config.apiKey);
     setIfMissing('X-RapidAPI-Host', config.apiHost);
