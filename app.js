@@ -83,6 +83,7 @@ const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
 const FLIGHTRADAR24_DEFAULT_BASE = 'https://fr24api.flightradar24.com/api';
 const FLIGHTRADAR24_DEFAULT_VERSION = 'v1';
 const FIN_FLIGHT_CACHE = new Map();
+const FIN_LIVE_POSITION_CACHE = new Map();
 let finAirportCodeMode = 'icao';
 const finHiddenContext = { page: null, fin: null, registration: '' };
 
@@ -2508,6 +2509,114 @@ function renderFinCurrentFlight(container, snapshot){
   `;
 }
 
+function formatFinAltitude(altitude){
+  if (!Number.isFinite(altitude)) return '—';
+  return `${Math.round(altitude).toLocaleString()} ft`;
+}
+
+function formatFinSpeed(speed){
+  if (!Number.isFinite(speed)) return '—';
+  return `${Math.round(speed)} kts`;
+}
+
+function formatFinHeading(heading){
+  if (!Number.isFinite(heading)) return '—';
+  return `${Math.round(heading)}°`;
+}
+
+function formatFinLandingMinutes(position){
+  const eta = Number(position?.eta);
+  if (!Number.isFinite(eta)) return '—';
+  const remainingMs = (eta * 1000) - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return '—';
+  const minutes = Math.max(1, Math.round(remainingMs / 60000));
+  return `${minutes} min`;
+}
+
+function buildFinStaticMapUrl(position){
+  if (!position || !Number.isFinite(position.lat) || !Number.isFinite(position.lon)) return '';
+  const lat = Math.max(-85, Math.min(85, position.lat));
+  const lon = Math.max(-180, Math.min(180, position.lon));
+  const marker = `${lat},${lon},lightblue1`;
+  return `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lon}&zoom=5&size=640x360&maptype=mapnik&markers=${marker}`;
+}
+
+function renderFinLiveDetails(container, mapContainer, snapshot, positions){
+  if (!container || !mapContainer){
+    return;
+  }
+  const inflight = snapshot?.inflight;
+  container.classList.toggle('hidden', !inflight);
+  mapContainer.classList.toggle('hidden', !inflight);
+  if (!inflight){
+    container.innerHTML = '';
+    mapContainer.innerHTML = '';
+    return;
+  }
+  const latest = Array.isArray(positions) ? positions.find((p) => p) : null;
+  if (!latest){
+    container.innerHTML = '<div class="muted-note">Fetching live position…</div>';
+    mapContainer.innerHTML = '';
+    return;
+  }
+  const cards = [
+    { label: 'Position', value: `${latest.lat.toFixed(2)}, ${latest.lon.toFixed(2)}` },
+    { label: 'Altitude', value: formatFinAltitude(latest.altitude) },
+    { label: 'Groundspeed', value: formatFinSpeed(latest.speed) },
+    { label: 'Heading', value: formatFinHeading(latest.heading) },
+    { label: 'Landing in', value: formatFinLandingMinutes(latest) },
+    { label: 'Updated', value: latest.timestamp ? formatLocalDateTime(latest.timestamp) : '—' }
+  ];
+  container.innerHTML = `
+    ${latest.callsign ? `<div class="muted-note">Callsign ${escapeHtml(latest.callsign)}</div>` : ''}
+    <div class="fin-live-grid">
+      ${cards.map((card) => `
+        <div class="fin-live-card">
+          <div class="metric-label">${escapeHtml(card.label)}</div>
+          <div class="metric-value">${escapeHtml(card.value)}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  const mapUrl = buildFinStaticMapUrl(latest);
+  if (mapUrl){
+    mapContainer.innerHTML = `<img src="${escapeHtml(mapUrl)}" alt="Latest position map">`;
+  } else {
+    mapContainer.innerHTML = '';
+  }
+}
+
+async function loadFinLivePositions(registration, snapshot){
+  const normalizedReg = normalizeRegistration(registration);
+  const liveEl = document.getElementById('fin-flight-live');
+  const mapEl = document.getElementById('fin-flight-map');
+  if (liveEl) liveEl.innerHTML = '<div class="muted-note">Fetching live position…</div>';
+  if (!snapshot?.inflight){
+    renderFinLiveDetails(liveEl, mapEl, snapshot, []);
+    return;
+  }
+  try {
+    const { positions } = await fetchFr24LivePositions(normalizedReg);
+    renderFinLiveDetails(liveEl, mapEl, snapshot, positions);
+    const locationCards = document.querySelectorAll('[data-fin-location]');
+    locationCards.forEach((card) => {
+      if (card.dataset.finRegistration === normalizedReg){
+        const flights = FIN_FLIGHT_CACHE.get(normalizedReg)?.flights || [];
+        const snap = buildFinLocationSnapshot(flights);
+        renderFinLocationPreview(card, snap, normalizedReg);
+      }
+    });
+  } catch (err){
+    if (liveEl){
+      const friendly = err?.message && err.message !== 'Failed to fetch'
+        ? err.message
+        : 'Live position unavailable right now.';
+      liveEl.innerHTML = `<div class="muted-note">${escapeHtml(friendly)}</div>`;
+    }
+    if (mapEl) mapEl.classList.add('hidden');
+  }
+}
+
 function updateFinFlightPage(registration){
   if (finHiddenContext.page !== 'flight') return;
   const normalizedReg = normalizeRegistration(registration);
@@ -2518,8 +2627,15 @@ function updateFinFlightPage(registration){
   const currentEl = document.getElementById('fin-flight-current');
   const recentEl = document.getElementById('fin-flight-recent');
   const statusEl = document.getElementById('fin-flight-status');
+  const liveEl = document.getElementById('fin-flight-live');
+  const mapEl = document.getElementById('fin-flight-map');
   renderFinCurrentFlight(currentEl, snapshot);
   renderFinFlightList(recentEl, snapshot.flights);
+  const liveCache = FIN_LIVE_POSITION_CACHE.get(normalizedReg);
+  renderFinLiveDetails(liveEl, mapEl, snapshot, liveCache?.positions || []);
+  if (snapshot.inflight && !(liveCache?.positions?.length)){
+    loadFinLivePositions(normalizedReg, snapshot);
+  }
   if (statusEl){
     const fetchedText = cache?.fetchedAt ? `Updated ${formatLocalDateTime(Math.round(cache.fetchedAt / 1000))}.` : '';
     const tail = flights.length ? fetchedText : 'No live data available.';
@@ -2529,11 +2645,15 @@ function updateFinFlightPage(registration){
 }
 
 function refreshFinCodeToggleButtons(){
-  document.querySelectorAll('[data-fin-code-mode]').forEach((btn) => {
-    const mode = btn.dataset.finCodeMode;
-    const active = mode === finAirportCodeMode;
-    btn.classList.toggle('active', active);
-    btn.setAttribute('aria-pressed', String(active));
+  const toggle = document.getElementById('fin-code-switch');
+  const isIata = finAirportCodeMode === 'iata';
+  if (toggle){
+    toggle.classList.toggle('is-iata', isIata);
+    toggle.setAttribute('aria-pressed', String(isIata));
+    toggle.setAttribute('aria-label', isIata ? 'Airport codes shown as IATA' : 'Airport codes shown as ICAO');
+  }
+  document.querySelectorAll('[data-fin-code-label]').forEach((label) => {
+    label.classList.toggle('active', label.dataset.finCodeLabel === finAirportCodeMode);
   });
 }
 
@@ -2543,10 +2663,8 @@ function setFinAirportCodeMode(mode){
   document.querySelectorAll('[data-fin-location]').forEach((card) => {
     const reg = card.dataset.finRegistration || '';
     const flights = reg ? FIN_FLIGHT_CACHE.get(reg)?.flights || [] : [];
-    if (flights.length){
-      const snapshot = buildFinLocationSnapshot(flights);
-      renderFinLocationPreview(card, snapshot, reg);
-    }
+    const snapshot = buildFinLocationSnapshot(flights);
+    renderFinLocationPreview(card, snapshot, reg);
   });
   if (finHiddenContext.page === 'flight'){
     updateFinFlightPage(finHiddenContext.registration);
@@ -2582,6 +2700,70 @@ async function fetchFr24FlightSummary(registration){
   return { flights, registration: normalizedReg };
 }
 
+function mapFr24LivePosition(entry){
+  if (!entry || typeof entry !== 'object') return null;
+  const lat = Number(entry.lat ?? entry.latitude ?? entry.lat_deg ?? entry.position?.lat ?? entry.position?.latitude);
+  const lon = Number(entry.lon ?? entry.lng ?? entry.longitude ?? entry.long_deg ?? entry.position?.lon ?? entry.position?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const altitude = Number(entry.alt ?? entry.altitude ?? entry.baro_altitude ?? entry.alt_baro ?? entry.altitude_baro);
+  const speed = Number(entry.gs ?? entry.ground_speed ?? entry.speed ?? entry.velocity ?? entry.groundspeed);
+  const heading = Number(entry.track ?? entry.heading ?? entry.direction ?? entry.bearing);
+  const timestamp = normalizeFr24Timestamp(entry.timestamp ?? entry.time ?? entry.last_position ?? entry.last_update);
+  const eta = normalizeFr24Timestamp(
+    entry.eta
+    ?? entry.estimated_arrival
+    ?? entry.estimated_arrival_utc
+    ?? entry.estimated_arrival_time
+    ?? entry.eta_timestamp
+    ?? entry.eta_utc
+    ?? entry.est_arrival
+    ?? entry.arrival_time
+    ?? entry.arrival?.eta
+    ?? entry.arrival?.estimated
+  );
+  const callsign = typeof entry.callsign === 'string' ? entry.callsign : (typeof entry.call_sign === 'string' ? entry.call_sign : '');
+  return {
+    lat,
+    lon,
+    altitude: Number.isFinite(altitude) ? altitude : null,
+    speed: Number.isFinite(speed) ? speed : null,
+    heading: Number.isFinite(heading) ? heading : null,
+    timestamp: Number.isFinite(timestamp) ? timestamp : null,
+    eta: Number.isFinite(eta) ? eta : null,
+    callsign
+  };
+}
+
+async function fetchFr24LivePositions(registration){
+  const normalizedReg = normalizeRegistration(registration);
+  if (!normalizedReg) throw new Error('Enter a registration to fetch live positions.');
+  const config = getFr24ApiConfig();
+  const headers = buildFr24Headers();
+  const hasAuthHeader = Object.keys(headers || {}).some((key) => {
+    const lower = key.toLowerCase();
+    return lower === 'authorization' || lower === 'x-api-key';
+  });
+  const requiresAuth = isOfficialFr24Base(config.baseUrl);
+  if (requiresAuth && !hasAuthHeader){
+    throw new Error('FlightRadar24 API token not configured. Add it in the FlightRadar24 API settings.');
+  }
+  const url = buildFr24Url('live/flight-positions/full', { registration: normalizedReg });
+  const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+  if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
+  const json = await resp.json();
+  const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+  const positions = rows.map(mapFr24LivePosition).filter(Boolean);
+  FIN_LIVE_POSITION_CACHE.set(normalizedReg, { positions, fetchedAt: Date.now() });
+  return { positions, registration: normalizedReg };
+}
+
+function getLatestLivePosition(registration){
+  const cache = FIN_LIVE_POSITION_CACHE.get(normalizeRegistration(registration));
+  const positions = cache?.positions;
+  if (!Array.isArray(positions) || !positions.length) return null;
+  return positions.find((p) => p) || null;
+}
+
 function renderFinLocationPreview(summaryEl, snapshot, registration){
   const statusEl = summaryEl.querySelector('[data-fin-location-status]');
   const displayEl = summaryEl.querySelector('[data-fin-location-display]');
@@ -2596,7 +2778,10 @@ function renderFinLocationPreview(summaryEl, snapshot, registration){
     displayEl.textContent = 'In Flight';
     const route = formatFinRoute(snapshot.currentFlight);
     const meta = snapshot.currentFlight?.flightNumber ? ` • ${snapshot.currentFlight.flightNumber}` : '';
-    statusEl.textContent = `${route}${meta}`;
+    const livePosition = getLatestLivePosition(registration);
+    const landing = formatFinLandingMinutes(livePosition);
+    const landingText = landing !== '—' ? ` • Landing in ${landing}` : '';
+    statusEl.textContent = `${route}${meta}${landingText}`;
     return;
   }
   const code = formatAirportCode(snapshot.airport, finAirportCodeMode);
@@ -2632,6 +2817,15 @@ async function hydrateFinLocation(outEl, fin, reg){
     const sorted = cacheFinFlights(registration, flights);
     const snapshot = buildFinLocationSnapshot(sorted);
     renderFinLocationPreview(summaryEl, snapshot, registration);
+    if (snapshot.inflight){
+      try {
+        await fetchFr24LivePositions(registration);
+        const refreshedSnapshot = buildFinLocationSnapshot(sorted);
+        renderFinLocationPreview(summaryEl, refreshedSnapshot, registration);
+      } catch (liveErr){
+        console.warn('Live position unavailable for fin preview', liveErr);
+      }
+    }
     updateFinFlightPage(registration);
   } catch (err){
     if (summaryEl.dataset.finLocationRequest !== requestId) return;
@@ -3258,6 +3452,10 @@ async function loadFinFlightDetails(registration, { forceRefresh = false } = {})
     const { flights, registration: regOut } = await fetchFr24FlightSummary(normalizedReg);
     cacheFinFlights(regOut, flights);
     updateFinFlightPage(regOut);
+    const snapshot = buildFinLocationSnapshot(flights);
+    if (snapshot.inflight){
+      await loadFinLivePositions(regOut, snapshot);
+    }
   } catch (err){
     if (statusEl){
       const friendly = err?.message && err.message !== 'Failed to fetch'
@@ -6657,8 +6855,18 @@ function init(){
   document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
   document.getElementById('modern-fin-api-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); openFinHiddenPage('api'); setModernPrimaryTab('modern-fin'); });
   document.getElementById('fin-hidden-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); closeFinHiddenPage(); setModernPrimaryTab('modern-fin'); });
-  document.querySelectorAll('[data-fin-code-mode]').forEach((btn) => {
-    btn.addEventListener('click', (e) => { hapticTap(e.currentTarget); setFinAirportCodeMode(btn.dataset.finCodeMode); });
+  const finCodeSwitch = document.getElementById('fin-code-switch');
+  if (finCodeSwitch){
+    finCodeSwitch.addEventListener('click', (e) => {
+      hapticTap(e.currentTarget);
+      setFinAirportCodeMode(finAirportCodeMode === 'icao' ? 'iata' : 'icao');
+    });
+  }
+  document.querySelectorAll('[data-fin-code-label]').forEach((label) => {
+    label.addEventListener('click', (e) => {
+      hapticTap(e.currentTarget);
+      setFinAirportCodeMode(label.dataset.finCodeLabel === 'iata' ? 'iata' : 'icao');
+    });
   });
   document.getElementById('fr24-save')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); handleFr24ConfigSave(); });
   const heroBanner = document.getElementById('modern-hero-banner');

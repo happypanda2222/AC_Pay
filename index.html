@@ -344,13 +344,26 @@
     .fin-hidden-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
     .fin-hidden-title{font-size:16px;font-weight:800}
     .fin-hidden-body{display:flex;flex-direction:column;gap:12px}
-    .fin-code-toggle{display:flex;gap:8px}
-    .fin-code-toggle button{flex:1;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt);border-radius:12px;padding:10px;font-weight:700;cursor:pointer}
-    .fin-code-toggle button.active{background:var(--acc);color:#fff;border-color:transparent}
+    .fin-code-toggle{display:flex;align-items:center;gap:8px}
+    .fin-code-label{font-size:12px;color:var(--muted);font-weight:700}
+    .fin-code-label.active{color:var(--txt)}
+    .fin-code-switch{border:1px solid #2a2f3b;background:#0f1218;border-radius:999px;padding:4px;position:relative;width:64px;height:32px;display:inline-flex;align-items:center;transition:background .2s ease,border-color .2s ease}
+    .fin-code-switch .fin-code-thumb{width:24px;height:24px;border-radius:50%;background:var(--acc);box-shadow:0 4px 10px rgba(0,0,0,0.35);transform:translateX(0);transition:transform .2s ease}
+    .fin-code-switch.is-iata .fin-code-thumb{transform:translateX(28px)}
+    .fin-code-switch:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
     .fin-flight-row{border:1px solid #1f2633;border-radius:12px;padding:10px;background:#0b121c}
     .fin-flight-row .metric-label{margin-bottom:4px}
     .fin-flight-meta{display:flex;flex-wrap:wrap;gap:8px;color:var(--muted);font-size:12px}
     .fin-flight-times{color:var(--muted);font-size:12px;margin-top:4px}
+    .fin-live-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:8px}
+    .fin-live-card{border:1px solid #1f2633;border-radius:12px;padding:10px;background:#0f1218}
+    .fin-live-meta{color:var(--muted);font-size:12px;display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+    .fin-live-map img{width:100%;border-radius:12px;border:1px solid #1f2633;box-shadow:0 8px 16px rgba(0,0,0,0.3);display:block}
+    .fin-live-map{margin-top:8px}
+    .fin-location-card{color:#e2e8f0}
+    .fin-location-value{color:#e2e8f0}
+    .fin-location-meta{color:#cbd5e1}
+    .fin-location-meta .dot{background:#94a3b8}
     #modern-fin-hidden>.modern-panel{margin-top:0}
     .btn-secondary{background:#0f1218;color:var(--txt);border:1px solid #2a2f3b}
     .btn-danger{background:#ff453a;color:#fff}
@@ -1025,10 +1038,15 @@
             <div data-fin-hidden-page="flight" class="hidden">
               <h3>Live flight</h3>
               <div class="fin-code-toggle" role="group" aria-label="Airport code format">
-                <button type="button" data-fin-code-mode="icao" class="active">ICAO</button>
-                <button type="button" data-fin-code-mode="iata">IATA</button>
+                <span class="fin-code-label" data-fin-code-label="icao">ICAO</span>
+                <button type="button" id="fin-code-switch" class="fin-code-switch" aria-pressed="false" aria-label="Toggle airport code format">
+                  <span class="fin-code-thumb" aria-hidden="true"></span>
+                </button>
+                <span class="fin-code-label" data-fin-code-label="iata">IATA</span>
               </div>
               <div class="fin-flight-row" id="fin-flight-current"></div>
+              <div id="fin-flight-live" class="fin-live-grid hidden" aria-live="polite"></div>
+              <div id="fin-flight-map" class="fin-live-map hidden"></div>
               <div id="fin-flight-recent" class="fin-summary-list"></div>
               <div class="muted-note" id="fin-flight-status" aria-live="polite"></div>
             </div>
