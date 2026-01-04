@@ -72,6 +72,12 @@ const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
 const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const CORS_PROXY = 'https://cors.isomorphic-git.org/';
+const CORS_PROXY_FALLBACKS = [
+  { label: 'direct', build: (url) => url },
+  { label: 'isomorphic', build: (url) => url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}` },
+  { label: 'corsproxy.io', build: (url) => url.startsWith('https://corsproxy.io/?') ? url : `https://corsproxy.io/?${encodeURIComponent(url)}` },
+  { label: 'allorigins', build: (url) => url.startsWith('https://api.allorigins.win/raw?url=') ? url : `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` }
+];
 const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
 const FLIGHTRADAR24_DEFAULT_BASE = 'https://fr24api.flightradar24.com/api';
@@ -123,22 +129,23 @@ function normalizeRegistration(reg){
 }
 
 async function fetchWithCorsFallback(url, options = {}){
-  const proxiedUrl = url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}`;
-  const attempt = async (target) => {
-    const resp = await fetch(target, options);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return resp;
-  };
-  try {
-    return await attempt(url);
-  } catch (err){
-    if (url.startsWith(CORS_PROXY)) throw new Error('Live data temporarily unavailable. Please try again later.');
+  const trimmedUrl = String(url || '').trim();
+  const attempts = [];
+  const seen = new Set();
+  for (const proxy of CORS_PROXY_FALLBACKS){
+    const target = proxy.build(trimmedUrl);
+    if (!target || seen.has(target)) continue;
+    seen.add(target);
     try {
-      return await attempt(proxiedUrl);
-    } catch (proxyErr){
-      throw new Error('Live data temporarily unavailable. Please try again later.');
+      const resp = await fetch(target, options);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return resp;
+    } catch (err){
+      attempts.push(`${proxy.label}: ${err?.message || err}`);
     }
   }
+  const detail = attempts.length ? ` (${attempts.join(' | ')})` : '';
+  throw new Error(`Live data temporarily unavailable. Please try again later.${detail}`);
 }
 
 function getFr24ApiConfig(){
