@@ -2615,13 +2615,32 @@ function formatFinSpeed(speed){
   return `${Math.round(speed)} kts`;
 }
 
+function formatFinVerticalSpeed(rate){
+  if (!Number.isFinite(rate)) return '—';
+  const rounded = Math.round(rate);
+  if (rounded === 0) return '0 fpm';
+  const symbol = rounded > 0 ? '↑' : '↓';
+  return `${symbol} ${Math.abs(rounded).toLocaleString()} fpm`;
+}
+
 function formatFinHeading(heading){
   if (!Number.isFinite(heading)) return '—';
   return `${Math.round(heading)}°`;
 }
 
-function formatFinLandingMinutes(position){
+function pickFinLandingEpoch(position, flight){
   const eta = Number(position?.eta);
+  const arrival = Number(flight?.arrivalTime);
+  const nowSec = Date.now() / 1000;
+  const candidates = [eta, arrival].filter((value) => Number.isFinite(value));
+  if (!candidates.length) return null;
+  const future = candidates.filter((value) => value > (nowSec - 300));
+  if (!future.length) return null;
+  return Math.min(...future);
+}
+
+function formatFinLandingMinutes(position, flight){
+  const eta = pickFinLandingEpoch(position, flight);
   if (!Number.isFinite(eta)) return '—';
   const remainingMs = (eta * 1000) - Date.now();
   if (!Number.isFinite(remainingMs) || remainingMs <= 0) return '—';
@@ -2629,12 +2648,12 @@ function formatFinLandingMinutes(position){
   return `${minutes} min`;
 }
 
-function formatFinLandingLocalTime(position){
-  const eta = Number(position?.eta);
+function formatFinLandingLocalTime(position, flight){
+  const eta = pickFinLandingEpoch(position, flight);
   if (!Number.isFinite(eta)) return '';
   const landingDate = new Date(eta * 1000);
   if (!Number.isFinite(landingDate.getTime())) return '';
-  const timeStr = landingDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = landingDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   return timeStr ? `${timeStr} local` : '';
 }
 
@@ -2690,6 +2709,79 @@ function buildGreatCirclePath(from, to, centerLon, width, height){
   return commands.join(' ');
 }
 
+const BASIC_BASEMAP_SHAPES = [
+  {
+    id: 'north-america',
+    coords: [
+      { lat: 72, lon: -168 },
+      { lat: 15, lon: -168 },
+      { lat: 8, lon: -140 },
+      { lat: 8, lon: -110 },
+      { lat: 18, lon: -96 },
+      { lat: 25, lon: -82 },
+      { lat: 32, lon: -78 },
+      { lat: 45, lon: -64 },
+      { lat: 60, lon: -60 },
+      { lat: 72, lon: -82 }
+    ]
+  },
+  {
+    id: 'south-america',
+    coords: [
+      { lat: 12, lon: -82 },
+      { lat: -8, lon: -84 },
+      { lat: -30, lon: -74 },
+      { lat: -56, lon: -70 },
+      { lat: -56, lon: -36 },
+      { lat: -10, lon: -34 },
+      { lat: 12, lon: -54 }
+    ]
+  },
+  {
+    id: 'europe-asia-africa',
+    coords: [
+      { lat: 70, lon: -20 },
+      { lat: 72, lon: 30 },
+      { lat: 68, lon: 70 },
+      { lat: 50, lon: 140 },
+      { lat: 35, lon: 140 },
+      { lat: 12, lon: 105 },
+      { lat: 12, lon: 50 },
+      { lat: -35, lon: 50 },
+      { lat: -35, lon: -20 },
+      { lat: 10, lon: -20 }
+    ]
+  },
+  {
+    id: 'australia',
+    coords: [
+      { lat: -10, lon: 110 },
+      { lat: -10, lon: 155 },
+      { lat: -45, lon: 155 },
+      { lat: -45, lon: 110 }
+    ]
+  },
+  {
+    id: 'greenland',
+    coords: [
+      { lat: 83, lon: -73 },
+      { lat: 83, lon: -17 },
+      { lat: 70, lon: -17 },
+      { lat: 60, lon: -45 },
+      { lat: 70, lon: -58 }
+    ]
+  }
+];
+
+function buildPolygonPath(coords, centerLon, width, height){
+  const projected = (coords || [])
+    .map((pt) => (pt ? projectPoint(pt.lat, pt.lon, centerLon, width, height) : null))
+    .filter((pt) => pt && Number.isFinite(pt.x) && Number.isFinite(pt.y));
+  if (!projected.length) return '';
+  const path = projected.map((pt, idx) => `${idx === 0 ? 'M' : 'L'}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`).join(' ');
+  return `${path} Z`;
+}
+
 function buildFinStaticMapUrl(position, flight){
   const hasPosition = position && Number.isFinite(position.lat) && Number.isFinite(position.lon);
   const dep = flight?.departure;
@@ -2735,6 +2827,12 @@ function buildFinStaticMapUrl(position, flight){
         </linearGradient>
       </defs>
       <rect width="${width}" height="${height}" fill="url(#fin-sky)" />
+      <g fill="#0f1b2d" stroke="#1f2937" stroke-width="1" opacity="0.6">
+        ${BASIC_BASEMAP_SHAPES.map((shape) => {
+          const d = buildPolygonPath(shape.coords, centerLon, width, height);
+          return d ? `<path d="${d}" />` : '';
+        }).join('')}
+      </g>
       <g stroke="#1f2937" stroke-width="1" opacity="0.35">
         ${[-60, -30, 0, 30, 60].map((lat) => {
           const y = projectPoint(lat, centerLon, centerLon, width, height).y;
@@ -2782,13 +2880,13 @@ function renderFinLiveDetails(container, mapContainer, snapshot, positions){
     mapContainer.innerHTML = '';
     return;
   }
-  const landingLocal = formatFinLandingLocalTime(latest);
+  const landingLocal = formatFinLandingLocalTime(latest, snapshot?.currentFlight);
   const cards = [
-    { label: 'Position', value: `${latest.lat.toFixed(2)}, ${latest.lon.toFixed(2)}` },
     { label: 'Altitude', value: formatFinAltitude(latest.altitude) },
+    { label: 'Vertical speed', value: formatFinVerticalSpeed(latest.verticalRate) },
     { label: 'Groundspeed', value: formatFinSpeed(latest.speed) },
     { label: 'Heading', value: formatFinHeading(latest.heading) },
-    { label: 'Landing in', value: formatFinLandingMinutes(latest), sub: landingLocal },
+    { label: 'Landing in', value: formatFinLandingMinutes(latest, snapshot?.currentFlight), sub: landingLocal },
     { label: 'Updated', value: latest.timestamp ? formatLocalDateTime(latest.timestamp) : '—', action: 'refresh' }
   ];
   container.innerHTML = `
@@ -3007,6 +3105,14 @@ function mapFr24LivePosition(entry){
     entry.dir,
     entry.course
   );
+  const verticalRate = pickNumber(
+    entry.vspeed,
+    entry.vertical_speed,
+    entry.verticalRate,
+    entry.vert_rate,
+    entry.rate_vertical,
+    entry.rate
+  );
   const timestamp = parseLiveTime(
     entry.timestamp
     ?? entry.time
@@ -3031,14 +3137,15 @@ function mapFr24LivePosition(entry){
   const callsign = typeof entry.callsign === 'string'
     ? entry.callsign
     : (typeof entry.call_sign === 'string'
-      ? entry.call_sign
-      : (typeof entry.flight === 'string' ? entry.flight : ''));
+    ? entry.call_sign
+    : (typeof entry.flight === 'string' ? entry.flight : ''));
   return {
     lat,
     lon,
     altitude: Number.isFinite(altitude) ? altitude : null,
     speed: Number.isFinite(speed) ? speed : null,
     heading: Number.isFinite(heading) ? heading : null,
+    verticalRate: Number.isFinite(verticalRate) ? verticalRate : null,
     timestamp,
     eta,
     callsign
@@ -3061,6 +3168,7 @@ function mapFr24PublicLivePosition(entry, callsign){
     altitude,
     speed,
     heading: entry.hd ?? entry.heading ?? entry.direction ?? entry.dir,
+    verticalRate: entry.roc ?? entry.vs ?? entry.vertical_rate ?? entry.verticalRate ?? entry.rate,
     timestamp: entry.ts ?? entry.timestamp ?? entry.updated ?? entry.time,
     eta: entry.eta ?? entry.est_arrival ?? entry.arrival?.estimated?.utc
   };
@@ -3174,7 +3282,7 @@ function renderFinLocationPreview(summaryEl, snapshot, registration){
     const route = formatFinRoute(snapshot.currentFlight);
     const meta = snapshot.currentFlight?.flightNumber ? ` • ${snapshot.currentFlight.flightNumber}` : '';
     const livePosition = getLatestLivePosition(registration);
-    const landing = formatFinLandingMinutes(livePosition);
+    const landing = formatFinLandingMinutes(livePosition, snapshot.currentFlight);
     const landingText = landing !== '—' ? ` • Landing in ${landing}` : '';
     statusEl.textContent = `${route}${meta}${landingText}`;
     return;
