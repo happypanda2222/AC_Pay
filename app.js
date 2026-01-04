@@ -71,9 +71,8 @@ const CAPITAL_GAINS_INCLUSION = 0.5;
 const FIN_CUSTOM_STORAGE_KEY = 'acpay.fin.custom';
 const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
-const AIRPORT_DATA_URL = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
-const FIN_FLIGHT_MAP = { width: 760, height: 380 };
 const CORS_PROXY = 'https://cors.isomorphic-git.org/';
+const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
 const FLIGHTRADAR24_DEFAULT_BASE = 'https://fr24api.flightradar24.com/api';
 const FLIGHTRADAR24_DEFAULT_HOST = 'flightradar24.p.rapidapi.com';
@@ -118,9 +117,6 @@ function expandFinConfigList(list){
   if (!Array.isArray(list)) return [];
   return list.flatMap(expandFinConfig);
 }
-
-let airportIndexPromise = null;
-const finFlightStore = new Map();
 
 function normalizeRegistration(reg){
   return String(reg ?? '').trim().toUpperCase();
@@ -309,238 +305,6 @@ function handleFr24ConfigSave(){
   }
 }
 
-function mapFr24LiveState(entry, fallbackIcao24){
-  const live = entry?.status?.live;
-  if (!live) return null;
-  const position = live.position || {};
-  const lat = Number(position.latitude ?? position.lat ?? position[0]);
-  const lon = Number(position.longitude ?? position.lng ?? position[1]);
-  const altitudeMeters = Number.isFinite(live.altitude?.meters)
-    ? live.altitude.meters
-    : (Number.isFinite(live.altitude?.feet) ? live.altitude.feet / 3.28084 : null);
-  const speedMs = Number.isFinite(live.speed?.ms)
-    ? live.speed.ms
-    : (Number.isFinite(live.speed?.kts) ? live.speed.kts * 0.514444 : null);
-  const verticalRate = Number.isFinite(live.verticalSpeed?.ms)
-    ? live.verticalSpeed.ms
-    : (Number.isFinite(live.verticalSpeed?.fpm) ? live.verticalSpeed.fpm / 196.8504 : null);
-  const resolvedIcao = normalizeRegistration(
-    entry?.aircraft?.hex ||
-    entry?.aircraft?.modeS ||
-    entry?.identification?.id ||
-    fallbackIcao24
-  );
-  return {
-    icao24: resolvedIcao,
-    callsign: (entry?.identification?.callsign || '').trim(),
-    originCountry: entry?.airline?.name || '',
-    timePosition: normalizeFr24Timestamp(live.updated) || 0,
-    lastContact: normalizeFr24Timestamp(live.updated) || 0,
-    lon,
-    lat,
-    baroAltitude: altitudeMeters,
-    onGround: Boolean(live.grounded ?? live.onGround ?? live.isGround),
-    velocity: speedMs,
-    heading: Number.isFinite(live.direction) ? live.direction : null,
-    verticalRate
-  };
-}
-
-function mapFr24SummaryFlight(entry){
-  if (!entry) return null;
-  const departure = entry.orig_icao || entry.orig_iata || null;
-  const arrival = entry.dest_icao_actual || entry.dest_icao || entry.dest_iata_actual || entry.dest_iata || null;
-  const firstSeen = parseFr24Date(entry.first_seen || entry.datetime_takeoff);
-  const lastSeen = parseFr24Date(entry.last_seen || entry.datetime_landed || entry.datetime_arrival);
-  if (!departure && !arrival && firstSeen === null && lastSeen === null) return null;
-  return {
-    estDepartureAirport: normalizeRegistration(departure) || null,
-    estArrivalAirport: normalizeRegistration(arrival) || null,
-    firstSeen: firstSeen ?? 0,
-    lastSeen: (lastSeen ?? firstSeen ?? 0)
-  };
-}
-
-function mapFr24Flight(entry){
-  if (!entry) return null;
-  const toUnix = (value) => normalizeFr24Timestamp(value) ?? 0;
-  const departure = entry.airport?.origin?.code?.icao || entry.airport?.origin?.code?.iata || null;
-  const arrival = entry.airport?.destination?.code?.icao || entry.airport?.destination?.code?.iata || null;
-  const firstSeen = toUnix(
-    entry.time?.real?.departure ?? entry.time?.estimated?.departure ?? entry.time?.scheduled?.departure
-  );
-  const lastSeen = toUnix(
-    entry.time?.real?.arrival ?? entry.time?.estimated?.arrival ?? entry.time?.scheduled?.arrival ?? firstSeen
-  );
-  if (!departure && !arrival && firstSeen === 0 && lastSeen === 0) return null;
-  return {
-    estDepartureAirport: normalizeRegistration(departure) || null,
-    estArrivalAirport: normalizeRegistration(arrival) || null,
-    firstSeen,
-    lastSeen
-  };
-}
-
-async function fetchFr24LiveContext({ registration, icao24 }){
-  const normalizedReg = normalizeRegistration(registration);
-  const query = normalizedReg || normalizeRegistration(icao24);
-  if (!query) throw new Error('No registration provided.');
-  const config = getFr24ApiConfig();
-  const headers = buildFr24Headers();
-  const hasAuthHeader = Object.keys(headers || {}).some((key) => {
-    const lower = key.toLowerCase();
-    return lower === 'authorization' || lower === 'x-rapidapi-key' || lower === 'x-api-key';
-  });
-  const requiresKey = (config.baseUrl || '').toLowerCase().includes('flightradar24');
-  if (requiresKey && !hasAuthHeader){
-    throw new Error('FlightRadar24 API token or key not configured. Add it in the FlightRadar24 API settings.');
-  }
-
-  const attempts = [];
-
-  const fetchFlightSummary = async () => {
-    const now = new Date();
-    const from = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-    const to = now;
-    const url = buildFr24Url('flight-summary/full', {
-      flight_datetime_from: formatFr24DateTimeUtc(from),
-      flight_datetime_to: formatFr24DateTimeUtc(to),
-      registrations: query,
-      limit: 200
-    });
-    const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
-    if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
-    const json = await resp.json();
-    const rows = Array.isArray(json?.data) ? json.data : [];
-    if (!rows.length) return { state: null, flights: [], icao24: normalizeRegistration(icao24 || query) };
-    const flights = rows.map(mapFr24SummaryFlight).filter(Boolean);
-    const activeEntry = rows.find((row) => row?.flight_ended === false) || rows[0];
-    return {
-      state: null,
-      flights,
-      icao24: normalizeRegistration(activeEntry?.hex || activeEntry?.reg || icao24 || query)
-    };
-  };
-
-  const fetchLegacyList = async () => {
-    const url = buildFr24Url('common/v1/flight/list.json', {
-      query,
-      fetchBy: 'reg',
-      limit: 10,
-      page: 1
-    });
-    const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
-    if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
-    const json = await resp.json();
-    const rows = json?.result?.response?.data;
-    if (!Array.isArray(rows) || rows.length === 0){
-      return { state: null, flights: [], icao24: normalizeRegistration(icao24 || query) };
-    }
-    const flights = rows.map(mapFr24Flight).filter(Boolean);
-    const liveEntry = rows.find((row) => Boolean(row?.status?.live)) || rows[0];
-    const state = mapFr24LiveState(liveEntry, icao24);
-    const resolvedIcao24 = normalizeRegistration(
-      state?.icao24 || liveEntry?.aircraft?.hex || liveEntry?.aircraft?.modeS || icao24 || query
-    );
-    return { state, flights, icao24: resolvedIcao24 };
-  };
-
-  if (isOfficialFr24Base(config.baseUrl)){
-    attempts.push(fetchFlightSummary);
-  }
-  attempts.push(fetchLegacyList);
-
-  let lastErr = null;
-  for (const attempt of attempts){
-    try {
-      return await attempt();
-    } catch (err){
-      lastErr = err;
-    }
-  }
-
-  throw lastErr || new Error('FlightRadar24 lookup failed.');
-}
-
-async function loadAirportIndex(){
-  if (airportIndexPromise) return airportIndexPromise;
-  airportIndexPromise = fetch(AIRPORT_DATA_URL, { cache: 'force-cache' })
-    .then((resp) => {
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return resp.json();
-    })
-    .then((json) => {
-      const index = {};
-      Object.keys(json || {}).forEach((icao) => {
-        const entry = json[icao];
-        if (!entry || typeof entry.lat !== 'number' || typeof entry.lon !== 'number') return;
-        index[icao.toUpperCase()] = { icao: icao.toUpperCase(), lat: entry.lat, lon: entry.lon, name: entry.name || icao };
-      });
-      return index;
-    })
-    .catch((err) => {
-      airportIndexPromise = null;
-      throw err;
-    });
-  return airportIndexPromise;
-}
-
-function deg2rad(deg){
-  return deg * (Math.PI / 180);
-}
-
-function haversineNm(lat1, lon1, lat2, lon2){
-  if (![lat1, lon1, lat2, lon2].every((n) => Number.isFinite(n))) return null;
-  const R = 6371e3; // meters
-  const φ1 = deg2rad(lat1);
-  const φ2 = deg2rad(lat2);
-  const Δφ = deg2rad(lat2 - lat1);
-  const Δλ = deg2rad(lon2 - lon1);
-  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return (R * c) / 1852; // nautical miles
-}
-
-async function findAirportByIcao(icao){
-  const code = normalizeRegistration(icao);
-  if (!code) return null;
-  const index = await loadAirportIndex();
-  return index[code] || null;
-}
-
-async function findNearestAirport(lat, lon){
-  const index = await loadAirportIndex();
-  let nearest = null;
-  let best = Infinity;
-  Object.values(index).forEach((apt) => {
-    const dist = haversineNm(lat, lon, apt.lat, apt.lon);
-    if (dist !== null && dist < best){
-      best = dist;
-      nearest = { ...apt, distanceNm: dist };
-    }
-  });
-  return nearest;
-}
-
-function metersToFeet(value){
-  if (!Number.isFinite(value)) return null;
-  return value * 3.28084;
-}
-
-function metersPerSecondToKnots(value){
-  if (!Number.isFinite(value)) return null;
-  return value * 1.94384;
-}
-
-function metersPerSecondToFpm(value){
-  if (!Number.isFinite(value)) return null;
-  return value * 196.8504;
-}
-
-function formatNumber(value, digits = 0){
-  if (!Number.isFinite(value)) return '—';
-  return value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
-}
 
 const FIN_CONFIGS = expandFinConfigList([
   { type: 'A220', finStart: 101, finEnd: 101, j: 12, o: 0, y: 125, fdjs: 1, ofcr: 0, ccjs: 3 },
@@ -2593,211 +2357,122 @@ function renderFinCard({ label, display, edit, editOnly = false }){
   `;
 }
 
-async function fetchRegistrationMetadata(reg){
-  const url = `https://api.adsbdb.com/v0/aircraft/${encodeURIComponent(reg)}`;
-  const resp = await fetchWithCorsFallback(url, { cache: 'no-store' });
-  const json = await resp.json();
-  const icao24 = normalizeRegistration(json?.response?.aircraft?.mode_s);
-  if (!icao24) throw new Error('No ICAO address found for that registration.');
-  return { icao24, model: json?.response?.aircraft?.icao_type || '' };
+function formatLocalDateTime(ts){
+  if (!Number.isFinite(ts)) return '—';
+  return new Date(ts * 1000).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
-function splitFlightTimeline(flights, nowSec){
-  const sorted = (flights || []).slice().sort((a, b) => (a.firstSeen || 0) - (b.firstSeen || 0));
-  const previous = [...sorted].reverse().find((flight) => (flight.lastSeen || 0) < nowSec) || null;
-  const current = [...sorted].reverse().find((flight) => {
-    const start = flight.firstSeen || 0;
-    const end = flight.lastSeen || start;
-    return start <= nowSec && end >= nowSec;
-  }) || null;
-  const next = sorted.find((flight) => (flight.firstSeen || 0) > nowSec) || null;
-  return { previous, current, next };
-}
-
-function formatFlightLabel(flight){
-  if (!flight) return 'Unavailable';
-  const dep = flight.estDepartureAirport || '—';
-  const arr = flight.estArrivalAirport || '—';
-  return `${dep} → ${arr}`;
-}
-
-function renderFlightMapSvg({ state, departure, arrival }){
-  if (!state) return '<div class="muted-note">No live track available.</div>';
-  const width = FIN_FLIGHT_MAP.width;
-  const height = FIN_FLIGHT_MAP.height;
-  const project = (lat, lon) => {
-    const x = Math.min(Math.max(((lon + 180) / 360) * width, 0), width);
-    const y = Math.min(Math.max(((90 - lat) / 180) * height, 0), height);
-    return { x, y };
+function mapFr24FullSummaryFlight(entry){
+  if (!entry) return null;
+  const dep = normalizeRegistration(entry.orig_icao || entry.orig_iata);
+  const arr = normalizeRegistration(
+    entry.dest_icao_actual || entry.dest_icao || entry.dest_iata_actual || entry.dest_iata
+  );
+  const departureTime = parseFr24Date(entry.first_seen ?? entry.datetime_takeoff);
+  const arrivalTime = parseFr24Date(entry.last_seen ?? entry.datetime_landed ?? entry.datetime_arrival);
+  const status = entry.flight_ended === false
+    ? 'active'
+    : (entry.flight_ended === true ? 'completed' : 'planned');
+  const flightNumber = entry.callsign || entry.call_sign || entry.flight || entry.flight_number || '';
+  const registration = normalizeRegistration(entry.reg || entry.registration || entry.aircraft_registration);
+  const icao24 = normalizeRegistration(entry.hex || entry.icao24 || entry.mode_s);
+  if (!dep && !arr && departureTime === null && arrivalTime === null && !flightNumber) return null;
+  return {
+    departure: dep || null,
+    arrival: arr || null,
+    departureTime: departureTime ?? null,
+    arrivalTime: arrivalTime ?? null,
+    status,
+    flightNumber: flightNumber || null,
+    registration,
+    icao24
   };
-  const points = [];
-  let routePath = '';
-  if (departure && arrival){
-    const dep = project(departure.lat, departure.lon);
-    const arr = project(arrival.lat, arrival.lon);
-    routePath = `<line x1="${dep.x}" y1="${dep.y}" x2="${arr.x}" y2="${arr.y}" stroke="#5ce1ff" stroke-width="2" stroke-dasharray="6 4" />`;
-    points.push(`<circle cx="${dep.x}" cy="${dep.y}" r="6" fill="#1fa4ff" stroke="#0b3a5b" stroke-width="2"><title>${escapeHtml(departure.icao)}</title></circle>`);
-    points.push(`<circle cx="${arr.x}" cy="${arr.y}" r="6" fill="#1fa4ff" stroke="#0b3a5b" stroke-width="2"><title>${escapeHtml(arrival.icao)}</title></circle>`);
-  }
-  const cur = (Number.isFinite(state.lat) && Number.isFinite(state.lon)) ? project(state.lat, state.lon) : null;
-  if (cur){
-    points.push(`<circle cx="${cur.x}" cy="${cur.y}" r="8" fill="#ff5a5f" stroke="#0b121c" stroke-width="3"><title>Current position</title></circle>`);
-  }
+}
+
+function describeFr24Status(status){
+  if (status === 'active') return 'Active flight';
+  if (status === 'completed') return 'Completed flight';
+  return 'Planned flight';
+}
+
+function renderFinSummaryRow(flight){
+  const route = `${flight.departure || '—'} → ${flight.arrival || '—'}`;
+  const status = describeFr24Status(flight.status);
+  const times = [
+    flight.departureTime ? `Dep ${formatLocalDateTime(flight.departureTime)}` : null,
+    flight.arrivalTime ? `Arr ${formatLocalDateTime(flight.arrivalTime)}` : null
+  ].filter(Boolean).join(' • ');
+  const meta = [status, flight.flightNumber, flight.registration || flight.icao24].filter(Boolean).join(' • ');
   return `
-    <svg viewBox="0 0 ${width} ${height}" class="fin-map-canvas" role="img" aria-label="Flight map">
-      <defs>
-        <linearGradient id="finMapBg" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="#0b1624"/>
-          <stop offset="100%" stop-color="#0a111b"/>
-        </linearGradient>
-      </defs>
-      <rect x="0" y="0" width="${width}" height="${height}" fill="url(#finMapBg)" />
-      <g stroke="#1f2633" stroke-width="1" opacity="0.5">
-        ${[...Array(7)].map((_, i) => {
-          const y = (height / 6) * i;
-          return `<line x1="0" y1="${y.toFixed(2)}" x2="${width}" y2="${y.toFixed(2)}" />`;
-        }).join('')}
-        ${[...Array(13)].map((_, i) => {
-          const x = (width / 12) * i;
-          return `<line x1="${x.toFixed(2)}" y1="0" x2="${x.toFixed(2)}" y2="${height}" />`;
-        }).join('')}
-      </g>
-      ${routePath}
-      ${points.join('\n')}
-    </svg>
+    <div class="fin-summary-row">
+      <div class="metric-value">${escapeHtml(route)}</div>
+      <div class="muted-note">${escapeHtml(meta || 'No flight metadata available')}</div>
+      <div class="muted-note">${escapeHtml(times || 'Times unavailable')}</div>
+    </div>
   `;
 }
 
-async function hydrateFinLocation(outEl, fin, reg){
-  const valueEl = outEl.querySelector('[data-fin-location-value]');
-  const statusEl = outEl.querySelector('[data-fin-location-status]');
-  const locationCard = outEl.querySelector('.fin-location-card');
-  if (!valueEl || !statusEl || !locationCard) return;
+async function fetchFr24FlightSummary(registration){
+  const normalizedReg = normalizeRegistration(registration);
+  if (!normalizedReg) throw new Error('Enter a registration to fetch flight summaries.');
+  const config = getFr24ApiConfig();
+  const headers = buildFr24Headers();
+  const hasAuthHeader = Object.keys(headers || {}).some((key) => {
+    const lower = key.toLowerCase();
+    return lower === 'authorization' || lower === 'x-rapidapi-key' || lower === 'x-api-key';
+  });
+  const requiresKey = (config.baseUrl || '').toLowerCase().includes('flightradar24');
+  if (requiresKey && !hasAuthHeader){
+    throw new Error('FlightRadar24 API token or key not configured. Add it in the FlightRadar24 API settings.');
+  }
+  const now = new Date();
+  const from = new Date(now.getTime() - (FR24_SUMMARY_LOOKBACK_HOURS * 60 * 60 * 1000));
+  const url = buildFr24Url('flight-summary/full', {
+    flight_datetime_from: formatFr24DateTimeUtc(from),
+    flight_datetime_to: formatFr24DateTimeUtc(now),
+    registrations: normalizedReg,
+    limit: 200
+  });
+  const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+  if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
+  const json = await resp.json();
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  const flights = rows.map(mapFr24FullSummaryFlight).filter(Boolean);
+  return { flights, registration: normalizedReg };
+}
+
+async function hydrateFinSummary(outEl, fin, reg){
+  const summaryEl = outEl.querySelector('[data-fin-summary]');
+  const statusEl = outEl.querySelector('[data-fin-summary-status]');
+  const listEl = outEl.querySelector('[data-fin-summary-list]');
+  if (!summaryEl || !statusEl || !listEl) return;
   const requestId = `${fin}-${Date.now()}`;
-  outEl.dataset.finLocationRequest = requestId;
-  valueEl.textContent = 'Loading…';
-  statusEl.textContent = 'Looking up registration…';
-  locationCard.dataset.finFlightAvailable = 'false';
-  finFlightStore.delete(fin);
+  summaryEl.dataset.finSummaryRequest = requestId;
+  listEl.innerHTML = '';
+  statusEl.textContent = 'Fetching FlightRadar24 summary…';
   try {
-    const [meta] = await Promise.all([fetchRegistrationMetadata(reg), loadAirportIndex()]);
-    if (outEl.dataset.finLocationRequest !== requestId) return;
-    statusEl.textContent = 'Checking live position…';
-    const { state, flights, icao24 } = await fetchFr24LiveContext({ registration: reg, icao24: meta.icao24 });
-    if (outEl.dataset.finLocationRequest !== requestId) return;
-    const nowSec = Math.floor(Date.now() / 1000);
-    const timeline = splitFlightTimeline(flights, nowSec);
-    const airportIndex = await loadAirportIndex();
-    const getAirport = (code) => (code ? airportIndex[normalizeRegistration(code)] || null : null);
-    const departureAirport = getAirport(timeline.current?.estDepartureAirport);
-    const arrivalAirport = getAirport(timeline.current?.estArrivalAirport);
-    const nearest = (state && Number.isFinite(state.lat) && Number.isFinite(state.lon))
-      ? await findNearestAirport(state.lat, state.lon)
-      : null;
-    const locationLabel = state
-      ? (state.onGround ? (nearest?.icao || 'On ground') : 'In Flight')
-      : 'No live position found';
-    const flightAvailable = Boolean(state && !state.onGround);
-    valueEl.textContent = locationLabel;
-    locationCard.dataset.finFlightAvailable = flightAvailable ? 'true' : 'false';
-    locationCard.classList.toggle('fin-location-active', flightAvailable);
-    statusEl.textContent = state
-      ? (state.onGround ? 'Last seen on the ground.' : 'Tap for live map.')
-      : 'No current transponder signal.';
-    const totalNm = (departureAirport && arrivalAirport)
-      ? haversineNm(departureAirport.lat, departureAirport.lon, arrivalAirport.lat, arrivalAirport.lon)
-      : null;
-    const coveredNm = (departureAirport && state && Number.isFinite(state.lat) && Number.isFinite(state.lon))
-      ? haversineNm(departureAirport.lat, departureAirport.lon, state.lat, state.lon)
-      : null;
-    const progressPct = (totalNm && coveredNm !== null)
-      ? Math.max(0, Math.min(100, Math.round((coveredNm / totalNm) * 100)))
-      : null;
-    finFlightStore.set(fin, {
-      fin,
-      reg,
-      icao24: icao24 || meta.icao24,
-      state,
-      nearestAirport: nearest,
-      previousFlight: timeline.previous,
-      nextFlight: timeline.next,
-      currentFlight: timeline.current,
-      departureAirport,
-      arrivalAirport,
-      progressPct
-    });
-    const panel = outEl.querySelector('[data-fin-flight-panel]');
-    if (panel){
-      panel.dataset.finFlightFin = String(fin);
-      panel.classList.add('hidden');
-      panel.setAttribute('aria-hidden', 'true');
+    const { flights, registration } = await fetchFr24FlightSummary(reg);
+    if (summaryEl.dataset.finSummaryRequest !== requestId) return;
+    if (!flights.length){
+      statusEl.textContent = `No recent flights found for ${registration}.`;
+      return;
     }
+    const displayed = flights.slice(0, 3);
+    listEl.innerHTML = displayed.map(renderFinSummaryRow).join('');
+    const suffix = flights.length > displayed.length ? ` (showing ${displayed.length} of ${flights.length})` : '';
+    statusEl.textContent = `Latest flights for ${registration}${suffix}.`;
   } catch (err){
-    console.warn('Fin tracking failed', err);
-    if (outEl.dataset.finLocationRequest !== requestId) return;
-    valueEl.textContent = 'Unavailable';
+    if (summaryEl.dataset.finSummaryRequest !== requestId) return;
     const friendly = err?.message && err.message !== 'Failed to fetch'
       ? err.message
-      : 'Live tracking unavailable right now.';
+      : 'FlightRadar24 summary unavailable right now.';
     statusEl.textContent = friendly;
-    locationCard.dataset.finFlightAvailable = 'false';
-    locationCard.classList.remove('fin-location-active');
   }
-}
-
-function populateFlightPanel(outEl, fin){
-  const context = finFlightStore.get(fin);
-  const panel = outEl.querySelector('[data-fin-flight-panel]');
-  if (!context || !panel) return;
-  panel.dataset.finFlightFin = String(fin);
-  panel.classList.remove('hidden');
-  panel.setAttribute('aria-hidden', 'false');
-  const map = panel.querySelector('[data-fin-flight-map]');
-  if (map){
-    map.innerHTML = renderFlightMapSvg({
-      state: context.state,
-      departure: context.departureAirport,
-      arrival: context.arrivalAirport
-    });
-  }
-  const title = panel.querySelector('[data-fin-flight-title]');
-  if (title){
-    title.textContent = `${context.reg} • ${context.icao24}`;
-  }
-  const route = panel.querySelector('[data-fin-flight-route]');
-  if (route){
-    route.textContent = formatFlightLabel(context.currentFlight);
-  }
-  const progress = panel.querySelector('[data-fin-flight-progress]');
-  if (progress){
-    progress.textContent = context.progressPct !== null ? `${context.progressPct}% complete` : 'Progress unavailable.';
-  }
-  const stats = panel.querySelector('[data-fin-flight-stats]');
-  if (stats){
-    const speed = metersPerSecondToKnots(context.state?.velocity);
-    const alt = metersToFeet(context.state?.baroAltitude);
-    stats.textContent = `${formatNumber(speed)} kts / ${formatNumber(alt)} ft`;
-  }
-  const vs = panel.querySelector('[data-fin-flight-vspeed]');
-  if (vs){
-    const vr = metersPerSecondToFpm(context.state?.verticalRate);
-    vs.textContent = Number.isFinite(vr) ? `${formatNumber(vr)} fpm vertical` : 'Vertical speed unavailable.';
-  }
-  const prev = panel.querySelector('[data-fin-flight-prev]');
-  if (prev){
-    prev.textContent = formatFlightLabel(context.previousFlight);
-  }
-  const next = panel.querySelector('[data-fin-flight-next]');
-  if (next){
-    next.textContent = formatFlightLabel(context.nextFlight);
-  }
-}
-
-function hideFlightPanel(outEl){
-  const panel = outEl.querySelector('[data-fin-flight-panel]');
-  if (!panel) return;
-  panel.classList.add('hidden');
-  panel.setAttribute('aria-hidden', 'true');
 }
 
 function getFinFormData(form){
@@ -3069,13 +2744,13 @@ function renderFinResult(outEl, finValue){
   const notesBody = notesText
     ? `<div class="fin-notes-body">${escapeHtml(notesText).replace(/\n/g, '<br>')}</div>`
     : '<div class="fin-notes-body muted-note">No notes added for this fin.</div>';
-  const showLocationCard = Boolean(values.reg) && !editing;
-  const locationCardHtml = showLocationCard
+  const showSummaryCard = Boolean(values.reg) && !editing;
+  const summaryCardHtml = showSummaryCard
     ? `
-      <div class="fin-card fin-location-card">
-        <div class="metric-label">Current location</div>
-        <div class="metric-value" data-fin-location-value>—</div>
-        <div class="muted-note" data-fin-location-status>Looking up registration…</div>
+      <div class="fin-card fin-summary-card" data-fin-summary>
+        <div class="metric-label">Flight summary</div>
+        <div class="fin-summary-list" data-fin-summary-list></div>
+        <div class="muted-note" data-fin-summary-status aria-live="polite">Fetching FlightRadar24 summary…</div>
       </div>
     `
     : '';
@@ -3101,52 +2776,16 @@ function renderFinResult(outEl, finValue){
           <textarea data-fin-field="notes" rows="3" maxlength="2000" placeholder="Add reference info or reminders for this fin">${escapeHtml(values.notes)}</textarea>
         </div>
       </div>
-      ${locationCardHtml}
+      ${summaryCardHtml}
       <div class="fin-actions">
         ${actions}
       </div>
       <div class="wx-error hidden" data-fin-error></div>
-      <div class="fin-flight-panel hidden" data-fin-flight-panel aria-hidden="true">
-        <div class="fin-flight-panel-head">
-          <div>
-            <div class="metric-label">Live flight map</div>
-            <div class="muted-note" data-fin-flight-title>Waiting for location…</div>
-          </div>
-          <button type="button" class="convert-btn" data-fin-flight-close>Back</button>
-        </div>
-        <div class="fin-flight-map" data-fin-flight-map role="img" aria-label="Fin flight map"></div>
-        <div class="fin-flight-grid">
-          <div class="fin-flight-card">
-            <div class="metric-label">Route</div>
-            <div class="metric-value" data-fin-flight-route>—</div>
-            <div class="muted-note" data-fin-flight-progress></div>
-          </div>
-          <div class="fin-flight-card">
-            <div class="metric-label">Speed / Altitude</div>
-            <div class="metric-value" data-fin-flight-stats>—</div>
-            <div class="muted-note" data-fin-flight-vspeed></div>
-          </div>
-          <div class="fin-flight-card">
-            <div class="metric-label">Previous flight</div>
-            <div class="metric-value" data-fin-flight-prev>—</div>
-          </div>
-          <div class="fin-flight-card">
-            <div class="metric-label">Next flight</div>
-            <div class="metric-value" data-fin-flight-next>—</div>
-          </div>
-        </div>
-      </div>
     </div>
   `;
-  const locationCard = outEl.querySelector('.fin-location-card');
-  if (locationCard){
-    const statusEl = locationCard.querySelector('[data-fin-location-status]');
-    locationCard.dataset.finFlightAvailable = 'false';
-    locationCard.classList.remove('fin-location-active');
-    if (statusEl){
-      statusEl.textContent = 'Looking up registration…';
-    }
-    hydrateFinLocation(outEl, fin, values.reg);
+  const summaryCard = outEl.querySelector('[data-fin-summary]');
+  if (summaryCard){
+    hydrateFinSummary(outEl, fin, values.reg);
   }
 }
 
@@ -3161,20 +2800,6 @@ function attachFinLookup({ inputId, outId }){
   }
   if (!out.dataset.finBound){
     out.addEventListener('click', (event) => {
-      const locCard = event.target?.closest('.fin-location-card');
-      if (locCard){
-        const finValue = input?.value?.trim() ?? '';
-        const fin = Number(finValue);
-        if (locCard.dataset.finFlightAvailable === 'true' && Number.isFinite(fin)){
-          populateFlightPanel(out, fin);
-        }
-        return;
-      }
-      const closeBtn = event.target?.closest('[data-fin-flight-close]');
-      if (closeBtn){
-        hideFlightPanel(out);
-        return;
-      }
       const action = event.target?.closest('[data-fin-action]')?.dataset?.finAction;
       if (!action) return;
       const finValue = input?.value?.trim() ?? '';
