@@ -73,13 +73,13 @@ const FIN_EXPORT_SETTINGS_KEY = 'acpay.fin.export.settings';
 const LEGACY_FIN_SYNC_SETTINGS_KEY = 'acpay.fin.sync.settings';
 const CORS_PROXY = 'https://cors.isomorphic-git.org/';
 const CORS_PROXY_FALLBACKS = [
-  { label: 'direct', build: (url) => url },
-  { label: 'isomorphic', build: (url) => url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}` },
+  { label: 'direct', build: (url) => url, allowsAuth: true },
+  { label: 'isomorphic', build: (url) => url.startsWith(CORS_PROXY) ? url : `${CORS_PROXY}${url}`, allowsAuth: false },
   { label: 'corsproxy.io', build: (url) => {
     const safeUrl = url.startsWith('http') ? url : `https://${url}`;
     return safeUrl.startsWith('https://corsproxy.io/?') ? safeUrl : `https://corsproxy.io/?${safeUrl}`;
-  } },
-  { label: 'allorigins', build: (url) => url.startsWith('https://api.allorigins.win/raw?url=') ? url : `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` }
+  }, allowsAuth: false },
+  { label: 'allorigins', build: (url) => url.startsWith('https://api.allorigins.win/raw?url=') ? url : `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, allowsAuth: false }
 ];
 const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
@@ -136,10 +136,16 @@ function normalizeRegistration(reg){
 
 async function fetchWithCorsFallback(url, options = {}){
   const trimmedUrl = String(url || '').trim();
+  const headers = options?.headers;
+  const headerEntries = headers instanceof Headers
+    ? Array.from(headers.entries())
+    : (headers && typeof headers === 'object' ? Object.entries(headers) : []);
+  const hasAuthHeader = headerEntries.some(([key]) => ['authorization', 'x-api-key'].includes(String(key || '').toLowerCase()));
   const attempts = [];
   const seen = new Set();
   let lastError = null;
-  for (const proxy of CORS_PROXY_FALLBACKS){
+  const proxies = CORS_PROXY_FALLBACKS.filter((proxy) => !hasAuthHeader || proxy.allowsAuth);
+  for (const proxy of proxies){
     const target = proxy.build(trimmedUrl);
     if (!target || seen.has(target)) continue;
     seen.add(target);
