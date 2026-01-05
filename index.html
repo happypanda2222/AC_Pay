@@ -862,8 +862,12 @@
                     <input id="modern-rest-away-hours" type="number" min="0" step="1" value="24">
                   </div>
                   <div>
-                    <label>Returning FDP encroaches WOCL</label>
-                    <div class="muted-note">0200-0559 YYZ</div>
+                    <label>Returning FDP encroaches WOCL
+                      <span class="info-hover" tabindex="0" aria-label="Encroaches the window of circadian low (0200-0559 YYZ)">
+                        <span class="info-icon" aria-hidden="true">i</span>
+                        <span class="tooltip">Encroaches the window of circadian low (0200-0559 YYZ).</span>
+                      </span>
+                    </label>
                     <select id="modern-rest-encroach">
                       <option value="no" selected>No</option>
                       <option value="yes">Yes</option>
@@ -871,9 +875,9 @@
                   </div>
                   <div>
                     <label>Disruptive schedule (late/night ↔ early)
-                      <span class="info-hover" tabindex="0" aria-label="After midnight and before 0659 YYZ time">
+                      <span class="info-hover" tabindex="0" aria-label="After midnight and before 0659 YYZ time (late/night ↔ early)">
                         <span class="info-icon" aria-hidden="true">i</span>
-                        <span class="tooltip">After midnight and before 0659 YYZ time</span>
+                        <span class="tooltip">After midnight and before 0659 YYZ time (late/night ↔ early).</span>
                       </span>
                     </label>
                     <select id="modern-rest-disruptive">
@@ -882,7 +886,7 @@
                     </select>
                   </div>
                   <div>
-                    <label>FDP exceeds max (UOC) by hours</label>
+                    <label>Unforeseen</label>
                     <input id="modern-rest-uoc" type="number" min="0" step="0.25" value="0">
                   </div>
                 </div>
