@@ -3151,9 +3151,18 @@ function setFlightLookupCarrier(mode){
 function buildFlightLookupCallsign(number){
   const raw = normalizeCallsign(number).replace(/\s+/g, '');
   if (!raw) return '';
-  const trimmed = raw.replace(/^(ACA|ROU)/i, '');
-  if (flightLookupCarrier === 'ACA') return `ACA${trimmed}`;
-  if (flightLookupCarrier === 'ROU') return `ROU${trimmed}`;
+  if (flightLookupCarrier === 'ACA'){
+    if (/^ACA/i.test(raw)) return raw;
+    if (/^AC/i.test(raw)) return `ACA${raw.slice(2)}`;
+    if (/^\d+/.test(raw)) return `ACA${raw}`;
+    return raw;
+  }
+  if (flightLookupCarrier === 'ROU'){
+    if (/^ROU/i.test(raw)) return raw;
+    if (/^RV/i.test(raw)) return `ROU${raw.slice(2)}`;
+    if (/^\d+/.test(raw)) return `ROU${raw}`;
+    return raw;
+  }
   return raw;
 }
 
