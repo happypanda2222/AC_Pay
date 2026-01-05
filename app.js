@@ -172,7 +172,20 @@ async function fetchWithCorsFallback(url, options = {}){
   const attempts = [];
   const seen = new Set();
   let lastError = null;
-  const proxies = CORS_PROXY_FALLBACKS.filter((proxy) => !hasAuthHeader || proxy.allowsAuth);
+  const proxies = CORS_PROXY_FALLBACKS
+    .filter((proxy) => !hasAuthHeader || proxy.allowsAuth)
+    .sort((a, b) => {
+      // For FlightRadar24 calls in the browser, prioritize CORS-friendly proxies before direct
+      // to avoid the 200-with-CORS-blocked pattern seen on the official API host.
+      const order = ['isomorphic', 'corsproxy.io', 'allorigins', 'direct'];
+      try {
+        const host = new URL(trimmedUrl).hostname || '';
+        if (host.includes('flightradar24.com')){
+          return order.indexOf(a.label) - order.indexOf(b.label);
+        }
+      } catch (_err){ /* noop */ }
+      return 0;
+    });
   for (const proxy of proxies){
     const target = proxy.build(trimmedUrl);
     if (!target || seen.has(target)) continue;
