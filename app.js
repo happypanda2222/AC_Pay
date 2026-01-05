@@ -3226,7 +3226,6 @@ function renderFlightLookupResult({ callsign, snapshot, positions, registration 
       fin: finMatch?.fin,
       registration: registrationValue
     },
-    { label: 'ICAO24', value: latest?.icao24 || '—' },
     { label: 'Altitude', value: latest ? formatFinAltitude(latest.altitude) : '—' },
     { label: 'Groundspeed', value: latest ? formatFinSpeed(latest.speed) : '—' },
     { label: 'Vertical speed', value: latest ? formatFinVerticalSpeed(latest.verticalRate) : '—' },
@@ -4196,6 +4195,7 @@ let currentLegacySubTab = 'annual';
 let currentModernSubTab = 'modern-annual';
 let currentLegacyDutyTab = 'duty';
 let currentModernDutyTab = 'modern-duty';
+let currentModernFinTab = 'modern-fin-qrh';
 
 function setLegacyPrimaryTab(which){
   const payBtn = document.getElementById('tabbtn-pay');
@@ -4292,6 +4292,7 @@ function setModernPrimaryTab(which){
   finHiddenPane?.classList.toggle('hidden', !showFin || !showingHiddenFin);
   if (showPay) setModernSubTab(currentModernSubTab);
   if (showDuty) setModernDutyTab(currentModernDutyTab);
+  if (showFin && !showingHiddenFin) setModernFinTab(currentModernFinTab);
 }
 
 function setModernSubTab(which){
@@ -4330,6 +4331,19 @@ function setModernDutyTab(which){
       btn.classList.remove('active');
       pane.classList.add('hidden');
     }
+  });
+}
+
+function setModernFinTab(which){
+  currentModernFinTab = which;
+  const tabs = ['modern-fin-qrh', 'modern-flight-number'];
+  tabs.forEach((id) => {
+    const btn = document.getElementById(`tabbtn-${id}`);
+    const pane = document.getElementById(id);
+    if (!pane) return;
+    const isActive = id === which;
+    if (btn) btn.classList.toggle('active', isActive);
+    pane.classList.toggle('hidden', !isActive);
   });
 }
 
@@ -7849,6 +7863,8 @@ function init(){
   document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
   document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
   document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
+  document.getElementById('tabbtn-modern-fin-qrh')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernFinTab('modern-fin-qrh'); });
+  document.getElementById('tabbtn-modern-flight-number')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernFinTab('modern-flight-number'); });
   document.getElementById('tabbtn-modern-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-duty'); });
   document.getElementById('tabbtn-modern-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-rest'); });
   document.getElementById('tabbtn-modern-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-converter'); });
@@ -7961,6 +7977,7 @@ function init(){
   setModernPrimaryTab('modern-pay');
   setModernSubTab('modern-annual');
   setModernDutyTab('modern-duty');
+  setModernFinTab(currentModernFinTab);
   // Defaults
   onSeatChangeModern();
   onSeatChangeModernVO();

@@ -985,14 +985,39 @@
         </div>
 
         <div id="modern-fin" class="modern-tab hidden">
-          <div class="modern-grid">
-            <div class="modern-panel">
-              <h3>Fin</h3>
-              <div class="stacked-fields">
-                <div>
-                  <input id="modern-fin-input" type="number" min="1" inputmode="numeric" placeholder="e.g., 241" aria-label="Fin number">
+          <div class="tabs" id="modern-fin-tabs">
+            <button class="tabbtn active" data-tab="modern-fin-qrh" id="tabbtn-modern-fin-qrh">Fin QRH</button>
+            <button class="tabbtn" data-tab="modern-flight-number" id="tabbtn-modern-flight-number">Flight #</button>
+          </div>
+
+          <div id="modern-fin-qrh" class="modern-tab">
+            <div class="modern-grid">
+              <div class="modern-panel">
+                <h3>Fin</h3>
+                <div class="stacked-fields">
+                  <div>
+                    <input id="modern-fin-input" type="number" min="1" inputmode="numeric" placeholder="e.g., 241" aria-label="Fin number">
+                  </div>
                 </div>
               </div>
+              <div class="modern-panel">
+                <h3>Configuration</h3>
+                <div id="modern-fin-out"></div>
+              </div>
+            </div>
+            <div class="modern-panel">
+              <h3>Actions</h3>
+              <div class="fin-actions">
+                <button id="modern-fin-export-btn" class="btn" type="button">Export</button>
+                <button id="modern-fin-api-btn" class="btn btn-secondary" type="button">API Settings</button>
+              </div>
+              <div id="modern-fin-export-status" class="fin-export-status muted-note" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div id="modern-flight-number" class="modern-tab hidden">
+            <div class="modern-panel">
+              <h3>Flight # lookup</h3>
               <div class="fin-flight-row fin-flight-inline" aria-label="Flight number lookup">
                 <div class="fin-flight-meta" style="gap:6px">
                   <button type="button" class="chip" data-flight-carrier="ACA" aria-pressed="true">ACA</button>
@@ -1010,24 +1035,12 @@
                   <button type="button" class="btn btn-secondary" id="fin-flightnumber-clear">Clear</button>
                 </div>
               </div>
-            </div>
-            <div class="modern-panel">
-              <h3>Configuration</h3>
-              <div id="modern-fin-out"></div>
               <div class="fin-flight-results">
                 <div class="metric-label">Flight lookup</div>
                 <div class="muted-note" id="fin-flightnumber-status" aria-live="polite"></div>
                 <div id="fin-flightnumber-results" class="fin-live-grid" aria-live="polite"></div>
               </div>
             </div>
-          </div>
-          <div class="modern-panel">
-            <h3>Actions</h3>
-            <div class="fin-actions">
-              <button id="modern-fin-export-btn" class="btn" type="button">Export</button>
-              <button id="modern-fin-api-btn" class="btn btn-secondary" type="button">API Settings</button>
-            </div>
-            <div id="modern-fin-export-status" class="fin-export-status muted-note" aria-live="polite"></div>
           </div>
         </div>
       </div>
