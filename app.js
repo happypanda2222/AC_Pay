@@ -269,6 +269,29 @@ function buildFr24Url(path, params = {}){
   return url.toString();
 }
 
+function extractFr24DataRows(payload){
+  const candidates = [
+    payload,
+    payload?.data,
+    payload?.result,
+    payload?.response,
+    payload?.result?.response,
+    payload?.response?.result,
+    payload?.data?.result,
+    payload?.data?.response
+  ];
+  for (const candidate of candidates){
+    if (!candidate || typeof candidate !== 'object') continue;
+    if (Array.isArray(candidate)) return candidate;
+    if (Array.isArray(candidate.data)) return candidate.data;
+    if (candidate.data && typeof candidate.data === 'object' && !Array.isArray(candidate.data)){
+      const values = Object.values(candidate.data).filter((item) => item !== undefined && item !== null);
+      if (values.length) return values;
+    }
+  }
+  return [];
+}
+
 function normalizeFr24Timestamp(ts){
   const num = Number(ts);
   if (!Number.isFinite(num)) return null;
@@ -3335,7 +3358,7 @@ async function fetchFr24FlightSummary(input){
     const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
     if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
     const json = await resp.json();
-    const rows = Array.isArray(json?.data) ? json.data : [];
+    const rows = extractFr24DataRows(json);
     flights = rows.map(mapFr24FullSummaryFlight).filter(Boolean);
   } catch (err){
     summaryError = err;
@@ -3536,7 +3559,7 @@ async function fetchFr24LivePositionsFull(params = {}, { requireAuth = true } = 
   const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
   if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
   const json = await resp.json();
-  const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+  const rows = extractFr24DataRows(json);
   const mapped = rows.map((entry) => {
     const position = mapFr24LivePosition(entry);
     const summary = mapFr24LiveSummaryFlight(entry);
