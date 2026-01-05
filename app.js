@@ -3388,7 +3388,7 @@ async function fetchFr24FlightSummary(input){
   if (!flights.length){
     try {
       const liveParams = normalizedFlight
-        ? { callsigns: normalizedFlight, flights: normalizedFlight }
+        ? { callsigns: normalizedFlight }
         : { registrations: normalizedReg };
       const live = await fetchFr24LivePositionsFull(liveParams);
       flights = Array.isArray(live.flights) ? live.flights : [];
@@ -3601,7 +3601,7 @@ async function fetchFr24LivePositionsByFlight(flight){
   const normalizedFlight = normalizeCallsign(flight);
   if (!normalizedFlight) throw new Error('Enter a flight number to fetch live positions.');
   const attemptKeys = [
-    { callsigns: normalizedFlight, flights: normalizedFlight },
+    { callsigns: normalizedFlight },
     { flight: normalizedFlight }
   ];
   const attempts = [];
