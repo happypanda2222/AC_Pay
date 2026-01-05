@@ -3190,9 +3190,10 @@ function handleFlightRegistrationOpen(fin, registration){
   const modernFinInput = document.getElementById('modern-fin-input');
   if (modernFinInput){
     modernFinInput.value = String(fin);
+    setModernPrimaryTab('modern-fin');
+    setModernFinTab('modern-fin-qrh');
     renderFinResult(document.getElementById('modern-fin-out'), String(fin));
     closeFinHiddenPage();
-    setModernPrimaryTab('modern-fin');
     finHiddenContext.registration = normalizeRegistration(registration);
   }
 }
