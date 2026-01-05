@@ -3558,7 +3558,10 @@ async function fetchFr24PublicLivePositions(registration){
 
 async function fetchFr24LivePositionsFull(params = {}, { requireAuth = true } = {}){
   const headers = buildFr24Headers();
-  const hasAuthHeader = Object.keys(headers || {}).some((key) => String(key || '').toLowerCase() === 'authorization');
+  const hasAuthHeader = Object.keys(headers || {}).some((key) => {
+    const lower = String(key || '').toLowerCase();
+    return lower === 'authorization' || lower === 'x-api-key';
+  });
   const config = getFr24ApiConfig();
   const needsAuth = requireAuth || isOfficialFr24Base(config.baseUrl);
   if (needsAuth && !hasAuthHeader){
@@ -3601,9 +3604,54 @@ async function fetchFr24LivePositionsByFlight(flight){
       attempts.push(`${JSON.stringify(key)}: ${err?.message || err}`);
     }
   }
+  try {
+    const publicResult = await fetchFr24PublicLivePositionsByFlight(normalizedFlight);
+    const positions = Array.isArray(publicResult.positions) ? publicResult.positions : [];
+    const flights = Array.isArray(publicResult.flights) ? publicResult.flights : [];
+    if (positions.length || flights.length){
+      return { positions, flight: normalizedFlight, flights, registration: publicResult.registration };
+    }
+  } catch (publicErr){
+    attempts.push(`public: ${publicErr?.message || publicErr}`);
+  }
   const error = new Error(attempts.length ? attempts.join('; ') : 'Live data unavailable.');
   error.attempts = attempts;
   throw error;
+}
+
+async function fetchFr24PublicLivePositionsByFlight(flight){
+  const normalizedFlight = normalizeCallsign(flight);
+  if (!normalizedFlight) throw new Error('Enter a flight number to fetch live positions.');
+  const searchFlight = normalizedFlight.replace(/[^A-Z0-9]/gi, '');
+  const url = `${FLIGHTRADAR24_PUBLIC_BASE}/common/v1/flight/list.json?query=${encodeURIComponent(searchFlight)}&fetchBy=flight&limit=1`;
+  const resp = await fetchWithCorsFallback(url, { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`FlightRadar24 public API error ${resp.status}`);
+  const json = await resp.json();
+  const flights = json?.result?.response?.data;
+  if (!Array.isArray(flights) || !flights.length) return { positions: [], flights: [], registration: '' };
+  const findMatch = (entry) => {
+    const callsign = normalizeCallsign(
+      entry?.identification?.callsign
+      || entry?.identification?.number?.default
+      || entry?.flight
+    );
+    return callsign === normalizedFlight;
+  };
+  const match = flights.find(findMatch) || flights[0];
+  const callsign = normalizeCallsign(
+    match?.identification?.callsign
+    || match?.identification?.number?.default
+    || normalizedFlight
+  );
+  const registration = normalizeRegistration(match?.aircraft?.registration);
+  const trail = Array.isArray(match?.trail) ? [...match.trail].reverse() : [];
+  const trailPositions = trail.map((item) => mapFr24PublicLivePosition(item, callsign)).filter(Boolean);
+  let livePositions = trailPositions;
+  if (!livePositions.length && match?.status?.live?.position){
+    const mapped = mapFr24PublicLivePosition(match.status.live, callsign);
+    livePositions = mapped ? [mapped] : [];
+  }
+  return { positions: livePositions, flights: [], registration };
 }
 
 async function fetchFr24LivePositions(registration){
