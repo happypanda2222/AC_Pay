@@ -99,7 +99,7 @@ const FLIGHTRADAR24_DEFAULT_VERSION = 'v1';
 const FLIGHTRADAR24_PUBLIC_BASE = 'https://api.flightradar24.com';
 const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
-let finAirportCodeMode = 'icao';
+let finAirportCodeMode = 'iata';
 const finHiddenContext = { page: null, fin: null, registration: '' };
 let flightLookupCarrier = 'ACA';
 
