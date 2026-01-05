@@ -3453,7 +3453,7 @@ async function fetchFr24LivePositionsByFlight(flight){
   if (requiresAuth && !hasAuthHeader){
     throw new Error('FlightRadar24 API token not configured. Add it in the FlightRadar24 API settings.');
   }
-  const attemptKeys = ['flight', 'callsigns'];
+  const attemptKeys = ['callsigns', 'flight'];
   const attempts = [];
   for (const key of attemptKeys){
     const url = buildFr24Url('live/flight-positions/full', { [key]: normalizedFlight });
