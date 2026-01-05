@@ -237,6 +237,7 @@
     .stacked-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
     .modern-controls{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
     .chip{padding:10px 12px;border-radius:12px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt);font-weight:700;display:flex;align-items:center;gap:8px}
+    .chip.active{background:var(--acc);color:var(--btn-primary-text);border-color:transparent}
     .modern-cta{display:flex;justify-content:flex-end;margin-top:12px}
     .btn-primary{background:var(--btn-primary);color:var(--btn-primary-text);border:none;border-radius:12px;padding:14px 16px;font-weight:800;cursor:pointer;box-shadow:var(--btn-primary-shadow)}
     .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:6px}
@@ -1045,6 +1046,25 @@
                   <span class="fin-code-thumb" aria-hidden="true"></span>
                 </button>
                 <span class="fin-code-label" data-fin-code-label="iata">IATA</span>
+              </div>
+              <div class="fin-flight-row" aria-label="Flight number lookup">
+                <div class="fin-flight-meta" style="gap:6px">
+                  <button type="button" class="chip" data-flight-carrier="ACA" aria-pressed="true">ACA</button>
+                  <button type="button" class="chip" data-flight-carrier="ROU" aria-pressed="false">ROU</button>
+                  <button type="button" class="chip" data-flight-carrier="OTHER" aria-pressed="false">Other</button>
+                </div>
+                <div class="stacked-fields" style="margin-top:10px">
+                  <div>
+                    <label for="fin-flightnumber-input">Flight number</label>
+                    <input id="fin-flightnumber-input" type="text" inputmode="numeric" autocomplete="off" autocapitalize="characters" placeholder="e.g., 123">
+                  </div>
+                </div>
+                <div class="fin-actions" style="margin-top:10px">
+                  <button type="button" class="btn" id="fin-flightnumber-lookup">Lookup flight</button>
+                  <button type="button" class="btn btn-secondary" id="fin-flightnumber-clear">Clear</button>
+                </div>
+                <div class="muted-note" id="fin-flightnumber-status" aria-live="polite"></div>
+                <div id="fin-flightnumber-results" class="fin-live-grid" style="margin-top:10px"></div>
               </div>
               <div class="fin-flight-row" id="fin-flight-current"></div>
               <div id="fin-flight-live" class="fin-live-grid hidden" aria-live="polite"></div>

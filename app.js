@@ -101,6 +101,7 @@ const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
 let finAirportCodeMode = 'icao';
 const finHiddenContext = { page: null, fin: null, registration: '' };
+let flightLookupCarrier = 'ACA';
 
 function normalizeFr24Headers(value){
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -144,6 +145,9 @@ function expandFinConfigList(list){
 
 function normalizeRegistration(reg){
   return String(reg ?? '').trim().toUpperCase();
+}
+function normalizeCallsign(value){
+  return String(value ?? '').trim().toUpperCase();
 }
 
 function cloneFetchOptions(options){
@@ -1931,6 +1935,13 @@ function findFinConfig(fin){
   if (!Number.isFinite(fin)) return null;
   return getFinConfigs().find(row => fin >= row.finStart && fin <= row.finEnd) || null;
 }
+function findFinByRegistration(reg){
+  const normalized = normalizeRegistration(reg);
+  if (!normalized) return null;
+  const match = getFinConfigs().find(row => normalizeRegistration(row.reg) === normalized);
+  if (!match) return null;
+  return { fin: match.finStart, config: match };
+}
 
 function finConfigsEqual(a, b){
   if (!a || !b) return false;
@@ -3058,9 +3069,188 @@ function setFinAirportCodeMode(mode){
   }
 }
 
-async function fetchFr24FlightSummary(registration){
-  const normalizedReg = normalizeRegistration(registration);
-  if (!normalizedReg) throw new Error('Enter a registration to fetch flight summaries.');
+function setFlightLookupCarrier(mode){
+  const normalized = ['ACA', 'ROU', 'OTHER'].includes(String(mode)) ? mode : 'OTHER';
+  flightLookupCarrier = normalized;
+  document.querySelectorAll('[data-flight-carrier]').forEach((btn) => {
+    const active = btn.dataset.flightCarrier === flightLookupCarrier;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+}
+
+function buildFlightLookupCallsign(number){
+  const raw = normalizeCallsign(number).replace(/\s+/g, '');
+  if (!raw) return '';
+  const trimmed = raw.replace(/^(ACA|ROU)/i, '');
+  if (flightLookupCarrier === 'ACA') return `ACA${trimmed}`;
+  if (flightLookupCarrier === 'ROU') return `ROU${trimmed}`;
+  return raw;
+}
+
+function clearFlightLookupResults(){
+  const outEl = document.getElementById('fin-flightnumber-results');
+  const statusEl = document.getElementById('fin-flightnumber-status');
+  if (outEl) outEl.innerHTML = '';
+  if (statusEl) statusEl.textContent = '';
+}
+
+function handleFlightRegistrationOpen(fin, registration){
+  const modernFinInput = document.getElementById('modern-fin-input');
+  if (modernFinInput){
+    modernFinInput.value = String(fin);
+    renderFinResult(document.getElementById('modern-fin-out'), String(fin));
+    closeFinHiddenPage();
+    setModernPrimaryTab('modern-fin');
+    finHiddenContext.registration = normalizeRegistration(registration);
+  }
+}
+
+function renderFlightLookupResult({ callsign, snapshot, positions, registration }){
+  const outEl = document.getElementById('fin-flightnumber-results');
+  const statusEl = document.getElementById('fin-flightnumber-status');
+  if (!outEl) return;
+  const latest = Array.isArray(positions) ? positions.find((p) => p) : null;
+  const current = snapshot?.currentFlight || null;
+  const hasData = latest || current;
+  if (!hasData){
+    outEl.innerHTML = '';
+    if (statusEl) statusEl.textContent = `No live data found for ${callsign || 'that flight'}.`;
+    return;
+  }
+  const registrationValue = normalizeRegistration(
+    registration
+    || latest?.registration
+    || current?.registration
+  );
+  const finMatch = findFinByRegistration(registrationValue);
+  const landingLocal = latest ? formatFinLandingLocalTime(latest, current) : '';
+  const landingIn = latest ? formatFinLandingMinutes(latest) : '—';
+  const cards = [
+    { label: 'Callsign', value: callsign || latest?.callsign || '—' },
+    {
+      label: 'Registration',
+      value: registrationValue || '—',
+      actionable: Boolean(finMatch),
+      fin: finMatch?.fin,
+      registration: registrationValue
+    },
+    { label: 'ICAO24', value: latest?.icao24 || '—' },
+    { label: 'Altitude', value: latest ? formatFinAltitude(latest.altitude) : '—' },
+    { label: 'Groundspeed', value: latest ? formatFinSpeed(latest.speed) : '—' },
+    { label: 'Vertical speed', value: latest ? formatFinVerticalSpeed(latest.verticalRate) : '—' },
+    { label: 'Heading', value: latest ? formatFinHeading(latest.heading) : '—' },
+    { label: 'Landing in', value: landingIn, sub: landingLocal }
+  ];
+  if (latest){
+    cards.push({
+      label: 'Updated',
+      value: latest.timestamp ? formatLocalDateTime(latest.timestamp) : '—',
+      action: 'refresh'
+    });
+  }
+  const meta = [
+    current ? describeFr24Status(current.status) : null,
+    current ? formatFinRoute(current) : null
+  ].filter(Boolean).join(' • ');
+  outEl.innerHTML = `
+    <div class="fin-flight-meta">${escapeHtml(meta || 'Flight details')}</div>
+    <div class="fin-live-grid">
+      ${cards.map((card) => {
+        const actionAttrs = card.action === 'refresh' ? 'data-flight-refresh role="button" tabindex="0" aria-label="Refresh live flight data"' : '';
+        const finAttrs = card.actionable ? `data-flight-open-fin="${card.fin}" data-flight-registration="${escapeHtml(card.registration || '')}" role="button" tabindex="0" aria-label="Open fin ${card.fin}"` : '';
+        const roleAttrs = card.actionable ? finAttrs : actionAttrs;
+        const actionableClass = (card.action === 'refresh' || card.actionable) ? ' is-actionable' : '';
+        const sub = card.sub ? `<div class="fin-live-sub">${escapeHtml(card.sub)}</div>` : '';
+        return `
+          <div class="fin-live-card${actionableClass}" ${roleAttrs}>
+            <div class="metric-label">${escapeHtml(card.label)}</div>
+            <div class="metric-value">
+              ${escapeHtml(card.value || '—')}
+              ${sub}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+  if (statusEl){
+    statusEl.textContent = 'Live flight lookup complete.';
+  }
+  outEl.querySelectorAll('[data-flight-open-fin]').forEach((card) => {
+    card.addEventListener('click', () => {
+      const fin = Number(card.dataset.flightOpenFin);
+      const reg = card.dataset.flightRegistration;
+      if (Number.isFinite(fin)) handleFlightRegistrationOpen(fin, reg);
+    });
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' '){
+        event.preventDefault();
+        const fin = Number(card.dataset.flightOpenFin);
+        const reg = card.dataset.flightRegistration;
+        if (Number.isFinite(fin)) handleFlightRegistrationOpen(fin, reg);
+      }
+    });
+  });
+  const refreshCard = outEl.querySelector('[data-flight-refresh]');
+  if (refreshCard){
+    const triggerRefresh = () => {
+      const input = document.getElementById('fin-flightnumber-input');
+      const callsignInput = buildFlightLookupCallsign(input?.value || '');
+      if (callsignInput){
+        loadFlightLookup(callsignInput, { preferRegistration: registrationValue });
+      }
+    };
+    refreshCard.addEventListener('click', triggerRefresh);
+    refreshCard.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' '){
+        event.preventDefault();
+        triggerRefresh();
+      }
+    });
+  }
+}
+
+async function loadFlightLookup(callsign, { preferRegistration } = {}){
+  const statusEl = document.getElementById('fin-flightnumber-status');
+  const outEl = document.getElementById('fin-flightnumber-results');
+  if (statusEl) statusEl.textContent = 'Fetching flight…';
+  if (outEl) outEl.innerHTML = '';
+  try {
+    const summary = await fetchFr24FlightSummary({ flight: callsign });
+    const snapshot = buildFinLocationSnapshot(summary.flights);
+    let registration = normalizeRegistration(preferRegistration || snapshot.currentFlight?.registration || '');
+    let positions = [];
+    try {
+      const live = await fetchFr24LivePositionsByFlight(callsign);
+      positions = Array.isArray(live.positions) ? live.positions : [];
+      if (!registration){
+        registration = normalizeRegistration(live.positions?.[0]?.registration);
+      }
+    } catch (liveErr){
+      console.warn('Flight callsign live lookup failed', liveErr);
+    }
+    if (!positions.length && registration){
+      try {
+        const regLive = await fetchFr24LivePositions(registration);
+        positions = Array.isArray(regLive.positions) ? regLive.positions : [];
+      } catch (regErr){
+        console.warn('Registration live lookup fallback failed', regErr);
+      }
+    }
+    renderFlightLookupResult({ callsign, snapshot, positions, registration });
+  } catch (err){
+    if (statusEl){
+      statusEl.textContent = err?.message || 'Live flight data unavailable right now.';
+    }
+  }
+}
+
+async function fetchFr24FlightSummary(input){
+  const opts = typeof input === 'string' ? { registration: input } : (input || {});
+  const normalizedReg = normalizeRegistration(opts.registration || opts.registrations || opts.reg);
+  const normalizedFlight = normalizeCallsign(opts.flight || opts.flightNumber || opts.callsign);
+  if (!normalizedReg && !normalizedFlight) throw new Error('Enter a registration or flight to fetch flight summaries.');
   const config = getFr24ApiConfig();
   const headers = buildFr24Headers();
   const hasAuthHeader = Object.keys(headers || {}).some((key) => {
@@ -3073,18 +3263,20 @@ async function fetchFr24FlightSummary(registration){
   }
   const now = new Date();
   const from = new Date(now.getTime() - (FR24_SUMMARY_LOOKBACK_HOURS * 60 * 60 * 1000));
-  const url = buildFr24Url('flight-summary/full', {
+  const params = {
     flight_datetime_from: formatFr24DateTimeUtc(from),
     flight_datetime_to: formatFr24DateTimeUtc(now),
-    registrations: normalizedReg,
     limit: 200
-  });
+  };
+  if (normalizedReg) params.registrations = normalizedReg;
+  if (normalizedFlight) params.flight = normalizedFlight;
+  const url = buildFr24Url('flight-summary/full', params);
   const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
   if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
   const json = await resp.json();
   const rows = Array.isArray(json?.data) ? json.data : [];
   const flights = rows.map(mapFr24FullSummaryFlight).filter(Boolean);
-  return { flights, registration: normalizedReg };
+  return { flights, registration: normalizedReg, flight: normalizedFlight };
 }
 
 function mapFr24LivePosition(entry){
@@ -3176,6 +3368,14 @@ function mapFr24LivePosition(entry){
     : (typeof entry.call_sign === 'string'
     ? entry.call_sign
     : (typeof entry.flight === 'string' ? entry.flight : ''));
+  const registration = normalizeRegistration(
+    entry.reg
+    ?? entry.registration
+    ?? entry.aircraft_registration
+    ?? entry.aircraft?.registration
+    ?? entry.identification?.registration
+  );
+  const icao24 = normalizeRegistration(entry.hex || entry.icao24 || entry.mode_s || entry.icao);
   return {
     lat,
     lon,
@@ -3185,7 +3385,9 @@ function mapFr24LivePosition(entry){
     verticalRate: Number.isFinite(verticalRate) ? verticalRate : null,
     timestamp,
     eta,
-    callsign
+    callsign,
+    registration,
+    icao24
   };
 }
 
@@ -3237,6 +3439,38 @@ async function fetchFr24PublicLivePositions(registration){
     livePositions = mapped ? [mapped] : [];
   }
   return { positions: livePositions, registration: normalizedReg };
+}
+async function fetchFr24LivePositionsByFlight(flight){
+  const normalizedFlight = normalizeCallsign(flight);
+  if (!normalizedFlight) throw new Error('Enter a flight number to fetch live positions.');
+  const config = getFr24ApiConfig();
+  const headers = buildFr24Headers();
+  const hasAuthHeader = Object.keys(headers || {}).some((key) => {
+    const lower = key.toLowerCase();
+    return lower === 'authorization' || lower === 'x-api-key';
+  });
+  const requiresAuth = isOfficialFr24Base(config.baseUrl);
+  if (requiresAuth && !hasAuthHeader){
+    throw new Error('FlightRadar24 API token not configured. Add it in the FlightRadar24 API settings.');
+  }
+  const attemptKeys = ['flight', 'callsigns'];
+  const attempts = [];
+  for (const key of attemptKeys){
+    const url = buildFr24Url('live/flight-positions/full', { [key]: normalizedFlight });
+    try {
+      const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+      if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
+      const json = await resp.json();
+      const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+      const positions = rows.map(mapFr24LivePosition).filter(Boolean);
+      return { positions, flight: normalizedFlight };
+    } catch (err){
+      attempts.push(`${key}: ${err?.message || err}`);
+    }
+  }
+  const error = new Error(attempts.length ? attempts.join('; ') : 'Live data unavailable.');
+  error.attempts = attempts;
+  throw error;
 }
 
 async function fetchFr24LivePositions(registration){
@@ -5417,6 +5651,54 @@ const WX_PHENOMENA_SEVERITY = {
   SA: 1,
   PY: 1
 };
+function stripVisibilityFromWxText(wxRaw){
+  if (!wxRaw) return '';
+  const tokens = String(wxRaw).trim().split(/\s+/);
+  const kept = [];
+  for (let i = 0; i < tokens.length; i += 1){
+    const tok = tokens[i];
+    if (!tok) continue;
+    const upper = tok.toUpperCase();
+    if (upper === 'RMK') break;
+    const next = tokens[i + 1];
+    if (/^\d+$/.test(tok) && next && /^M?\d+\/\d+SM$/i.test(next)){
+      i += 1;
+      continue;
+    }
+    if (/^(P|M)?\d+(\.\d+)?SM$/i.test(tok) || /^M?\d+\/\d+SM$/i.test(tok) || /^\d{4}$/.test(tok) || /^CAVOK$/i.test(tok)){
+      continue;
+    }
+    kept.push(tok);
+  }
+  return kept.join(' ').trim();
+}
+function extractWeatherTokens(wxRaw){
+  if (!wxRaw) return [];
+  const tokens = String(wxRaw).trim().split(/\s+/);
+  const seen = new Map();
+  tokens.some((tok) => {
+    if (String(tok || '').toUpperCase() === 'RMK') return true;
+    return false;
+  });
+  for (let i = 0; i < tokens.length; i += 1){
+    const tok = tokens[i];
+    if (!tok) continue;
+    if (tok.toUpperCase() === 'RMK') break;
+    const severity = wxTokenSeverity(tok);
+    if (severity === null) continue;
+    const key = tok.toUpperCase();
+    const existing = seen.get(key);
+    if (!existing || severity > existing.severity){
+      seen.set(key, { token: tok, severity });
+    }
+  }
+  return Array.from(seen.values())
+    .sort((a, b) => {
+      if (b.severity !== a.severity) return b.severity - a.severity;
+      return a.token.localeCompare(b.token);
+    })
+    .map(entry => entry.token);
+}
 function parseWindToken(token){
   if (!token) return null;
   const match = String(token).toUpperCase().match(/^(VRB|\d{3})(\d{2,3})(G(\d{2,3}))?(KT|MPS|KMH)$/);
@@ -6305,29 +6587,30 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     return;
   }
   const showDecoders = options.showDecoders === true;
+  const buildWxTokens = (wxRaw, fallbackToken) => {
+    const tokens = extractWeatherTokens(wxRaw);
+    if (fallbackToken){
+      const key = fallbackToken.toUpperCase();
+      if (!tokens.some(tok => tok.toUpperCase() === key)){
+        tokens.unshift(fallbackToken);
+      }
+    }
+    return tokens;
+  };
+  const selectToken = (tokens, candidates) => {
+    const upperCandidates = (candidates || []).map(code => code.toUpperCase());
+    return (tokens || []).find(tok => upperCandidates.some(code => tok.toUpperCase().includes(code))) || '';
+  };
+  const formatWxTokens = (tokens) => {
+    const precip = selectToken(tokens, WX_PRECIP_CODES);
+    const obstruction = selectToken(tokens, WX_OBSTRUCTION_CODES);
+    const parts = [];
+    if (precip) parts.push(precip);
+    if (obstruction && obstruction !== precip) parts.push(obstruction);
+    return parts.join(' ');
+  };
   const renderWxBox = (assessment, metricKey, labelHtml, valueHtml) => {
     return `<div class="wx-box"><div class="label">${labelHtml}</div><div class="value">${valueHtml}</div></div>`;
-  };
-  const stripVisibilityFromWxText = (wxRaw) => {
-    if (!wxRaw) return '';
-    const tokens = String(wxRaw).trim().split(/\s+/);
-    const kept = [];
-    for (let i = 0; i < tokens.length; i += 1){
-      const tok = tokens[i];
-      if (!tok) continue;
-      const upper = tok.toUpperCase();
-      if (upper === 'RMK') break;
-      const next = tokens[i + 1];
-      if (/^\d+$/.test(tok) && next && /^M?\d+\/\d+SM$/i.test(next)){
-        i += 1;
-        continue;
-      }
-      if (/^(P|M)?\d+(\.\d+)?SM$/i.test(tok) || /^M?\d+\/\d+SM$/i.test(tok) || /^\d{4}$/.test(tok) || /^CAVOK$/i.test(tok)){
-        continue;
-      }
-      kept.push(tok);
-    }
-    return kept.join(' ').trim();
   };
   const cards = assessments.map(a => {
     const airportLabel = escapeHtml(a.icao || a.name || '');
@@ -6378,11 +6661,14 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
       : (a.skyClear ? 'SKC' : 'No ceiling');
     const visTxt = a.visibilityDisplay || formatVisibilityDisplay(a.visibility, a.visibilityRaw, { icao: a.icao });
     const windTxt = formatWind(a.wind);
-    const obstructionTxt = a.obstruction?.token ? a.obstruction.token : (stripVisibilityFromWxText(a.wx) || a.wx || 'None reported');
     const ceilDisplay = withProbSuffix(ceilTxt, probCeilingText);
     const visDisplay = withProbSuffix(visTxt, probVisText);
     const windDisplay = withProbSuffix(windTxt, probWindText);
-    const obstructionDisplay = withProbSuffix(obstructionTxt || 'None reported', probObstructionText);
+    const baseWxTokens = buildWxTokens(a.wx, a.obstruction?.token);
+    const probWxTokens = buildWxTokens(prob.wxRaw || probObstructionText, prob.obstruction?.token);
+    const baseWxDisplay = formatWxTokens(baseWxTokens);
+    const probWxDisplay = formatWxTokens(probWxTokens);
+    const obstructionDisplay = withProbSuffix(baseWxDisplay, probWxDisplay) || '—';
     const ilsReason = a.ils?.reason ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(a.ils.reason)}</div>` : '';
     return `<div class="weather-card">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
@@ -7440,6 +7726,47 @@ function init(){
       setFinAirportCodeMode(label.dataset.finCodeLabel === 'iata' ? 'iata' : 'icao');
     });
   });
+  document.querySelectorAll('[data-flight-carrier]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      hapticTap(e.currentTarget);
+      setFlightLookupCarrier(btn.dataset.flightCarrier);
+    });
+  });
+  const flightLookupBtn = document.getElementById('fin-flightnumber-lookup');
+  if (flightLookupBtn){
+    flightLookupBtn.addEventListener('click', (e) => {
+      hapticTap(e.currentTarget);
+      const input = document.getElementById('fin-flightnumber-input');
+      const callsign = buildFlightLookupCallsign(input?.value || '');
+      if (!callsign){
+        const statusEl = document.getElementById('fin-flightnumber-status');
+        if (statusEl) statusEl.textContent = 'Enter a flight number to search.';
+        clearFlightLookupResults();
+        return;
+      }
+      loadFlightLookup(callsign);
+    });
+  }
+  const flightLookupClear = document.getElementById('fin-flightnumber-clear');
+  if (flightLookupClear){
+    flightLookupClear.addEventListener('click', (e) => {
+      hapticTap(e.currentTarget);
+      const input = document.getElementById('fin-flightnumber-input');
+      if (input) input.value = '';
+      clearFlightLookupResults();
+    });
+  }
+  const flightLookupInput = document.getElementById('fin-flightnumber-input');
+  if (flightLookupInput){
+    flightLookupInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter'){
+        event.preventDefault();
+        const callsign = buildFlightLookupCallsign(flightLookupInput.value);
+        if (!callsign) return;
+        loadFlightLookup(callsign);
+      }
+    });
+  }
   document.getElementById('fr24-save')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); handleFr24ConfigSave(); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
@@ -7479,6 +7806,7 @@ function init(){
   attachAirportToAirportConverter({ fromAirportId: 'modern-time-from-airport', toAirportId: 'modern-time-to-airport', fromTimeId: 'modern-time-from', toTimeId: 'modern-time-to', noteId: 'modern-time-note' });
   attachFinLookup({ inputId: 'modern-fin-input', outId: 'modern-fin-out' });
   refreshFinCodeToggleButtons();
+  setFlightLookupCarrier(flightLookupCarrier);
   populateFr24ConfigForm();
   investigateBackgroundFinSync();
   // After initializing defaults and tie logic, automatically select the
