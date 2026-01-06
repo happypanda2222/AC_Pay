@@ -7228,8 +7228,6 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
           const label = a ? `${escapeHtml(a.label)} · ${escapeHtml(a.targetText || '')}` : 'TAF';
           return `<div class="value" style="font-size:13px;line-height:1.4">TAF (${label}): ${highlighted || 'N/A'}</div>`;
         }).join('')}
-        <div class="value metar-history-heading">Recent METARs</div>
-        <div class="value muted-note">View the full METAR list on the dedicated page.</div>
         <div class="wx-actions">
           <button class="wx-flag wx-flag-compact" type="button" data-open-metar-history="${escapeHtml(src.icao || src.name || '')}">Open METAR history</button>
         </div>
