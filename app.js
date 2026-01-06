@@ -706,15 +706,21 @@ const WEATHER_API_ROOT = 'https://aviationweather.gov/api/data';
 const WEATHER_STATION_ADDITIONAL_ATTEMPTS = 5;
 const WEATHER_MAX_ATTEMPTS = 1 + WEATHER_STATION_ADDITIONAL_ATTEMPTS;
 const WEATHER_RETRY_DELAY_MS = 100;
-const WEATHER_PREFETCH_INTERVAL_MS = 5 * 60 * 1000;
 const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
-const WEATHER_PREFETCH_DELAY_MS = 100;
-const WEATHER_PREFETCH_PAUSE_TIMEOUT_MS = 100;
-const WEATHER_PREFETCH_ENABLED = ['localhost', '127.0.0.1'].includes(location.hostname);
+const WEATHER_REQUEST_TIMEOUT_MS = 4000;
+const WEATHER_PRIME_BATCH_SIZE = 3;
+const WEATHER_PRIME_DELAY_MS = 50;
+const WEATHER_PRIME_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const MAJOR_CANADIAN_AIRPORTS = ['CYWG', 'CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYHZ', 'CYQB', 'CYQR'];
 const MAJOR_US_AIRPORTS = ['KMCO', 'KTPA', 'KFLL', 'KLAS', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
-const WEATHER_PREFETCH_SEQUENCE = [...MAJOR_CANADIAN_AIRPORTS, ...MAJOR_US_AIRPORTS];
-const WEATHER_WARMUP_AIRPORTS = ['YWG', 'YYZ'];
+const WEATHER_PRIME_TARGETS = Array.from(new Set([
+  ...MAJOR_CANADIAN_AIRPORTS,
+  ...MAJOR_US_AIRPORTS,
+  'YYZ',
+  'YWG',
+  'CYYZ',
+  'CYWG'
+]));
 const DEPARTURE_METAR_THRESHOLD_HRS = 1;
 const METAR_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}`,
@@ -4672,9 +4678,19 @@ function buildCorsTargets(url, forceProxy){
   }
   return unique;
 }
+async function fetchWithTimeout(target, options, timeoutMs = WEATHER_REQUEST_TIMEOUT_MS){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('Request timed out')), timeoutMs);
+  try {
+    const resp = await fetch(target, { ...options, signal: controller.signal });
+    return resp;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 async function fetchJsonWithCorsFallback(url, cache='no-store'){
   const attempt = async (target) => {
-    const resp = await fetch(target, { cache, mode:'cors' });
+    const resp = await fetchWithTimeout(target, { cache, mode:'cors' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     return resp.json();
   };
@@ -4694,7 +4710,7 @@ async function fetchJsonWithCorsFallback(url, cache='no-store'){
 }
 async function fetchTextWithCorsFallback(url, cache='no-store'){
   const attempt = async (target) => {
-    const resp = await fetch(target, { cache, mode:'cors' });
+    const resp = await fetchWithTimeout(target, { cache, mode:'cors' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     return resp.text();
   };
@@ -6372,12 +6388,9 @@ async function fetchWeatherForAirport(icao){
   return { icao, name: icao, metar: namedMetar, taf: namedTaf, weatherWarning };
 }
 const weatherCache = new Map();
-let weatherPrefetchTimer = null;
-let weatherPrefetchInFlight = false;
-let weatherPrefetchAbort = false;
-let weatherPrefetchCursor = 0;
-let weatherPrefetchCyclePromise = null;
-let weatherWarmupPromise = null;
+let weatherPrimeTimer = null;
+let weatherPrimeInFlight = false;
+let weatherPrimePromise = null;
 function cacheWeatherResult(icao, data){
   if (!icao || !data) return;
   weatherCache.set(String(icao).toUpperCase(), { data, fetchedAt: Date.now() });
@@ -6415,97 +6428,51 @@ async function getWeatherForAirport(icao, { forceRefresh = false } = {}){
   result.weatherWarning = result.weatherWarning || `${warningPrefix}${warningSuffix}`;
   return result;
 }
-async function prefetchWeatherAirports(list, label){
-  for (const icao of list){
-    if (weatherPrefetchAbort) return;
-    try {
-      await getWeatherForAirport(icao, { forceRefresh: true });
-    } catch (err){
-      console.warn(`Weather prefetch failed for ${label} airport ${icao}`, err);
-    }
-    await sleep(WEATHER_PREFETCH_DELAY_MS);
-    weatherPrefetchCursor = (weatherPrefetchCursor + 1) % WEATHER_PREFETCH_SEQUENCE.length;
-  }
-}
-async function prefetchWeatherSequenceFromCursor(){
-  const start = weatherPrefetchCursor % WEATHER_PREFETCH_SEQUENCE.length;
-  const ordered = WEATHER_PREFETCH_SEQUENCE.slice(start).concat(WEATHER_PREFETCH_SEQUENCE.slice(0, start));
-  await prefetchWeatherAirports(ordered, 'Prefetch');
-  if (!weatherPrefetchAbort) weatherPrefetchCursor = 0;
-}
-async function runWeatherPrefetchCycle(){
-  if (!WEATHER_PREFETCH_ENABLED) return null;
-  if (weatherPrefetchInFlight) return weatherPrefetchCyclePromise;
-  weatherPrefetchInFlight = true;
-  weatherPrefetchAbort = false;
-  const cycle = (async () => {
-    try {
-      await prefetchWeatherSequenceFromCursor();
-    } finally {
-      weatherPrefetchInFlight = false;
-      weatherPrefetchCyclePromise = null;
-    }
-  })();
-  weatherPrefetchCyclePromise = cycle;
-  return cycle;
-}
-async function pauseWeatherPrefetch({ waitMs = WEATHER_PREFETCH_PAUSE_TIMEOUT_MS } = {}){
-  weatherPrefetchAbort = true;
-  if (weatherPrefetchCyclePromise){
-    try {
-      const waitPromise = waitMs > 0
-        ? Promise.race([weatherPrefetchCyclePromise, sleep(waitMs)])
-        : weatherPrefetchCyclePromise;
-      await waitPromise;
-    } catch (err){
-      console.warn('Weather prefetch cycle ended with error', err);
-    }
-  }
-}
-function warmWeatherCache(airports){
+async function primeWeatherCache(airports = WEATHER_PRIME_TARGETS){
   const targets = Array.from(new Set((airports || []).map(code => String(code || '').toUpperCase()).filter(Boolean)));
   if (!targets.length) return null;
-  weatherWarmupPromise = (async () => {
+  if (weatherPrimeInFlight) return weatherPrimePromise;
+  weatherPrimeInFlight = true;
+  const run = (async () => {
     try {
-      await fetchWeatherWithPriority(targets, (icao) => getWeatherForAirport(icao, { forceRefresh: true }));
-    } catch (err){
-      console.warn('Weather warmup failed', err);
+      for (let i = 0; i < targets.length; i += WEATHER_PRIME_BATCH_SIZE){
+        const batch = targets.slice(i, i + WEATHER_PRIME_BATCH_SIZE);
+        await Promise.all(batch.map((icao) => getWeatherForAirport(icao, { forceRefresh: true }).catch((err) => {
+          console.warn(`Weather prime failed for ${icao}`, err);
+          return null;
+        })));
+        if (i + WEATHER_PRIME_BATCH_SIZE < targets.length){
+          await sleep(WEATHER_PRIME_DELAY_MS);
+        }
+      }
+    } finally {
+      weatherPrimeInFlight = false;
+      weatherPrimePromise = null;
     }
   })();
-  return weatherWarmupPromise;
+  weatherPrimePromise = run;
+  return run;
 }
-function startWeatherPrefetchLoop(){
-  if (!WEATHER_PREFETCH_ENABLED) return;
-  const warmup = warmWeatherCache(WEATHER_WARMUP_AIRPORTS);
-  if (warmup){
-    warmup.finally(() => runWeatherPrefetchCycle());
-  } else {
-    runWeatherPrefetchCycle();
-  }
-  if (weatherPrefetchTimer) clearInterval(weatherPrefetchTimer);
-  weatherPrefetchTimer = setInterval(runWeatherPrefetchCycle, WEATHER_PREFETCH_INTERVAL_MS);
+function startWeatherPrimeLoop(){
+  primeWeatherCache();
+  if (weatherPrimeTimer) clearInterval(weatherPrimeTimer);
+  weatherPrimeTimer = setInterval(primeWeatherCache, WEATHER_PRIME_REFRESH_INTERVAL_MS);
 }
 async function fetchWeatherWithPriority(airports, fetcher){
   const targets = Array.from(new Set((airports || []).map(code => String(code || '').toUpperCase()).filter(Boolean)));
-  await pauseWeatherPrefetch({ waitMs: WEATHER_PREFETCH_PAUSE_TIMEOUT_MS });
-  try {
-    const entries = await Promise.all(targets.map(async (icao) => {
-      try {
-        const data = await fetcher(icao);
-        return [icao, data];
-      } catch (err){
-        console.warn(`Weather fetch failed for ${icao}`, err);
-        return [icao, null];
-      }
-    }));
-    return entries.reduce((acc, [icao, data]) => {
-      if (icao) acc[icao] = data;
-      return acc;
-    }, {});
-  } finally {
-    weatherPrefetchAbort = false;
-    runWeatherPrefetchCycle();
-  }
+  const entries = await Promise.all(targets.map(async (icao) => {
+    try {
+      const data = await fetcher(icao);
+      return [icao, data];
+    } catch (err){
+      console.warn(`Weather fetch failed for ${icao}`, err);
+      return [icao, null];
+    }
+  }));
+  return entries.reduce((acc, [icao, data]) => {
+    if (icao) acc[icao] = data;
+    return acc;
+  }, {});
 }
 let latestWeatherContext = { assessments: [], weatherMap: {}, rawSources: [], outEl: null, rawEl: null };
 function pickLower(a, b){
@@ -8022,7 +7989,7 @@ function init(){
   const arrWx = document.getElementById('wx-arr'); if (arrWx && !arrWx.value) arrWx.value = 'YYZ';
   const depWxM = document.getElementById('modern-wx-dep'); if (depWxM && !depWxM.value) depWxM.value = 'YWG';
   const arrWxM = document.getElementById('modern-wx-arr'); if (arrWxM && !arrWxM.value) arrWxM.value = 'YYZ';
-  startWeatherPrefetchLoop();
+  startWeatherPrimeLoop();
 }
 if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', init); } else { init(); }
 // PWA: register the service worker
