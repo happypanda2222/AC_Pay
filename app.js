@@ -4729,6 +4729,15 @@ function extractVisibilityToken(tokens){
   const meterToken = tokens.find(t => /^\d{4}$/.test(t));
   return meterToken || null;
 }
+const CLOUD_LAYER_TOKEN_RE = /^(VV|FEW|SCT|BKN|OVC)\d{3}$/i;
+function parseCloudLayerToken(token){
+  const text = String(token || '').toUpperCase();
+  if (!CLOUD_LAYER_TOKEN_RE.test(text)) return null;
+  const isVertVis = text.startsWith('VV');
+  const cover = isVertVis ? 'VV' : text.slice(0, 3);
+  const baseDigits = isVertVis ? text.slice(2) : text.slice(3);
+  return { cover, base: normalizeCloudBaseFt(Number(baseDigits)) };
+}
 function segmentVisibilityRaw(seg){
   if (!seg) return null;
   const direct = seg.visibRaw ?? seg.visRaw ?? seg.visibility_raw ?? seg.visibilityRaw;
@@ -4777,10 +4786,7 @@ function parseMetarText(raw, icao){
   const tokens = rawLine.split(/\s+/);
   const visToken = extractVisibilityToken(tokens);
   const vvToken = tokens.find(t => /^VV\d{3}/.test(t));
-  const clouds = tokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}/.test(t)).map(t => ({
-    cover: t.slice(0,3),
-    base: normalizeCloudBaseFt(Number(t.slice(3)))
-  }));
+  const clouds = tokens.filter(t => CLOUD_LAYER_TOKEN_RE.test(t)).map(parseCloudLayerToken).filter(Boolean);
   const visib = visToken ? parseVisibilityToSM(visToken, { icao }) : null;
   const vertVis = vvToken ? Number(vvToken.slice(2)) * 100 : null;
   return {
@@ -4879,8 +4885,8 @@ function parseTafRawForecasts(rawTAF, icao){
   const buildSegment = (segmentTokens, startMs, endMs, changeIndicator, startIdx, endIdx) => {
     if (!startMs || !endMs || startMs === endMs) return null;
     const visToken = extractVisibilityToken(segmentTokens);
-    const cloudTokens = segmentTokens.filter(t => /^(VV|FEW|SCT|BKN|OVC)\d{3}$/.test(t));
-    const clouds = cloudTokens.map(t => ({ cover: t.slice(0,3), base: normalizeCloudBaseFt(Number(t.slice(3))) }));
+    const cloudTokens = segmentTokens.filter(t => CLOUD_LAYER_TOKEN_RE.test(t));
+    const clouds = cloudTokens.map(parseCloudLayerToken).filter(Boolean);
     const windToken = segmentTokens.find(t => parseWindToken(t));
     const wind = windToken ? parseWindToken(windToken) : null;
     const wxString = segmentTokens.join(' ').trim();
