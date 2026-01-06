@@ -4289,23 +4289,34 @@ function setModernPrimaryTab(which){
   const finBtn = document.getElementById('tabbtn-modern-fin');
   const payPane = document.getElementById('modern-pay');
   const weatherPane = document.getElementById('modern-weather');
+  const metarHistoryPane = document.getElementById('modern-metar-history');
   const dutyPane = document.getElementById('modern-duty-rest');
   const finPane = document.getElementById('modern-fin');
   const finHiddenPane = document.getElementById('modern-fin-hidden');
   const showPay = which === 'modern-pay';
   const showWeather = which === 'modern-weather';
+  const showMetarHistory = which === 'modern-metar-history';
+  const showWeatherTab = showWeather || showMetarHistory;
   const showDuty = which === 'modern-duty-rest';
   const showFin = which === 'modern-fin';
   const showingHiddenFin = showFin && finHiddenContext.page !== null;
   payBtn?.classList.toggle('active', showPay);
-  weatherBtn?.classList.toggle('active', showWeather);
+  weatherBtn?.classList.toggle('active', showWeatherTab);
   dutyBtn?.classList.toggle('active', showDuty);
   finBtn?.classList.toggle('active', showFin);
   payPane?.classList.toggle('hidden', !showPay);
   weatherPane?.classList.toggle('hidden', !showWeather);
+  metarHistoryPane?.classList.toggle('hidden', !showMetarHistory);
   dutyPane?.classList.toggle('hidden', !showDuty);
   finPane?.classList.toggle('hidden', !showFin || showingHiddenFin);
   finHiddenPane?.classList.toggle('hidden', !showFin || !showingHiddenFin);
+  if (!showMetarHistory){
+    const metarPage = document.getElementById('metar-history-page');
+    if (metarPage){
+      metarPage.classList.add('hidden');
+      metarPage.setAttribute('aria-hidden', 'true');
+    }
+  }
   if (showPay) setModernSubTab(currentModernSubTab);
   if (showDuty) setModernDutyTab(currentModernDutyTab);
   if (showFin && !showingHiddenFin) setModernFinTab(currentModernFinTab);
@@ -6591,15 +6602,18 @@ function renderMetarHistoryBody(highlightMs = null){
 }
 function closeMetarHistoryPage(){
   const { page } = metarHistoryPageElements();
-  if (!page) return;
-  page.classList.add('hidden');
-  page.setAttribute('aria-hidden', 'true');
+  if (page){
+    page.classList.add('hidden');
+    page.setAttribute('aria-hidden', 'true');
+  }
+  setModernPrimaryTab('modern-weather');
   metarHistoryPageState.source = null;
   metarHistoryPageState.trend = null;
 }
 function openMetarDetailsPanel(icao){
   const els = metarHistoryPageElements();
   if (!els.page) return;
+  setModernPrimaryTab('modern-metar-history');
   const source = findMetarHistorySource(icao);
   metarHistoryPageState.source = source;
   metarHistoryPageState.trend = source ? computeMetarTrend(source.metarHistory || [], source.icao || source.name) : null;

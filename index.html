@@ -407,26 +407,15 @@
     .fin-confirm-dialog h4{margin:0 0 8px 0;font-size:16px}
     .fin-confirm-dialog p{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
     .fin-confirm-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
-    .metar-history-page{
-      position:fixed;
-      inset:0;
-      background:rgba(5,7,12,0.85);
-      backdrop-filter:blur(6px);
-      display:flex;
-      align-items:flex-start;
-      justify-content:center;
-      padding:16px;
-      overflow:auto;
-      z-index:70;
-    }
+    .metar-history-page{display:block}
     .metar-history-panel{
       width:100%;
-      max-width:860px;
-      margin:auto;
+      max-width:900px;
+      margin:0 auto;
       background:var(--card);
       border:1px solid #1f2633;
       border-radius:16px;
-      box-shadow:0 16px 40px rgba(0,0,0,0.45);
+      box-shadow:0 8px 26px rgba(0,0,0,0.35);
       padding:14px;
     }
     .metar-history-header{
@@ -786,6 +775,27 @@
               <h3>Field condition outlook</h3>
               <div id="modern-wx-out"></div>
               <details class="drawer hidden" id="modern-wx-raw"><summary>Show METAR/TAF inputs</summary><div id="modern-wx-raw-body"></div></details>
+            </div>
+          </div>
+        </div>
+
+        <div id="modern-metar-history" class="modern-tab hidden">
+          <div class="modern-panel">
+            <div id="metar-history-page" class="metar-history-page hidden" aria-hidden="true">
+              <div class="metar-history-panel">
+                <div class="metar-history-header">
+                  <button id="metar-history-close" class="btn-secondary" type="button">Back to weather</button>
+                  <div>
+                    <div class="metar-history-title" id="metar-history-title">METAR history</div>
+                    <div class="metar-history-meta" id="metar-history-meta">Recent METARs</div>
+                  </div>
+                  <div class="metar-history-actions">
+                    <span class="metar-trend-badge metar-trend-neutral" id="metar-history-ceiling" role="button" tabindex="0" aria-label="Ceiling trend bubble">Ceiling</span>
+                    <span class="metar-trend-badge metar-trend-neutral" id="metar-history-visibility" role="button" tabindex="0" aria-label="Visibility trend bubble">Vis</span>
+                  </div>
+                </div>
+                <div class="metar-history-body" id="metar-history-body"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -1159,22 +1169,6 @@
     <div class="version-meta" aria-live="polite">
       <span class="version-label">Version</span>
       <span id="version" aria-label="App version"></span>
-    </div>
-  </div>
-  <div id="metar-history-page" class="metar-history-page hidden" aria-hidden="true">
-    <div class="metar-history-panel">
-      <div class="metar-history-header">
-        <button id="metar-history-close" class="btn-secondary" type="button">Back</button>
-        <div>
-          <div class="metar-history-title" id="metar-history-title">METAR history</div>
-          <div class="metar-history-meta" id="metar-history-meta">Recent METARs</div>
-        </div>
-        <div class="metar-history-actions">
-          <span class="metar-trend-badge metar-trend-neutral" id="metar-history-ceiling" role="button" tabindex="0" aria-label="Ceiling trend bubble">Ceiling</span>
-          <span class="metar-trend-badge metar-trend-neutral" id="metar-history-visibility" role="button" tabindex="0" aria-label="Visibility trend bubble">Vis</span>
-        </div>
-      </div>
-      <div class="metar-history-body" id="metar-history-body"></div>
     </div>
   </div>
   <script src="app.js" defer></script>
