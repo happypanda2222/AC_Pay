@@ -711,6 +711,7 @@ const WEATHER_REQUEST_TIMEOUT_MS = 4000;
 const WEATHER_PRIME_BATCH_SIZE = 3;
 const WEATHER_PRIME_DELAY_MS = 50;
 const WEATHER_PRIME_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const METAR_HISTORY_LOOKBACK_HOURS = 6;
 const MAJOR_CANADIAN_AIRPORTS = ['CYWG', 'CYYZ', 'CYVR', 'CYUL', 'CYYC', 'CYOW', 'CYEG', 'CYHZ', 'CYQB', 'CYQR'];
 const MAJOR_US_AIRPORTS = ['KMCO', 'KTPA', 'KFLL', 'KLAS', 'KSFO', 'KDEN', 'KDFW', 'KBOS', 'KSEA', 'KMIA'];
 const WEATHER_PRIME_TARGETS = Array.from(new Set([
@@ -729,6 +730,10 @@ const METAR_JSON_ENDPOINTS = [
 const TAF_JSON_ENDPOINTS = [
   (icao) => `${WEATHER_API_ROOT}/taf?format=json&ids=${icao}`,
   (icao) => `https://aviationweather.gov/cgi-bin/data/taf.php?format=json&ids=${icao}`
+];
+const METAR_HISTORY_JSON_ENDPOINTS = [
+  (icao) => `${WEATHER_API_ROOT}/metar?format=json&ids=${icao}&hours=${METAR_HISTORY_LOOKBACK_HOURS}`,
+  (icao) => `https://aviationweather.gov/cgi-bin/data/metar.php?format=json&ids=${icao}&hours=${METAR_HISTORY_LOOKBACK_HOURS}`
 ];
 const METAR_TEXT_FALLBACKS = [
   (icao) => `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`,
@@ -6343,8 +6348,24 @@ function pickFirstWeatherRecord(payload, arrayKeys){
   }
   return null;
 }
+function pickWeatherRecords(payload, arrayKeys){
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload.filter(Boolean);
+  if (typeof payload === 'object'){
+    for (const key of arrayKeys){
+      const list = payload[key];
+      if (Array.isArray(list) && list.length) return list.filter(Boolean);
+    }
+    if (Array.isArray(payload.features) && payload.features.length){
+      return payload.features
+        .map(feature => feature?.properties || feature)
+        .filter(Boolean);
+    }
+  }
+  return [];
+}
 function hasWeatherData(record){
-  return Boolean(record?.metar || record?.taf);
+  return Boolean(record?.metar || record?.taf || (record?.metarHistory && record.metarHistory.length));
 }
 async function fetchJsonWeatherRecord(builders, icao, label, keys){
   for (const buildUrl of builders){
@@ -6359,13 +6380,30 @@ async function fetchJsonWeatherRecord(builders, icao, label, keys){
   }
   return null;
 }
+async function fetchMetarHistory(icao){
+  for (const buildUrl of METAR_HISTORY_JSON_ENDPOINTS){
+    const url = buildUrl(icao);
+    try {
+      const payload = await fetchJsonWithCorsFallback(url, 'no-store');
+      const records = pickWeatherRecords(payload, ['metars', 'data', 'results']);
+      if (records.length) return records;
+    } catch(err){
+      console.warn(`METAR history fetch failed for ${icao} at ${url}`, err);
+    }
+  }
+  return [];
+}
 async function fetchWeatherForAirport(icao){
-  const [metarJson, tafJson] = await Promise.all([
-    fetchJsonWeatherRecord(METAR_JSON_ENDPOINTS, icao, 'METAR', ['metars', 'data', 'results'])
-      .catch(() => null),
+  const [tafJson, metarHistoryRaw] = await Promise.all([
     fetchJsonWeatherRecord(TAF_JSON_ENDPOINTS, icao, 'TAF', ['tafs', 'data', 'results'])
-      .catch(() => null)
+      .catch(() => null),
+    fetchMetarHistory(icao).catch(() => [])
   ]);
+  let metarJson = Array.isArray(metarHistoryRaw) && metarHistoryRaw.length ? metarHistoryRaw[0] : null;
+  if (!metarJson){
+    metarJson = await fetchJsonWeatherRecord(METAR_JSON_ENDPOINTS, icao, 'METAR', ['metars', 'data', 'results'])
+      .catch(() => null);
+  }
   const metarFromText = metarJson ? null : await fetchMetarTextWithFallbacks(icao);
   const tafTxt = tafJson ? null : await fetchTextWithCorsFallback(TAF_TEXT_FALLBACK(icao), 'no-store')
     .then(txt => parseTafText(txt, icao))
@@ -6378,14 +6416,23 @@ async function fetchWeatherForAirport(icao){
       || normalizeTafPayload(tafJson, icao)
       || tafJson)
     : null;
-  const finalMetar = metarJson || metarFromText;
+  let metarHistory = normalizeMetarHistory(metarHistoryRaw, icao);
+  const metarFromTextNamed = metarFromText ? { ...metarFromText, name: icao } : null;
+  const metarJsonNamed = metarJson ? { ...metarJson, name: icao } : null;
+  if (metarJsonNamed){
+    metarHistory = normalizeMetarHistory([metarJsonNamed, ...metarHistory], icao);
+  }
+  if (metarFromTextNamed && !metarHistory.length){
+    metarHistory = normalizeMetarHistory([metarFromTextNamed], icao);
+  }
+  const finalMetar = metarJsonNamed || metarHistory[0] || metarFromTextNamed;
   const finalTaf = tafFromJson || tafTxt;
   const namedMetar = finalMetar ? { ...finalMetar, name: icao } : null;
   const namedTaf = finalTaf ? { ...finalTaf, name: icao } : null;
   const weatherWarning = (!namedMetar && !namedTaf)
     ? `No METAR/TAF found for ${icao}. Check the airport code or try again later.`
     : '';
-  return { icao, name: icao, metar: namedMetar, taf: namedTaf, weatherWarning };
+  return { icao, name: icao, metar: namedMetar, taf: namedTaf, weatherWarning, metarHistory };
 }
 const weatherCache = new Map();
 let weatherPrimeTimer = null;
@@ -6633,6 +6680,76 @@ function metarTimeMs(metar){
   if (metar.obsTime) return Number(metar.obsTime) * 1000;
   return null;
 }
+function normalizeMetarHistory(records, icao){
+  if (!Array.isArray(records)) return [];
+  const seen = new Set();
+  const normalized = records
+    .map(rec => (rec ? { ...rec, name: rec.name || icao } : null))
+    .filter(Boolean)
+    .map(rec => ({ rec, ms: metarTimeMs(rec) }))
+    .filter(entry => Number.isFinite(entry.ms))
+    .sort((a, b) => b.ms - a.ms)
+    .reduce((acc, entry) => {
+      if (seen.has(entry.ms)) return acc;
+      seen.add(entry.ms);
+      acc.push(entry.rec);
+      return acc;
+    }, []);
+  return normalized;
+}
+function metarMetricsFromRecord(metar, icao){
+  if (!metar) return null;
+  const timeMs = metarTimeMs(metar);
+  if (!Number.isFinite(timeMs)) return null;
+  const visSource = metar.visib ?? metar.visibility ?? metar.visibility_statute_mi ?? segmentVisibilityRaw(metar);
+  const visibility = parseVisibilityToSM(visSource, { icao });
+  const ceiling = extractCeilingFt(metar.clouds, metar.vertVis);
+  const skyClear = ceiling === null && hasSkyClear(metar);
+  const ceilingValue = ceiling === null ? (skyClear ? 100000 : null) : ceiling;
+  const visibilityValue = Number.isFinite(visibility) ? visibility : null;
+  if (ceilingValue === null && visibilityValue === null) return null;
+  return { timeMs, ceiling, visibility, skyClear, ceilingValue, visibilityValue };
+}
+function metarHistorySeries(history, icao){
+  const normalized = normalizeMetarHistory(history, icao);
+  return normalized
+    .map(m => metarMetricsFromRecord(m, icao))
+    .filter(Boolean)
+    .sort((a, b) => a.timeMs - b.timeMs);
+}
+function selectTrendSeriesAfterAnchor(series, anchorMs){
+  if (!Number.isFinite(anchorMs)) return series;
+  const scoped = series.filter(entry => entry.timeMs > anchorMs);
+  if (scoped.length >= 2) return scoped;
+  return series;
+}
+function metricTrendDirection(series, metric, anchorMs){
+  if (!Array.isArray(series) || !series.length) return null;
+  const scoped = selectTrendSeriesAfterAnchor(series, anchorMs);
+  const values = scoped
+    .map(entry => (metric === 'ceiling' ? entry.ceilingValue : entry.visibilityValue))
+    .filter(val => val !== null && val !== undefined);
+  if (values.length < 2) return null;
+  const first = values[0];
+  const last = values[values.length - 1];
+  const delta = last - first;
+  const threshold = metric === 'ceiling' ? 100 : 0.25;
+  if (Math.abs(delta) < threshold) return null;
+  return delta > 0 ? 'up' : 'down';
+}
+function computeMetarTrend(history, icao, anchorMs){
+  const series = metarHistorySeries(history, icao);
+  const ceilingTrend = metricTrendDirection(series, 'ceiling', anchorMs);
+  const visibilityTrend = metricTrendDirection(series, 'visibility', anchorMs);
+  const ups = [ceilingTrend, visibilityTrend].filter(dir => dir === 'up').length;
+  const downs = [ceilingTrend, visibilityTrend].filter(dir => dir === 'down').length;
+  const direction = ups && !downs ? 'up' : (downs && !ups ? 'down' : null);
+  return {
+    direction,
+    metrics: { ceiling: ceilingTrend, visibility: visibilityTrend },
+    hasHistory: series.length > 1
+  };
+}
 function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const forceSource = options.forceSource || null;
   const forceMetar = forceSource === 'metar' ? true : Boolean(options.forceMetar);
@@ -6707,6 +6824,11 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
   const windowText = source === 'TAF' && tafSeg
     ? `${formatZulu(tafSeg.timeFrom * 1000)} → ${formatZulu(tafSeg.timeTo * 1000)}`
     : (metarMs ? `Obs ${formatZulu(metarMs)}` : 'Timing unavailable');
+  const metarTrend = computeMetarTrend(
+    airportData?.metarHistory || [],
+    airportIcao,
+    useMetar && metarMs ? metarMs : targetMs
+  );
   const reasonBits = [];
   if (ceiling !== null) reasonBits.push(`Ceiling ${ceiling} ft`);
   if (ceiling === null && skyClear) reasonBits.push('SKC');
@@ -6742,6 +6864,7 @@ function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
       ? formatVisibilityDisplay(tafProbConditions.visibility, probVisRaw, { icao: airportIcao })
       : '',
     tafIcons,
+    metarTrend,
     summary: driversSummary || reasonBits.join(' · ') || 'No significant weather decoded'
   };
 }
@@ -6767,6 +6890,24 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     const upperCandidates = (candidates || []).map(code => code.toUpperCase());
     return (tokens || []).find(tok => upperCandidates.some(code => tok.toUpperCase().includes(code))) || '';
   };
+  const renderTrendArrow = (direction, label) => {
+    if (!direction) return '';
+    const arrow = direction === 'up' ? '↑' : '↓';
+    const cls = direction === 'up' ? 'trend-arrow-up' : 'trend-arrow-down';
+    const title = direction === 'up'
+      ? `${label} improving after recent METARs`
+      : `${label} worsening after recent METARs`;
+    return `<span class="trend-arrow ${cls}" aria-label="${escapeHtml(title)}" title="${escapeHtml(title)}">${arrow}</span>`;
+  };
+  const renderMetarTrendBadge = (trend) => {
+    if (!trend || !trend.direction || !trend.hasHistory) return '';
+    const arrow = trend.direction === 'up' ? '↑' : '↓';
+    const cls = trend.direction === 'up' ? 'metar-trend-up' : 'metar-trend-down';
+    const title = trend.direction === 'up'
+      ? 'METAR ceiling/visibility improving over the last 6 hours'
+      : 'METAR ceiling/visibility worsening over the last 6 hours';
+    return `<span class="metar-trend-badge ${cls}" aria-label="${escapeHtml(title)}" title="${escapeHtml(title)}">METAR ${arrow}</span>`;
+  };
   const formatWxTokens = (tokens) => {
     const precip = selectToken(tokens, WX_PRECIP_CODES);
     const obstruction = selectToken(tokens, WX_OBSTRUCTION_CODES);
@@ -6780,8 +6921,10 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
   };
   const cards = assessments.map(a => {
     const airportLabel = escapeHtml(a.icao || a.name || '');
+    const metarTrendBadge = renderMetarTrendBadge(a.metarTrend);
     const statusContent = `<div class="status-row">
           <span class="status-badge ${a.rules?.className || ''}">${escapeHtml(a.rules?.label || '')}</span>
+          ${metarTrendBadge}
           ${a.probFlag ? `<span class="prob-flag ${a.rules?.className || ''}">${escapeHtml(a.probFlag)}</span>` : ''}
         </div>`;
     const statusArea = `<div class="wx-actions">${statusContent}</div>`;
@@ -6830,6 +6973,8 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     const ceilDisplay = withProbSuffix(ceilTxt, probCeilingText);
     const visDisplay = withProbSuffix(visTxt, probVisText);
     const windDisplay = withProbSuffix(windTxt, probWindText);
+    const ceilDisplayHtml = `${escapeHtml(ceilDisplay)}${renderTrendArrow(a.metarTrend?.metrics?.ceiling, 'Ceiling trend')}`;
+    const visDisplayHtml = `${escapeHtml(visDisplay)}${renderTrendArrow(a.metarTrend?.metrics?.visibility, 'Visibility trend')}`;
     const baseWxTokens = buildWxTokens(a.wx, a.obstruction?.token);
     const probWxTokens = buildWxTokens(prob.wxRaw || probObstructionText, prob.obstruction?.token);
     const baseWxDisplay = formatWxTokens(baseWxTokens);
@@ -6849,8 +6994,8 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
         ${statusArea}
       </div>
       <div class="wx-metric">
-        ${renderWxBox(a, 'ceiling', labelWithInfo('Ceiling', INFO_COPY.weather.ceiling), escapeHtml(ceilDisplay))}
-        ${renderWxBox(a, 'visibility', labelWithInfo('Visibility', INFO_COPY.weather.visibility), escapeHtml(visDisplay))}
+        ${renderWxBox(a, 'ceiling', labelWithInfo('Ceiling', INFO_COPY.weather.ceiling), ceilDisplayHtml)}
+        ${renderWxBox(a, 'visibility', labelWithInfo('Visibility', INFO_COPY.weather.visibility), visDisplayHtml)}
         ${renderWxBox(a, 'wind', labelWithInfo('Wind', INFO_COPY.weather.wind), escapeHtml(windDisplay))}
         ${renderWxBox(a, 'obstruction', labelWithInfo('Precip/Obstruction', INFO_COPY.weather.obstruction), escapeHtml(obstructionDisplay))}
         ${renderWxBox(a, 'ils', 'ILS guidance', `<span class=\"ils-badge\">${escapeHtml(a.ils.cat)}</span>${ilsReason}`)}
