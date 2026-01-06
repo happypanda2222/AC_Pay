@@ -6525,27 +6525,107 @@ async function fetchWeatherWithPriority(airports, fetcher){
     return acc;
   }, {});
 }
-let latestWeatherContext = { assessments: [], weatherMap: {}, rawSources: [], outEl: null, rawEl: null };
+let latestWeatherContext = { assessments: [], weatherMap: {}, rawSources: [], outEl: null, rawEl: null, rawDetails: null };
+const metarHistoryPageState = { source: null, trend: null };
 function metarHistoryAnchorId(icao){
   const safe = String(icao || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return `metar-history-${safe || 'metar'}`;
 }
-function openMetarDetailsPanel(icao){
-  const rawEl = latestWeatherContext.rawEl;
-  if (!rawEl) return;
-  const rawDetails = latestWeatherContext.rawDetails || rawEl.closest('details');
-  if (rawDetails){
-    rawDetails.classList.remove('hidden');
-    rawDetails.open = true;
+function metarHistoryPageElements(){
+  return {
+    page: document.getElementById('metar-history-page'),
+    body: document.getElementById('metar-history-body'),
+    title: document.getElementById('metar-history-title'),
+    meta: document.getElementById('metar-history-meta'),
+    ceilingBadge: document.getElementById('metar-history-ceiling'),
+    visibilityBadge: document.getElementById('metar-history-visibility'),
+    closeBtn: document.getElementById('metar-history-close')
+  };
+}
+function findMetarHistorySource(icao){
+  const code = String(icao || '').toUpperCase();
+  if (code && latestWeatherContext.weatherMap && latestWeatherContext.weatherMap[code]){
+    return latestWeatherContext.weatherMap[code];
   }
-  const targetId = icao ? metarHistoryAnchorId(icao) : '';
-  let target = targetId ? document.getElementById(targetId) : null;
-  if (!target){
-    target = rawEl;
+  const rawSources = latestWeatherContext.rawSources || [];
+  if (code){
+    const match = rawSources.find(src => String(src?.icao || src?.name || '').toUpperCase() === code);
+    if (match) return match;
   }
+  return rawSources[0] || null;
+}
+function applyMetricTrendBadge(el, metric, trend){
+  if (!el) return;
+  const detail = trend?.details?.[metric];
+  const direction = detail?.direction || null;
+  const arrow = direction === 'up' ? '↑' : (direction === 'down' ? '↓' : '');
+  const cls = direction === 'up'
+    ? 'metar-trend-up'
+    : (direction === 'down' ? 'metar-trend-down' : 'metar-trend-neutral');
+  const labelBase = metric === 'ceiling' ? 'Ceiling' : 'Vis';
+  const labelText = arrow ? `${labelBase} ${arrow}` : labelBase;
+  const startText = detail?.startMs ? ` since ${formatZulu(detail.startMs)}` : '';
+  const title = direction
+    ? `${labelBase} trend ${direction === 'up' ? 'improving' : 'worsening'}${startText}.`
+    : `${labelBase} trend unavailable.`;
+  el.textContent = labelText;
+  el.className = `metar-trend-badge ${cls}`;
+  el.setAttribute('title', title);
+  el.setAttribute('aria-label', title);
+  el.dataset.metricHighlight = detail?.startMs ? String(detail.startMs) : '';
+}
+function renderMetarHistoryBody(highlightMs = null){
+  const { body } = metarHistoryPageElements();
+  if (!body) return;
+  const source = metarHistoryPageState.source;
+  const effectiveHighlight = Number.isFinite(highlightMs) ? highlightMs : (metarHistoryPageState.trend?.startMs ?? null);
+  if (!source){
+    body.innerHTML = '<div class="wx-error">No METAR history available.</div>';
+    return;
+  }
+  body.innerHTML = renderMetarHistoryList(source.metarHistory, source.icao || source.name, { highlightMs: effectiveHighlight });
+  const target = body.querySelector('[data-highlight="true"]');
   if (target && target.scrollIntoView){
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+}
+function closeMetarHistoryPage(){
+  const { page } = metarHistoryPageElements();
+  if (!page) return;
+  page.classList.add('hidden');
+  page.setAttribute('aria-hidden', 'true');
+  metarHistoryPageState.source = null;
+  metarHistoryPageState.trend = null;
+}
+function openMetarDetailsPanel(icao){
+  const els = metarHistoryPageElements();
+  if (!els.page) return;
+  const source = findMetarHistorySource(icao);
+  metarHistoryPageState.source = source;
+  metarHistoryPageState.trend = source ? computeMetarTrend(source.metarHistory || [], source.icao || source.name) : null;
+  if (!source){
+    if (els.title) els.title.textContent = 'METAR history';
+    if (els.meta) els.meta.textContent = 'No METAR data available.';
+    if (els.body) els.body.innerHTML = '<div class="wx-error">No METAR data available for this airport.</div>';
+  } else {
+    const displayName = source.icao || source.name || 'Airport';
+    if (els.title) els.title.textContent = `METAR history · ${displayName}`;
+    const count = (source.metarHistory || []).length;
+    const trend = metarHistoryPageState.trend;
+    const latestText = trend?.latestMs ? `Latest ${formatZulu(trend.latestMs)}` : 'Latest METAR unavailable';
+    if (els.meta) els.meta.textContent = `${count || 'No'} METARs · ${latestText}`;
+    applyMetricTrendBadge(els.ceilingBadge, 'ceiling', trend);
+    applyMetricTrendBadge(els.visibilityBadge, 'visibility', trend);
+    renderMetarHistoryBody(trend?.startMs ?? null);
+  }
+  els.page.classList.remove('hidden');
+  els.page.setAttribute('aria-hidden', 'false');
+  els.closeBtn?.focus();
+}
+function handleMetarHistoryBadgeClick(metric){
+  const trend = metarHistoryPageState.trend;
+  const highlightMs = trend?.details?.[metric]?.startMs ?? trend?.startMs ?? null;
+  renderMetarHistoryBody(highlightMs);
 }
 function pickLower(a, b){
   if (b === null || b === undefined) return a;
@@ -6722,6 +6802,20 @@ function normalizeMetarHistory(records, icao){
     }, []);
   return normalized;
 }
+function renderMetarHistoryList(history, icao, options = {}){
+  const normalized = normalizeMetarHistory(history || [], icao);
+  if (!normalized.length) return '<div class="value muted-note">No METAR history available.</div>';
+  const highlightMs = Number.isFinite(options.highlightMs) ? options.highlightMs : null;
+  const items = normalized.map((rec) => {
+    const timeMs = metarTimeMs(rec);
+    const timeText = formatZulu(timeMs);
+    const raw = rec.rawOb || rec.raw_text || rec.text || rec.metar || rec.rawTAF || rec.TAF || rec.METAR || '';
+    const isHighlight = highlightMs !== null && Number.isFinite(timeMs) && Math.abs(timeMs - highlightMs) <= 60000;
+    const highlightAttr = isHighlight ? ' data-highlight="true"' : '';
+    return `<li class="metar-history-item"${highlightAttr}><div class="metar-history-time">${escapeHtml(timeText || '')}</div><div class="metar-history-raw">${escapeHtml(raw || 'N/A')}</div></li>`;
+  }).join('');
+  return `<ul class="metar-history-list">${items}</ul>`;
+}
 function metarMetricsFromRecord(metar, icao){
   if (!metar) return null;
   const timeMs = metarTimeMs(metar);
@@ -6814,7 +6908,8 @@ function computeMetarTrend(history, icao){
     metrics: { ceiling: ceilingTrend.direction, visibility: visibilityTrend.direction },
     hasHistory: series.length > 0,
     startMs,
-    latestMs
+    latestMs,
+    details: { ceiling: ceilingTrend, visibility: visibilityTrend }
   };
 }
 function summarizeWeatherWindow(airportData, targetMs, label, options = {}){
@@ -6983,16 +7078,6 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
   const renderWxBox = (assessment, metricKey, labelHtml, valueHtml) => {
     return `<div class="wx-box"><div class="label">${labelHtml}</div><div class="value">${valueHtml}</div></div>`;
   };
-  const renderMetarHistoryList = (history, icao) => {
-    const normalized = normalizeMetarHistory(history || [], icao);
-    if (!normalized.length) return '<div class="value muted-note">No METAR history available.</div>';
-    const items = normalized.map((rec) => {
-      const timeText = formatZulu(metarTimeMs(rec));
-      const raw = rec.rawOb || rec.raw_text || rec.text || rec.metar || rec.rawTAF || rec.TAF || rec.METAR || '';
-      return `<li class="metar-history-item"><div class="metar-history-time">${escapeHtml(timeText || '')}</div><div class="metar-history-raw">${escapeHtml(raw || 'N/A')}</div></li>`;
-    }).join('');
-    return `<ul class="metar-history-list">${items}</ul>`;
-  };
   const attachMetarBadgeHandlers = () => {
     if (!outEl) return;
     const badges = outEl.querySelectorAll('.metar-trend-badge');
@@ -7000,6 +7085,20 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
       const activate = () => openMetarDetailsPanel(badge.dataset.icao || '');
       badge.addEventListener('click', activate);
       badge.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' '){
+          ev.preventDefault();
+          activate();
+        }
+      });
+    });
+  };
+  const attachMetarHistoryOpeners = () => {
+    if (!rawEl) return;
+    const buttons = rawEl.querySelectorAll('[data-open-metar-history]');
+    buttons.forEach((btn) => {
+      const activate = () => openMetarDetailsPanel(btn.dataset.openMetarHistory || '');
+      btn.addEventListener('click', activate);
+      btn.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' || ev.key === ' '){
           ev.preventDefault();
           activate();
@@ -7116,11 +7215,15 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
           return `<div class="value" style="font-size:13px;line-height:1.4">TAF (${label}): ${highlighted || 'N/A'}</div>`;
         }).join('')}
         <div class="value metar-history-heading">Recent METARs</div>
-        ${renderMetarHistoryList(src.metarHistory, src.icao || src.name)}
+        <div class="value muted-note">View the full METAR list on the dedicated page.</div>
+        <div class="wx-actions">
+          <button class="wx-flag wx-flag-compact" type="button" data-open-metar-history="${escapeHtml(src.icao || src.name || '')}">Open METAR history</button>
+        </div>
       </div>
     `;
     }).join('');
     rawEl.innerHTML = rawHtml;
+    attachMetarHistoryOpeners();
   }
 }
 async function runWeatherWorkflow(opts){
@@ -8120,6 +8223,37 @@ function init(){
   document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
   document.getElementById('modern-fin-api-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); openFinHiddenPage('api'); setModernPrimaryTab('modern-fin'); });
   document.getElementById('fin-hidden-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); closeFinHiddenPage(); setModernPrimaryTab('modern-fin'); });
+  document.getElementById('metar-history-close')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); closeMetarHistoryPage(); });
+  const metarHistoryCeiling = document.getElementById('metar-history-ceiling');
+  if (metarHistoryCeiling){
+    const activate = (e) => { hapticTap(e.currentTarget); handleMetarHistoryBadgeClick('ceiling'); };
+    metarHistoryCeiling.addEventListener('click', activate);
+    metarHistoryCeiling.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' '){
+        ev.preventDefault();
+        activate(ev);
+      }
+    });
+  }
+  const metarHistoryVisibility = document.getElementById('metar-history-visibility');
+  if (metarHistoryVisibility){
+    const activate = (e) => { hapticTap(e.currentTarget); handleMetarHistoryBadgeClick('visibility'); };
+    metarHistoryVisibility.addEventListener('click', activate);
+    metarHistoryVisibility.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' '){
+        ev.preventDefault();
+        activate(ev);
+      }
+    });
+  }
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape'){
+      const page = document.getElementById('metar-history-page');
+      if (page && !page.classList.contains('hidden')){
+        closeMetarHistoryPage();
+      }
+    }
+  });
   const finCodeSwitch = document.getElementById('fin-code-switch');
   if (finCodeSwitch){
     finCodeSwitch.addEventListener('click', (e) => {
