@@ -290,12 +290,12 @@
     .status-mvfr{background:#2f260f;border-color:#eab308;color:#fef9c3}
     .status-vfr{background:#0f2c1a;border-color:#22c55e;color:#d1fae5}
     .status-unk{background:#1f2937;border-color:#4b5563;color:#e5e7eb}
-    .metar-trend-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:10px;font-weight:800;font-size:11px;letter-spacing:.3px;text-transform:uppercase;border:1px solid transparent;background:#0f1218;color:#e2e8f0}
+    .metar-trend-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:10px;font-weight:800;font-size:11px;letter-spacing:.3px;text-transform:uppercase;border:1px solid transparent;background:#0f1218;color:#e2e8f0;cursor:pointer;user-select:none;transition:transform .1s ease, border-color .15s ease}
+    .metar-trend-badge:active{transform:translateY(1px)}
+    .metar-trend-badge:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
     .metar-trend-up{background:#0f2c1a;border-color:#1f3a40;color:#a5f3fc}
     .metar-trend-down{background:#351418;border-color:#7f1d1d;color:#fecdd3}
-    .trend-arrow{margin-left:6px;font-size:13px;color:#cbd5e1}
-    .trend-arrow-up{color:#cbd5e1}
-    .trend-arrow-down{color:#cbd5e1}
+    .metar-trend-neutral{background:#0f1218;border-color:#2a2f3b;color:#cbd5e1}
     .ils-badge{display:inline-flex;align-items:center;gap:6px;background:#0f1218;border:1px solid #2a2f3b;color:var(--txt);padding:6px 10px;border-radius:10px;font-weight:700}
     .prob-flag{display:inline-flex;align-items:center;padding:6px 10px;border-radius:10px;font-weight:800;font-size:11px;letter-spacing:.3px;text-transform:uppercase;border:1px solid transparent}
     .muted-note{color:var(--muted);font-size:13px;margin-top:8px}
@@ -306,6 +306,11 @@
     .wx-box .label{font-size:12px;color:var(--muted);margin-bottom:4px}
     .wx-box .value{font-size:16px;font-weight:800}
     .wx-error{color:#fca5a5;background:#2f1616;border:1px solid #7f1d1d;padding:10px;border-radius:12px}
+    .metar-history-heading{margin-top:6px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;font-weight:800}
+    .metar-history-list{list-style:none;padding:0;margin:6px 0 0 0;display:flex;flex-direction:column;gap:6px}
+    .metar-history-item{background:#0b0f1a;border:1px solid #1f2633;border-radius:10px;padding:8px}
+    .metar-history-time{font-size:12px;color:var(--muted);margin-bottom:4px}
+    .metar-history-raw{font-family:var(--mono);font-size:13px;line-height:1.4;word-break:break-word}
     .decoder-row{display:flex;gap:6px;align-items:center;font-size:18px}
     .decoder-ok{color:#22c55e}
     .decoder-bad{color:#ef4444}
