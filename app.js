@@ -4926,10 +4926,12 @@ function parseTafRawForecasts(rawTAF, icao){
       if (range){
         const baseSeg = buildSegment(baseTokens, baseStartMs, range.startMs, baseIndicator, baseTokensStartIdx, i);
         if (baseSeg) baseSegments.push(baseSeg);
-        baseTokens = [];
+        const carriedTokens = baseTokens.length ? [...baseTokens] : [];
+        const carriedStartIdx = Number.isInteger(baseTokensStartIdx) ? baseTokensStartIdx : i;
+        baseTokens = carriedTokens;
         baseStartMs = range.startMs;
         baseIndicator = 'BECMG';
-        baseTokensStartIdx = i;
+        baseTokensStartIdx = Math.min(carriedStartIdx, i);
         i += 2;
         continue;
       }
@@ -5699,9 +5701,11 @@ function extractCeilingFt(clouds, vertVis){
       }
     });
   }
-  if (ceil === null && vertVis !== undefined && vertVis !== null){
+  if (vertVis !== undefined && vertVis !== null){
     const vv = Number(vertVis);
-    if (!Number.isNaN(vv)) ceil = vv;
+    if (!Number.isNaN(vv)){
+      ceil = ceil === null ? vv : Math.min(ceil, vv);
+    }
   }
   return ceil;
 }
