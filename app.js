@@ -7659,8 +7659,8 @@ function renderVOModern(res){
   if (!out) return;
   const metricHTML = `
     <div class="metric-grid">
-      <div class="metric-card"><div class="metric-label">${labelWithInfo('Net', INFO_COPY.vo.net)}</div><div class="metric-value">${money(res.net)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Gross', INFO_COPY.vo.gross)}</div><div class="metric-value">${money(res.gross)}</div></div>
+      <div class="metric-card"><div class="metric-label">${labelWithInfo('Net', INFO_COPY.vo.net)}</div><div class="metric-value">${money(res.net)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Hourly', INFO_COPY.vo.hourlyRate)}</div><div class="metric-value">${money(res.rate)}</div></div>
       <div class="metric-card"><div class="metric-label">${labelWithInfo('Hours (Credit×2)', INFO_COPY.vo.hours)}</div><div class="metric-value">${res.hours.toFixed(2)}</div></div>
     </div>`;
