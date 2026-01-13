@@ -55,11 +55,13 @@ async function updateVersionBadgeFromSW() {
   let lastTouch = 0;
   document.addEventListener('touchend', (e) => {
     const now = Date.now();
-    const target = e.target;
+    const target = e.target instanceof Element ? e.target : e.target?.parentElement;
     const isInteractive = target instanceof Element
       && target.closest('button, a, input, select, textarea, [role="button"], [role="tab"]');
-    if (!isInteractive && now - lastTouch < 300) { e.preventDefault(); }
-    lastTouch = now;
+    if (!isInteractive){
+      if (now - lastTouch < 300) { e.preventDefault(); }
+      lastTouch = now;
+    }
   }, {passive:false});
 })();
 
@@ -4729,6 +4731,7 @@ function tieYearStepFromStepModern(){
   if (!yearEl || !stepEl) return;
   const s = Math.max(1, Math.min(12, +stepEl.value));
   yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
+  updateProjectionControlsVisibility();
 }
 function tieYearStepFromYearModernMonthly(){
   const tie = document.getElementById('modern-mon-tie')?.checked;
@@ -4747,6 +4750,7 @@ function tieYearStepFromStepModernMonthly(){
   if (!yearEl || !stepEl) return;
   const s = Math.max(1, Math.min(12, +stepEl.value));
   yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
+  updateProjectionControlsVisibility();
 }
 function tieYearStepFromYearModernVO(){
   const tie = document.getElementById('modern-ot-tie')?.checked;
@@ -4765,6 +4769,7 @@ function tieYearStepFromStepModernVO(){
   if (!yearEl || !stepEl) return;
   const s = Math.max(1, Math.min(12, +stepEl.value));
   yearEl.value = String(Math.max(2023, Math.min(2031, 2024 + s)));
+  updateProjectionControlsVisibility();
 }
 
 // --- Weather helpers (METAR/TAF decoding) ---
