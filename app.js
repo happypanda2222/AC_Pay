@@ -866,17 +866,107 @@ const PAY_TABLES = {
 };
 
 // --- Projections 2027–2031 ---
-(function buildProjections(){
-  const raises = {2027:1.06, 2028:1.06*1.035, 2029:1.06*1.035*1.03, 2030:1.06*1.035*1.03*1.03, 2031:1.06*1.035*1.03*1.03*1.03};
-  [2027,2028,2029,2030,2031].forEach(y=>{
-    const factor = raises[y];
-    const base = PAY_TABLES[2026];
-    const proj = {}; for (const seat in base){ proj[seat]={}; for (const ac in base[seat]){
-      proj[seat][ac]={}; for (const k in base[seat][ac]){ proj[seat][ac][k] = +(base[seat][ac][k]*factor).toFixed(2); }
-    }}
-    PAY_TABLES[y] = proj;
+const PROJECTION_SCENARIOS = {
+  conservative: { label: 'Conservative', rates: [0.04, 0.03, 0.03, 0.03] },
+  realistic: { label: 'Realistic', rates: [0.10, 0.045, 0.045, 0.045] },
+  aggressive: { label: 'Aggressive', rates: [0.18, 0.06, 0.06, 0.06] }
+};
+const SLOPE_SCENARIOS = {
+  conservative: {
+    label: 'Conservative',
+    foNb: { 3:0.42, 4:0.445, 5:0.56, 6:0.575, 7:0.59, 8:0.605, 9:0.62, 10:0.635, 11:0.65, 12:0.665 },
+    foWb: { 3:0.37, 4:0.395, 5:0.545, 6:0.56, 7:0.575, 8:0.59, 9:0.605, 10:0.62, 11:0.635, 12:0.65 },
+    rp: { 3:0.285, 4:0.305, 5:0.37, 6:0.38, 7:0.39, 8:0.40, 9:0.41, 10:0.42, 11:0.425, 12:0.43 }
+  },
+  realistic: {
+    label: 'Realistic',
+    foNb: { 3:0.46, 4:0.49, 5:0.565, 6:0.58, 7:0.595, 8:0.61, 9:0.625, 10:0.64, 11:0.655, 12:0.67 },
+    foWb: { 3:0.42, 4:0.46, 5:0.55, 6:0.565, 7:0.58, 8:0.595, 9:0.61, 10:0.625, 11:0.64, 12:0.655 },
+    rp: { 3:0.32, 4:0.345, 5:0.375, 6:0.385, 7:0.395, 8:0.405, 9:0.415, 10:0.425, 11:0.43, 12:0.435 }
+  },
+  aggressive: {
+    label: 'Aggressive',
+    foNb: { 3:0.50, 4:0.53, 5:0.57, 6:0.585, 7:0.60, 8:0.615, 9:0.63, 10:0.645, 11:0.66, 12:0.68 },
+    foWb: { 3:0.47, 4:0.51, 5:0.56, 6:0.575, 7:0.59, 8:0.605, 9:0.62, 10:0.635, 11:0.65, 12:0.67 },
+    rp: { 3:0.34, 4:0.36, 5:0.385, 6:0.40, 7:0.415, 8:0.43, 9:0.44, 10:0.45, 11:0.46, 12:0.47 }
+  }
+};
+const PROJECTION_YEARS = [2027, 2028, 2029, 2030, 2031];
+let currentProjectionScenario = 'realistic';
+let currentSlopeScenario = 'realistic';
+
+function getProjectionRates(scenarioKey){
+  return PROJECTION_SCENARIOS[scenarioKey]?.rates || PROJECTION_SCENARIOS.realistic.rates;
+}
+
+function getSlopeScenario(scenarioKey){
+  return SLOPE_SCENARIOS[scenarioKey] || SLOPE_SCENARIOS.realistic;
+}
+
+function buildProjectionFactors(rates){
+  const factors = {};
+  let cumulative = 1;
+  PROJECTION_YEARS.forEach((year, idx) => {
+    const rate = rates[Math.min(idx, rates.length - 1)];
+    cumulative *= (1 + rate);
+    factors[year] = cumulative;
   });
-})();
+  return factors;
+}
+
+function rebuildProjections(scenarioKey){
+  const base = PAY_TABLES[2026];
+  if (!base) return;
+  const rates = getProjectionRates(scenarioKey);
+  const factors = buildProjectionFactors(rates);
+  PROJECTION_YEARS.forEach((year) => {
+    const factor = factors[year];
+    const proj = {};
+    for (const seat in base){
+      proj[seat] = {};
+      for (const ac in base[seat]){
+        proj[seat][ac] = {};
+        for (const k in base[seat][ac]){
+          proj[seat][ac][k] = +(base[seat][ac][k] * factor).toFixed(2);
+        }
+      }
+    }
+    PAY_TABLES[year] = proj;
+  });
+  applyAnchoredSlopesFO_RP(currentSlopeScenario);
+  applyConservativeRPCompression();
+}
+
+function refreshProjectedOutputs(){
+  const annualOut = document.getElementById('modern-out');
+  if (annualOut && annualOut.innerHTML.trim()){
+    calcAnnualModern();
+  }
+  const monthlyOut = document.getElementById('modern-mon-out');
+  if (monthlyOut && monthlyOut.innerHTML.trim()){
+    calcMonthlyModern();
+  }
+  const voOut = document.getElementById('modern-ot-out');
+  if (voOut && voOut.innerHTML.trim()){
+    calcVOModern();
+  }
+}
+
+function setProjectionScenario(scenarioKey, { recalc = true } = {}){
+  currentProjectionScenario = scenarioKey in PROJECTION_SCENARIOS ? scenarioKey : 'realistic';
+  rebuildProjections(currentProjectionScenario);
+  if (recalc){
+    refreshProjectedOutputs();
+  }
+}
+
+function setSlopeScenario(scenarioKey, { recalc = true } = {}){
+  currentSlopeScenario = scenarioKey in SLOPE_SCENARIOS ? scenarioKey : 'realistic';
+  rebuildProjections(currentProjectionScenario);
+  if (recalc){
+    refreshProjectedOutputs();
+  }
+}
 
 // === Projected 2027–2031: FO & RP anchored to CA Step 12 ===
 // Captain "composite" anchor interpreted as CA Step 12 on the same fleet/year.
@@ -885,20 +975,11 @@ const PAY_TABLES = {
 const NB_FLEETS = new Set(['320','737','220']);           // narrow-body
 const WB_FLEETS = new Set(['777','787','330','767']);      // wide-body
 
-// FO % of CA12 (Years 3–12)
-const MULT_FO_NB = { // Narrow-body
-  3:0.50, 4:0.53, 5:0.56, 6:0.58, 7:0.60, 8:0.615, 9:0.63, 10:0.645, 11:0.66, 12:0.68
-};
-const MULT_FO_WB = { // Wide-body
-  3:0.48, 4:0.51, 5:0.545, 6:0.565, 7:0.585, 8:0.60, 9:0.615, 10:0.63, 11:0.65, 12:0.67
-};
-
-// RP % of CA12 (Years 3–12; all fleets)
-const MULT_RP_ALL = {
-  3:0.35, 4:0.38, 5:0.41, 6:0.43, 7:0.45, 8:0.465, 9:0.48, 10:0.49, 11:0.495, 12:0.50
-};
-
-function applyAnchoredSlopesFO_RP() {
+function applyAnchoredSlopesFO_RP(scenarioKey) {
+  const scenario = getSlopeScenario(scenarioKey);
+  const multFoNb = scenario.foNb;
+  const multFoWb = scenario.foWb;
+  const multRp = scenario.rp;
   const YEARS = [2027, 2028, 2029, 2030, 2031];
   YEARS.forEach((y) => {
     const yr = PAY_TABLES[y];
@@ -926,7 +1007,7 @@ function applyAnchoredSlopesFO_RP() {
         if (typeof flatFO1 === 'number') fo[1] = flatFO1;
         if (typeof flatFO2 === 'number') fo[2] = flatFO2;
 
-        const map = NB_FLEETS.has(ac) ? MULT_FO_NB : MULT_FO_WB;
+        const map = NB_FLEETS.has(ac) ? multFoNb : multFoWb;
         for (let s = 3; s <= 12; s++) {
           const m = map[s]; if (!m) continue;
           const target = +(ca12 * m).toFixed(2);
@@ -943,7 +1024,7 @@ function applyAnchoredSlopesFO_RP() {
       if (yr.RP && yr.RP[ac]) {
         const rp = yr.RP[ac];
         for (let s = 3; s <= 12; s++) {
-          const m = MULT_RP_ALL[s]; if (!m) continue;
+          const m = multRp[s]; if (!m) continue;
           const target = +(ca12 * m).toFixed(2);
           rp[s] = Math.max(rp[s] || 0, target);
         }
@@ -956,7 +1037,7 @@ function applyAnchoredSlopesFO_RP() {
 }
 
 // Run after projections
-applyAnchoredSlopesFO_RP();
+setProjectionScenario(currentProjectionScenario, { recalc: false });
 
 // === Conservative RP1–4 discount compression for 2027–2031 ===
 // Discounts vs RP Step 5 on the same aircraft.
@@ -977,7 +1058,6 @@ function applyConservativeRPCompression() {
     });
   });
 }
-applyConservativeRPCompression();
 
 // --- 2025 Tax Data ---
 const FED = { brackets:[[57375,0.145],[114750,0.205],[177882,0.26],[253414,0.29],[Infinity,0.33]],
@@ -7311,12 +7391,12 @@ async function runWeatherWorkflowAttempt({ depId, arrId, depHrsId, arrHrsId, out
 // --- Renderers ---
 const INFO_COPY = {
   annual: {
-    annualGross: 'Hourly rate (seat/aircraft/year/step) multiplied by average monthly credit hours for each month, with step progression when enabled.',
+    annualGross: 'Hourly rate (seat/aircraft/year/step) multiplied by average monthly credit hours for each month, with step progression when enabled. Projected years (2027+) use the selected scenario growth rates (Year 4 repeats for 2031).',
     annualNet: 'Annual gross minus tax, CPP/QPP, EI, pension, union dues, health premiums and ESOP contributions, plus the after-tax employer ESOP match.',
-    monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours.',
+    monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours (projected years 2027+ follow the selected scenario growth rates).',
     monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match (no cheque split).',
     taxReturn: 'Estimated refund (positive) or balance owing (negative) based on annualized withholding across two monthly paycheques (advance annualized at 12, second cheque annualized at 24, pension based on full month gross), plus RRSP tax savings.',
-    hourlyRate: 'Pay table rate for each segment of the year (with XLR when toggled), including the progression date increase.',
+    hourlyRate: 'Pay table rate for each segment of the year (with XLR when toggled), including the progression date increase. Projected years (2027+) reflect the selected scenario growth rates and slope anchoring for FO/RP.',
     incomeTax: 'Total annual federal and provincial income tax after pension credits (RRSP savings are reflected in the tax return estimate).',
     cpp: 'Annual CPP/QPP contributions on employment income up to the yearly maximum.',
     ei: 'Annual EI premiums based on insurable earnings up to the yearly maximum.',
@@ -7336,7 +7416,7 @@ const INFO_COPY = {
     capitalGainsTaxable: 'Taxable portion of net capital gains after capital losses (50% inclusion rate).'
   },
   monthly: {
-    hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
+    hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
     credits: 'Monthly credit hours plus minutes (converted to hours) paid at regular rate up to 85 hours.',
     voCredits: 'VO credit hours and minutes (converted to hours) that are always paid at double time.',
     gross: 'Monthly gross combining regular hours at the hourly rate, overtime beyond 85 hours at double time and VO credits at double time.',
@@ -7356,7 +7436,7 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   vo: {
-    hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled).',
+    hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
     hours: 'Entered VO credits converted to paid hours (credits × 2 at double time).',
     gross: 'VO pay hours multiplied by the hourly rate.',
     net: 'Gross VO pay reduced by the combined marginal federal and provincial rates.',
@@ -8223,6 +8303,20 @@ function init(){
   document.getElementById('modern-step')?.addEventListener('change', ()=>tieYearStepFromStepModern());
   document.getElementById('modern-ot-step')?.addEventListener('change', ()=>tieYearStepFromStepModernVO());
   document.getElementById('modern-mon-step')?.addEventListener('change', ()=>tieYearStepFromStepModernMonthly());
+  const projectionScenarioSelect = document.getElementById('modern-projection-scenario');
+  if (projectionScenarioSelect){
+    projectionScenarioSelect.value = currentProjectionScenario;
+    projectionScenarioSelect.addEventListener('change', () => {
+      setProjectionScenario(projectionScenarioSelect.value);
+    });
+  }
+  const projectionSlopeSelect = document.getElementById('modern-projection-slope');
+  if (projectionSlopeSelect){
+    projectionSlopeSelect.value = currentSlopeScenario;
+    projectionSlopeSelect.addEventListener('change', () => {
+      setSlopeScenario(projectionSlopeSelect.value);
+    });
+  }
   document.getElementById('modern-rrsp')?.addEventListener('input', ()=>syncAdvancedRrsp(true));
   document.getElementById('modern-rrsp')?.addEventListener('change', ()=>syncAdvancedRrsp(true));
   document.getElementById('modern-duty-type')?.addEventListener('change', ()=>toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields'));
