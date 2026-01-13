@@ -1286,6 +1286,12 @@ let lastTapAt = 0;
 function addTapListener(el, handler){
   if (!el || typeof handler !== 'function') return;
   const wrapped = (event) => {
+    if (event.type === 'pointerup'){
+      if (event.pointerType === 'mouse' && event.button && event.button !== 0) return;
+      lastTapAt = Date.now();
+      handler(event);
+      return;
+    }
     if (event.type === 'touchend'){
       lastTapAt = Date.now();
       handler(event);
@@ -1296,7 +1302,11 @@ function addTapListener(el, handler){
       handler(event);
     }
   };
-  el.addEventListener('touchend', wrapped, { passive: true });
+  if (window.PointerEvent){
+    el.addEventListener('pointerup', wrapped);
+  } else {
+    el.addEventListener('touchend', wrapped, { passive: true });
+  }
   el.addEventListener('click', wrapped);
 }
 // ---- Union dues at 1.85% of gross, computed monthly ----
