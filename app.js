@@ -1275,25 +1275,37 @@ function computeCPP_EI_Daily({ year, seat, ac, stepJan1, xlrOn, avgMonthlyHours,
 }
 // ---- Best‑effort haptic tap ----
 const hapticTap = (() => {
-  let ac; // audio context
   return (el) => {
     try { if (navigator.vibrate) navigator.vibrate(10); } catch(e){}
     // micro visual pulse
     if (el) { el.classList.add('haptic-tap'); setTimeout(()=>el.classList.remove('haptic-tap'), 140); }
-    // tiny click
-    try {
-      ac = ac || new (window.AudioContext || window.webkitAudioContext)();
-      const o = ac.createOscillator();
-      const g = ac.createGain();
-      o.type = 'square';
-      o.frequency.value = 120;
-      g.gain.value = 0.02;
-      o.connect(g); g.connect(ac.destination);
-      o.start();
-      setTimeout(()=>o.stop(), 25);
-    } catch(e){}
   };
 })();
+
+let lastTapAt = 0;
+function addTapListener(el, handler){
+  if (!el || typeof handler !== 'function') return;
+  const wrapped = (event) => {
+    if (event.type === 'pointerup'){
+      if (typeof event.button === 'number' && event.button !== 0) return;
+      lastTapAt = Date.now();
+      handler(event);
+      return;
+    }
+    if (event.type === 'touchend'){
+      lastTapAt = Date.now();
+      handler(event);
+      return;
+    }
+    if (event.type === 'click'){
+      if (Date.now() - lastTapAt < 450) return;
+      handler(event);
+    }
+  };
+  el.addEventListener('pointerup', wrapped);
+  el.addEventListener('touchend', wrapped, { passive: true });
+  el.addEventListener('click', wrapped);
+}
 // ---- Union dues at 1.85% of gross, computed monthly ----
 function computeUnionDuesMonthly({ year, seat, ac, stepJan1, xlrOn, avgMonthlyHours }) {
   const segs = yearSegments(year, stepJan1);
@@ -3164,7 +3176,7 @@ function renderFinLiveDetails(container, mapContainer, snapshot, positions){
       const snapshot = buildFinLocationSnapshot(flights);
       loadFinLivePositions(reg, snapshot);
     };
-    refreshCard.addEventListener('click', triggerRefresh);
+    addTapListener(refreshCard, triggerRefresh);
     refreshCard.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' '){
         event.preventDefault();
@@ -3384,7 +3396,7 @@ function renderFlightLookupResult({ callsign, snapshot, positions, registration 
     statusEl.textContent = 'Live flight lookup complete.';
   }
   outEl.querySelectorAll('[data-flight-open-fin]').forEach((card) => {
-    card.addEventListener('click', () => {
+    addTapListener(card, () => {
       const fin = Number(card.dataset.flightOpenFin);
       const reg = card.dataset.flightRegistration;
       if (Number.isFinite(fin)) handleFlightRegistrationOpen(fin, reg);
@@ -3403,11 +3415,11 @@ function renderFlightLookupResult({ callsign, snapshot, positions, registration 
     const triggerRefresh = () => {
       const input = document.getElementById('fin-flightnumber-input');
       const callsignInput = buildFlightLookupCallsign(input?.value || '');
-      if (callsignInput){
-        loadFlightLookup(callsignInput, { preferRegistration: registrationValue });
-      }
-    };
-    refreshCard.addEventListener('click', triggerRefresh);
+    if (callsignInput){
+      loadFlightLookup(callsignInput, { preferRegistration: registrationValue });
+    }
+  };
+    addTapListener(refreshCard, triggerRefresh);
     refreshCard.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' '){
         event.preventDefault();
@@ -4028,13 +4040,13 @@ function getFinDeleteOverlay(){
       </div>
     </div>
   `;
-  overlay.addEventListener('click', (event) => {
+  addTapListener(overlay, (event) => {
     if (event.target === overlay){
       closeFinDeleteOverlay();
     }
   });
-  overlay.querySelector('[data-fin-delete-cancel]').addEventListener('click', closeFinDeleteOverlay);
-  overlay.querySelector('[data-fin-delete-confirm]').addEventListener('click', () => {
+  addTapListener(overlay.querySelector('[data-fin-delete-cancel]'), closeFinDeleteOverlay);
+  addTapListener(overlay.querySelector('[data-fin-delete-confirm]'), () => {
     const fin = finDeleteState.fin;
     deleteFinFromConfigs(fin);
     refreshFinResults();
@@ -4232,7 +4244,7 @@ function attachFinLookup({ inputId, outId }){
     input.addEventListener('change', update);
   }
   if (!out.dataset.finBound){
-    out.addEventListener('click', (event) => {
+    addTapListener(out, (event) => {
       const finValue = input?.value?.trim() ?? '';
       const fin = Number(finValue);
       const locationTrigger = event.target?.closest('[data-fin-location]');
@@ -5724,7 +5736,7 @@ function runTimeCalculator({ startId, hoursId, minutesId, modeId, outId, convert
     if (canConvert){
       const convertBtn = out.querySelector('[data-action="timecalc-convert"]');
       if (convertBtn){
-        convertBtn.addEventListener('click', (e) => {
+        addTapListener(convertBtn, (e) => {
           hapticTap(e.currentTarget);
           sendTimeCalcToConverter({
             timeLabel: adjustedLabel,
@@ -7213,7 +7225,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     const badges = outEl.querySelectorAll('.metar-trend-badge');
     badges.forEach((badge) => {
       const activate = () => openMetarDetailsPanel(badge.dataset.icao || '');
-      badge.addEventListener('click', activate);
+      addTapListener(badge, activate);
       badge.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' || ev.key === ' '){
           ev.preventDefault();
@@ -7227,7 +7239,7 @@ function renderWeatherResults(outEl, rawEl, assessments, rawSources, options = {
     const buttons = rawEl.querySelectorAll('[data-open-metar-history]');
     buttons.forEach((btn) => {
       const activate = () => openMetarDetailsPanel(btn.dataset.openMetarHistory || '');
-      btn.addEventListener('click', activate);
+      addTapListener(btn, activate);
       btn.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' || ev.key === ' '){
           ev.preventDefault();
@@ -7679,10 +7691,10 @@ function renderAdvancedTaxReturn({ baseParams, baseResult, advancedResult, isMod
 function bindAdvancedReturnTriggers(container){
   if (!container) return;
   container.querySelectorAll('[data-advanced-target]').forEach((btn) => {
-    btn.onclick = () => {
+    addTapListener(btn, () => {
       const target = btn.getAttribute('data-advanced-target');
       openAdvancedTaxTab(target === 'modern');
-    };
+    });
   });
 }
 
@@ -7907,7 +7919,7 @@ function renderDutyResult(outEl, result, isModern){
   }
   const convertButtons = outEl.querySelectorAll('.convert-btn');
   convertButtons.forEach((convertBtn) => {
-    convertBtn.addEventListener('click', (e) => {
+    addTapListener(convertBtn, (e) => {
       hapticTap(e.currentTarget);
       const utcTime = convertBtn.getAttribute('data-utc-time') || '';
       const ui = convertBtn.getAttribute('data-ui') || 'legacy';
@@ -8304,19 +8316,19 @@ function init(){
   setModernPrimaryTab('modern-pay');
   setModernSubTab('modern-annual');
   setModernDutyTab('modern-duty');
-  document.getElementById('tabbtn-modern-pay')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-pay'); });
-  document.getElementById('tabbtn-modern-weather')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-weather'); });
-  document.getElementById('tabbtn-modern-duty-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-duty-rest'); });
-  document.getElementById('tabbtn-modern-fin')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-fin'); });
-  document.getElementById('tabbtn-modern-annual')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
-  document.getElementById('tabbtn-modern-monthly')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
-  document.getElementById('tabbtn-modern-vo')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
-  document.getElementById('tabbtn-modern-fin-qrh')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernFinTab('modern-fin-qrh'); });
-  document.getElementById('tabbtn-modern-flight-number')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernFinTab('modern-flight-number'); });
-  document.getElementById('tabbtn-modern-duty')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-duty'); });
-  document.getElementById('tabbtn-modern-rest')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-rest'); });
-  document.getElementById('tabbtn-modern-time-converter')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-converter'); });
-  document.getElementById('tabbtn-modern-time-calculator')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-calculator'); });
+  addTapListener(document.getElementById('tabbtn-modern-pay'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-pay'); });
+  addTapListener(document.getElementById('tabbtn-modern-weather'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-weather'); });
+  addTapListener(document.getElementById('tabbtn-modern-duty-rest'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-duty-rest'); });
+  addTapListener(document.getElementById('tabbtn-modern-fin'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-fin'); });
+  addTapListener(document.getElementById('tabbtn-modern-annual'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
+  addTapListener(document.getElementById('tabbtn-modern-monthly'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
+  addTapListener(document.getElementById('tabbtn-modern-vo'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
+  addTapListener(document.getElementById('tabbtn-modern-fin-qrh'), (e)=>{ hapticTap(e.currentTarget); setModernFinTab('modern-fin-qrh'); });
+  addTapListener(document.getElementById('tabbtn-modern-flight-number'), (e)=>{ hapticTap(e.currentTarget); setModernFinTab('modern-flight-number'); });
+  addTapListener(document.getElementById('tabbtn-modern-duty'), (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-duty'); });
+  addTapListener(document.getElementById('tabbtn-modern-rest'), (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-rest'); });
+  addTapListener(document.getElementById('tabbtn-modern-time-converter'), (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-converter'); });
+  addTapListener(document.getElementById('tabbtn-modern-time-calculator'), (e)=>{ hapticTap(e.currentTarget); setModernDutyTab('modern-time-calculator'); });
   // Dropdown behaviors
   document.getElementById('modern-seat')?.addEventListener('change', ()=>onSeatChangeModern());
   document.getElementById('modern-ot-seat')?.addEventListener('change', ()=>onSeatChangeModernVO());
@@ -8357,23 +8369,23 @@ function init(){
   const newMonEsopEl=document.getElementById('modern-mon-esop'); const newMonEsopPct=document.getElementById('modern-mon-esopPct');
   if (newMonEsopEl && newMonEsopPct){ newMonEsopEl.addEventListener('input', ()=>{ newMonEsopPct.textContent = newMonEsopEl.value+'%'; }); }
   // Buttons
-  document.getElementById('modern-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
-  document.getElementById('modern-adv-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcAdvancedReturn(true); });
-  document.getElementById('modern-adv-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
-  document.getElementById('modern-ot-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
-  document.getElementById('modern-mon-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
-  document.getElementById('modern-duty-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcDutyModern(); });
-  document.getElementById('modern-rest-calc')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); calcRestModern(); });
-  document.getElementById('modern-wx-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
-  document.getElementById('modern-timecalc-run')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out', converterTarget:'modern' }); });
-  document.getElementById('modern-fin-export-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
-  document.getElementById('modern-fin-api-btn')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); openFinHiddenPage('api'); setModernPrimaryTab('modern-fin'); });
-  document.getElementById('fin-hidden-back')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); closeFinHiddenPage(); setModernPrimaryTab('modern-fin'); });
-  document.getElementById('metar-history-close')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); closeMetarHistoryPage(); });
+  addTapListener(document.getElementById('modern-calc'), (e)=>{ hapticTap(e.currentTarget); calcAnnualModern(); });
+  addTapListener(document.getElementById('modern-adv-calc'), (e)=>{ hapticTap(e.currentTarget); calcAdvancedReturn(true); });
+  addTapListener(document.getElementById('modern-adv-back'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
+  addTapListener(document.getElementById('modern-ot-calc'), (e)=>{ hapticTap(e.currentTarget); calcVOModern(); });
+  addTapListener(document.getElementById('modern-mon-calc'), (e)=>{ hapticTap(e.currentTarget); calcMonthlyModern(); });
+  addTapListener(document.getElementById('modern-duty-calc'), (e)=>{ hapticTap(e.currentTarget); calcDutyModern(); });
+  addTapListener(document.getElementById('modern-rest-calc'), (e)=>{ hapticTap(e.currentTarget); calcRestModern(); });
+  addTapListener(document.getElementById('modern-wx-run'), (e)=>{ hapticTap(e.currentTarget); runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' }); });
+  addTapListener(document.getElementById('modern-timecalc-run'), (e)=>{ hapticTap(e.currentTarget); runTimeCalculator({ startId:'modern-timecalc-start', hoursId:'modern-timecalc-hours', minutesId:'modern-timecalc-minutes', modeId:'modern-timecalc-mode', outId:'modern-timecalc-out', converterTarget:'modern' }); });
+  addTapListener(document.getElementById('modern-fin-export-btn'), (e)=>{ hapticTap(e.currentTarget); exportFinConfigsToGitHub({ statusId: 'modern-fin-export-status' }); });
+  addTapListener(document.getElementById('modern-fin-api-btn'), (e)=>{ hapticTap(e.currentTarget); openFinHiddenPage('api'); setModernPrimaryTab('modern-fin'); });
+  addTapListener(document.getElementById('fin-hidden-back'), (e)=>{ hapticTap(e.currentTarget); closeFinHiddenPage(); setModernPrimaryTab('modern-fin'); });
+  addTapListener(document.getElementById('metar-history-close'), (e)=>{ hapticTap(e.currentTarget); closeMetarHistoryPage(); });
   const metarHistoryCeiling = document.getElementById('metar-history-ceiling');
   if (metarHistoryCeiling){
     const activate = (e) => { hapticTap(e.currentTarget); handleMetarHistoryBadgeClick('ceiling'); };
-    metarHistoryCeiling.addEventListener('click', activate);
+    addTapListener(metarHistoryCeiling, activate);
     metarHistoryCeiling.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' '){
         ev.preventDefault();
@@ -8384,7 +8396,7 @@ function init(){
   const metarHistoryVisibility = document.getElementById('metar-history-visibility');
   if (metarHistoryVisibility){
     const activate = (e) => { hapticTap(e.currentTarget); handleMetarHistoryBadgeClick('visibility'); };
-    metarHistoryVisibility.addEventListener('click', activate);
+    addTapListener(metarHistoryVisibility, activate);
     metarHistoryVisibility.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' '){
         ev.preventDefault();
@@ -8402,26 +8414,26 @@ function init(){
   });
   const finCodeSwitch = document.getElementById('fin-code-switch');
   if (finCodeSwitch){
-    finCodeSwitch.addEventListener('click', (e) => {
+    addTapListener(finCodeSwitch, (e) => {
       hapticTap(e.currentTarget);
       setFinAirportCodeMode(finAirportCodeMode === 'icao' ? 'iata' : 'icao');
     });
   }
   document.querySelectorAll('[data-fin-code-label]').forEach((label) => {
-    label.addEventListener('click', (e) => {
+    addTapListener(label, (e) => {
       hapticTap(e.currentTarget);
       setFinAirportCodeMode(label.dataset.finCodeLabel === 'iata' ? 'iata' : 'icao');
     });
   });
   document.querySelectorAll('[data-flight-carrier]').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
+    addTapListener(btn, (e) => {
       hapticTap(e.currentTarget);
       setFlightLookupCarrier(btn.dataset.flightCarrier);
     });
   });
   const flightLookupBtn = document.getElementById('fin-flightnumber-lookup');
   if (flightLookupBtn){
-    flightLookupBtn.addEventListener('click', (e) => {
+    addTapListener(flightLookupBtn, (e) => {
       hapticTap(e.currentTarget);
       const input = document.getElementById('fin-flightnumber-input');
       const callsign = buildFlightLookupCallsign(input?.value || '');
@@ -8436,7 +8448,7 @@ function init(){
   }
   const flightLookupClear = document.getElementById('fin-flightnumber-clear');
   if (flightLookupClear){
-    flightLookupClear.addEventListener('click', (e) => {
+    addTapListener(flightLookupClear, (e) => {
       hapticTap(e.currentTarget);
       const input = document.getElementById('fin-flightnumber-input');
       if (input) input.value = '';
@@ -8454,7 +8466,7 @@ function init(){
       }
     });
   }
-  document.getElementById('fr24-save')?.addEventListener('click', (e)=>{ hapticTap(e.currentTarget); handleFr24ConfigSave(); });
+  addTapListener(document.getElementById('fr24-save'), (e)=>{ hapticTap(e.currentTarget); handleFr24ConfigSave(); });
   const heroBanner = document.getElementById('modern-hero-banner');
   if (heroBanner){
     const toggleBanner = () => {
@@ -8462,7 +8474,7 @@ function init(){
       heroBanner.setAttribute('aria-pressed', isRed ? 'true' : 'false');
       document.body.classList.toggle('easter-red', isRed);
     };
-    heroBanner.addEventListener('click', toggleBanner);
+    addTapListener(heroBanner, toggleBanner);
     heroBanner.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' '){
         e.preventDefault();
