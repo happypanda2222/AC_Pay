@@ -237,6 +237,7 @@
     .stacked-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
     .weather-brief-fields{gap:12px}
     .modern-controls{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+    .pay-projection-controls{margin:10px 0 4px 0}
     .chip{padding:10px 12px;border-radius:12px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt);font-weight:700;display:flex;align-items:center;gap:8px}
     .chip.active{background:var(--acc);color:var(--btn-primary-text);border-color:transparent}
     .modern-cta{display:flex;justify-content:flex-end;margin-top:12px}
@@ -469,6 +470,26 @@
             <button class="tabbtn active" data-tab="modern-annual" id="tabbtn-modern-annual">Annual</button>
             <button class="tabbtn" data-tab="modern-monthly" id="tabbtn-modern-monthly">Monthly</button>
             <button class="tabbtn" data-tab="modern-vo" id="tabbtn-modern-vo">VO</button>
+          </div>
+          <div class="stacked-fields pay-projection-controls" id="modern-projection-controls">
+            <div class="row">
+              <div>
+                <label>Projection scenario (2027+)</label>
+                <select id="modern-projection-scenario">
+                  <option value="conservative">Conservative</option>
+                  <option value="realistic" selected>Realistic</option>
+                  <option value="aggressive">Aggressive</option>
+                </select>
+              </div>
+              <div>
+                <label>Slope</label>
+                <select id="modern-projection-slope">
+                  <option value="conservative">Conservative</option>
+                  <option value="realistic" selected>Realistic</option>
+                  <option value="aggressive">Aggressive</option>
+                </select>
+              </div>
+            </div>
           </div>
 
           <div id="modern-annual" class="modern-tab">
