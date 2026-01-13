@@ -1419,8 +1419,18 @@ function computeAnnual(params){
   // ESOP contribution based on gross
   const esop = Math.min((+params.esopPct/100)*gross, 30000);
 
-  // Compute taxable income after RRSP contribution (used for tax-return calculation only)
-  const taxable_rrsp = Math.max(0, taxable_pre - rrsp);
+  // Union dues (1.85% of gross) computed monthly
+  const union = computeUnionDuesMonthly({
+    year,
+    seat,
+    ac,
+    stepJan1,
+    xlrOn: !!params.xlrOn,
+    avgMonthlyHours: +params.avgMonthlyHours
+  });
+
+  // Compute taxable income after RRSP and union dues (used for tax-return calculation only)
+  const taxable_rrsp = Math.max(0, taxable_pre - rrsp - union.annual);
   const fed_gross_rrsp  = taxFromBrackets(taxable_rrsp, fedData.brackets);
   const prov_gross_rrsp = taxFromBrackets(taxable_rrsp, p.brackets);
   const fed_tax_rrsp  = Math.max(0, fed_gross_rrsp - (fed_low * federalBPA(year, taxable_rrsp) + 0.15 * (cpp_total_full + eiPrem_full)));
@@ -1436,16 +1446,6 @@ function computeAnnual(params){
   // ESOP match after tax uses the marginal rate at the taxable income before RRSP contributions
   const comb_top = marginalRate(taxable_pre, fedData.brackets) + marginalRate(taxable_pre, p.brackets);
   const esop_match_net = +(0.30 * esop * (1 - comb_top)).toFixed(2);
-
-  // Union dues (1.85% of gross) computed monthly
-  const union = computeUnionDuesMonthly({
-    year,
-    seat,
-    ac,
-    stepJan1,
-    xlrOn: !!params.xlrOn,
-    avgMonthlyHours: +params.avgMonthlyHours
-  });
 
   // Totals
   const annual_health = HEALTH_MO*12;
@@ -7435,9 +7435,9 @@ const INFO_COPY = {
     annualNet: 'Annual gross minus tax, CPP/QPP, EI, pension, union dues, health premiums and ESOP contributions, plus the after-tax employer ESOP match.',
     monthlyGross: 'One-month gross derived from the annual projection using your average monthly hours (projected years 2027+ follow the selected scenario growth rates).',
     monthlyNet: 'Projected monthly net after tax, CPP/QPP, EI, pension, union dues, health and ESOP, plus the employer ESOP match (no cheque split).',
-    taxReturn: 'Estimated refund (positive) or balance owing (negative) based on annualized withholding across two monthly paycheques (advance annualized at 12, second cheque annualized at 24, pension based on full month gross), plus RRSP tax savings.',
+    taxReturn: 'Estimated refund (positive) or balance owing (negative) based on annualized withholding across two monthly paycheques (advance annualized at 12, second cheque annualized at 24, pension based on full month gross), plus RRSP and union dues tax savings.',
     hourlyRate: 'Pay table rate for each segment of the year (with XLR when toggled), including the progression date increase. Projected years (2027+) reflect the selected scenario growth rates and slope anchoring for FO/RP.',
-    incomeTax: 'Total annual federal and provincial income tax after pension credits (RRSP savings are reflected in the tax return estimate).',
+    incomeTax: 'Total annual federal and provincial income tax after pension credits (RRSP and union dues savings are reflected in the tax return estimate).',
     cpp: 'Annual CPP/QPP contributions on employment income up to the yearly maximum.',
     ei: 'Annual EI premiums based on insurable earnings up to the yearly maximum.',
     pension: 'Employee pension contributions using the current pension rate applied to gross pay.',
