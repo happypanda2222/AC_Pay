@@ -1544,6 +1544,7 @@ function computeAnnual(params){
     taxable_rrsp:+taxable_rrsp.toFixed(2),
     income_tax_rrsp:+income_tax_rrsp.toFixed(2),
     annualized_withholding_tax:+annualizedWithholdingTax.toFixed(2),
+    union_annual:+union.annual.toFixed(2),
     withholding_audit: withholdingAudit,
     cpp_full:+cpp_total_full.toFixed(2),
     ei_full:+eiPrem_full.toFixed(2)
@@ -7447,7 +7448,7 @@ const INFO_COPY = {
   },
   advanced: {
     returnEstimate: 'Estimated refund (positive) or balance owing (negative) using annual payroll withholding plus the additional income, deductions, dividends and donation credits entered.',
-    adjustedTaxable: 'Taxable income after RRSP and other deductions, plus dividend gross-up and taxable capital gains.',
+    adjustedTaxable: 'Taxable income after RRSP, union dues and other deductions, plus dividend gross-up and taxable capital gains.',
     taxLiability: 'Estimated federal and provincial income tax before comparing to payroll withholding.',
     withholding: 'Annualized tax withheld with advances annualized at 12 cheques, second cheques at 24 cheques, and pension based on full month gross.',
     donationCredit: 'Donation credit estimated using base federal and provincial credit rates.',
@@ -7522,7 +7523,7 @@ function getAnnualParams(isModern){
       avgMonthlyHours: +document.getElementById('modern-avgHrs').value,
       province: document.getElementById('modern-prov').value,
       esopPct: +document.getElementById('modern-esop').value,
-      rrsp: +document.getElementById('modern-rrsp').value
+      rrsp: +document.getElementById('modern-adv-rrsp').value
     };
   }
   return {
@@ -7549,6 +7550,7 @@ function getAdvancedInputs(isModern){
     donations: +document.getElementById(`${prefix}adv-donations`)?.value || 0,
     otherIncome: +document.getElementById(`${prefix}adv-other-income`)?.value || 0,
     otherDeductions: +document.getElementById(`${prefix}adv-other-deductions`)?.value || 0,
+    unionDues: +document.getElementById(`${prefix}adv-union-dues`)?.value || 0,
     rrsp: +document.getElementById(`${prefix}adv-rrsp`)?.value || 0
   };
 }
@@ -7558,6 +7560,12 @@ function syncAdvancedRrsp(isModern){
   const target = document.getElementById(isModern ? 'modern-adv-rrsp' : 'adv-rrsp');
   if (!source || !target) return;
   target.value = source.value || 0;
+}
+
+function syncAdvancedUnionDues(isModern, baseResult){
+  const target = document.getElementById(isModern ? 'modern-adv-union-dues' : 'adv-union-dues');
+  if (!target || !baseResult) return;
+  target.value = baseResult.union_annual ?? Math.max(0, (baseResult.monthly?.union_dues || 0) * 12);
 }
 
 function normalizeAmount(value){
@@ -7572,6 +7580,7 @@ function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
   const donations = normalizeAmount(advancedParams.donations);
   const otherIncome = normalizeAmount(advancedParams.otherIncome);
   const otherDeductions = normalizeAmount(advancedParams.otherDeductions);
+  const unionDues = normalizeAmount(advancedParams.unionDues);
 
   const grossUpEligible = eligibleDividends * DIVIDEND_GROSS_UP.eligible;
   const grossUpNonEligible = nonEligibleDividends * DIVIDEND_GROSS_UP.nonEligible;
@@ -7581,7 +7590,7 @@ function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
 
   const adjustedTaxable = Math.max(
     0,
-    baseResult.taxable_pre + otherIncome + grossUpEligible + grossUpNonEligible + capitalGainsTaxable - rrsp - otherDeductions
+    baseResult.taxable_pre + otherIncome + grossUpEligible + grossUpNonEligible + capitalGainsTaxable - rrsp - otherDeductions - unionDues
   );
 
   const { total: taxBeforeCredits, fedLow, provLow } = computeIncomeTaxWithCredits({
@@ -7615,6 +7624,7 @@ function computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams }){
     taxAfterCredits,
     withholding: baseResult.annualized_withholding_tax,
     returnEstimate,
+    unionDues,
     rrsp
   };
 }
@@ -7657,6 +7667,7 @@ function renderAdvancedTaxReturn({ baseParams, baseResult, advancedResult, isMod
     ['CPP/QPP (annual)', money(baseResult.cpp_full)],
     ['EI (annual)', money(baseResult.ei_full)],
     ['Withholding tax', money(baseResult.annualized_withholding_tax)],
+    ['Union dues', money(advancedResult.unionDues)],
     ['Eligible dividends', money(advancedResult.eligibleDividends)],
     ['Non-eligible dividends', money(advancedResult.nonEligibleDividends)],
     ['Capital gains', money(advancedResult.capitalGains)],
@@ -8167,6 +8178,7 @@ function calcAnnualModern(){
     const params = getAnnualParams(true);
     const res = computeAnnual(params);
     renderAnnualModern(res, params);
+    syncAdvancedUnionDues(true, res);
   } catch(err){
     const out = document.getElementById('modern-out');
     if (out) out.innerHTML = '<div class="simple"><div class="block"><div class="label">Error</div><div class="value">'+String(err.message)+'</div></div></div>';
@@ -8178,6 +8190,7 @@ function calcAdvancedReturn(isModern){
   try{
     const baseParams = getAnnualParams(isModern);
     const baseResult = computeAnnual(baseParams);
+    syncAdvancedUnionDues(isModern, baseResult);
     const advancedParams = getAdvancedInputs(isModern);
     const advancedResult = computeAdvancedTaxReturn({ baseParams, baseResult, advancedParams });
     renderAdvancedTaxReturn({ baseParams, baseResult, advancedResult, isModern });
@@ -8360,8 +8373,6 @@ function init(){
     document.getElementById(id)?.addEventListener('change', updateProjectionControlsVisibility);
   });
   updateProjectionControlsVisibility();
-  document.getElementById('modern-rrsp')?.addEventListener('input', ()=>syncAdvancedRrsp(true));
-  document.getElementById('modern-rrsp')?.addEventListener('change', ()=>syncAdvancedRrsp(true));
   document.getElementById('modern-duty-type')?.addEventListener('change', ()=>toggleDutyFields('modern-duty-type','modern-duty-unaug-fields','modern-duty-aug-fields'));
   document.getElementById('modern-duty-mode')?.addEventListener('change', ()=>{ toggleDutyModeFields('modern-duty-mode','modern-duty'); updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility'); });
   document.getElementById('modern-duty-crew')?.addEventListener('change', ()=>updateAugmentedFacilityOptions('modern-duty-crew','modern-duty-rest-facility'));
