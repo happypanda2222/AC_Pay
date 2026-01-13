@@ -235,6 +235,7 @@
     .modern-panel{background:var(--card);border:1px solid #1f2633;border-radius:14px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.32)}
     .modern-panel h3{margin:0 0 12px 0;font-size:16px;letter-spacing:.2px}
     .stacked-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+    .weather-brief-fields{gap:12px}
     .modern-controls{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
     .chip{padding:10px 12px;border-radius:12px;border:1px solid #2a2f3b;background:#0f1218;color:var(--txt);font-weight:700;display:flex;align-items:center;gap:8px}
     .chip.active{background:var(--acc);color:var(--btn-primary-text);border-color:transparent}
@@ -749,7 +750,7 @@
           <div class="weather-grid">
             <div class="modern-panel">
               <h3>Weather brief</h3>
-              <div class="stacked-fields">
+              <div class="stacked-fields weather-brief-fields">
                 <div>
                   <label>Departure airport</label>
                   <input id="modern-wx-dep" type="text" inputmode="text" autocapitalize="characters" placeholder="e.g., YYZ or CYYZ">
