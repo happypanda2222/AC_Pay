@@ -55,7 +55,10 @@ async function updateVersionBadgeFromSW() {
   let lastTouch = 0;
   document.addEventListener('touchend', (e) => {
     const now = Date.now();
-    if (now - lastTouch < 300) { e.preventDefault(); }
+    const target = e.target;
+    const isInteractive = target instanceof Element
+      && target.closest('button, a, input, select, textarea, [role="button"], [role="tab"]');
+    if (!isInteractive && now - lastTouch < 300) { e.preventDefault(); }
     lastTouch = now;
   }, {passive:false});
 })();
