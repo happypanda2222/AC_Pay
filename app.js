@@ -1056,9 +1056,6 @@ function applyAnchoredSlopesFO_RP(scenarioKey) {
   });
 }
 
-// Run after projections
-setProjectionScenario(currentProjectionScenario, { recalc: false });
-
 // === Conservative RP1–4 discount compression for 2027–2031 ===
 // Discounts vs RP Step 5 on the same aircraft.
 const RP_EARLY_CONSERVATIVE = { 1: 0.42, 2: 0.35, 3: 0.22, 4: 0.15 };
@@ -1078,6 +1075,9 @@ function applyConservativeRPCompression() {
     });
   });
 }
+
+// Run after projections
+setProjectionScenario(currentProjectionScenario, { recalc: false });
 
 // --- 2025 Tax Data ---
 const FED = { brackets:[[57375,0.145],[114750,0.205],[177882,0.26],[253414,0.29],[Infinity,0.33]],
