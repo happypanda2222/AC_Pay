@@ -5759,6 +5759,16 @@ function hasSkyClear(segment){
   const raw = segment?.rawOb || segment?.raw_text || segment?.rawTAF || segment?.raw || '';
   return /\bSKC\b/.test(String(raw).toUpperCase());
 }
+function hasNoCeiling(segment){
+  const clouds = segment?.clouds;
+  if (Array.isArray(clouds) && clouds.length){
+    const covers = clouds.map(c => String(c?.cover || '').toUpperCase());
+    const hasCeilingLayer = covers.some(c => ['BKN','OVC','VV'].includes(c));
+    if (!hasCeilingLayer) return true;
+  }
+  const raw = segment?.rawOb || segment?.raw_text || segment?.rawTAF || segment?.raw || '';
+  return /\b(NSC|NCD|CLR)\b/.test(String(raw).toUpperCase());
+}
 function tafOrderedFcsts(fcsts){
   const ordered = [...fcsts].filter(Boolean).sort((a, b) => (a.timeFrom - b.timeFrom) || (a.timeTo - b.timeTo));
   if (Array.isArray(fcsts?.fmTimes)) ordered.fmTimes = fcsts.fmTimes;
@@ -6576,9 +6586,10 @@ function applyMetricTrendBadge(el, metric, trend){
   const labelBase = metric === 'ceiling' ? 'Ceiling' : 'Vis';
   const labelText = arrow ? `${labelBase} ${arrow}` : labelBase;
   const startText = detail?.startMs ? ` since ${formatZulu(detail.startMs)}` : '';
+  const ceilingNote = metric === 'ceiling' ? ' No ceiling counts as unlimited.' : '';
   const title = direction
-    ? `${labelBase} trend ${direction === 'up' ? 'improving' : 'worsening'}${startText}.`
-    : `${labelBase} trend unavailable.`;
+    ? `${labelBase} trend ${direction === 'up' ? 'improving' : 'worsening'}${startText}.${ceilingNote}`
+    : `${labelBase} trend unavailable.${ceilingNote}`;
   el.textContent = labelText;
   el.className = `metar-trend-badge ${cls}`;
   el.setAttribute('title', title);
@@ -6838,7 +6849,8 @@ function metarMetricsFromRecord(metar, icao){
   const visibility = parseVisibilityToSM(visSource, { icao });
   const ceiling = extractCeilingFt(metar.clouds, metar.vertVis);
   const skyClear = ceiling === null && hasSkyClear(metar);
-  const ceilingValue = ceiling === null ? (skyClear ? 100000 : null) : ceiling;
+  const noCeiling = ceiling === null && !skyClear && hasNoCeiling(metar);
+  const ceilingValue = ceiling === null ? ((skyClear || noCeiling) ? 100000 : null) : ceiling;
   const visibilityValue = Number.isFinite(visibility) ? visibility : null;
   if (ceilingValue === null && visibilityValue === null) return null;
   return { timeMs, ceiling, visibility, skyClear, ceilingValue, visibilityValue };
