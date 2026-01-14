@@ -4413,7 +4413,34 @@ function formatCalendarMonthLabel(monthKey){
   return new Date(year, month - 1, 1).toLocaleString('en', { month: 'long', year: 'numeric' });
 }
 
-function parseDateFromLine(line, fallbackYear){
+const MONTH_NAME_TO_INDEX = {
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11
+};
+
+function parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear){
   const monthPattern = '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)';
   const dowPattern = '(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)';
   const patterns = [
@@ -4438,20 +4465,30 @@ function parseDateFromLine(line, fallbackYear){
     yearToken = dateMatch[3];
   } else {
     const compactDowMatch = line.match(new RegExp(`\\b${dowPattern}(\\d{1,2})\\b`, 'i'));
-    if (!compactDowMatch) return null;
-    day = Number(compactDowMatch[1]);
-    const monthMatch = line.match(new RegExp(`\\b${monthPattern}\\b`, 'i'));
-    if (!monthMatch) return null;
-    monthName = monthMatch[1];
-    const yearMatch = line.match(/\b(\d{4}|\d{2})\b/);
-    yearToken = yearMatch?.[1];
+    if (compactDowMatch){
+      day = Number(compactDowMatch[1]);
+      const monthMatch = line.match(new RegExp(`\\b${monthPattern}\\b`, 'i'));
+      if (!monthMatch) return null;
+      monthName = monthMatch[1];
+      const yearMatch = line.match(/\b(\d{4}|\d{2})\b/);
+      yearToken = yearMatch?.[1];
+    } else if (Number.isFinite(currentMonth)){
+      const dayOnlyMatch = line.match(new RegExp(`^\\s*(?:${dowPattern}\\s+)?(\\d{1,2})\\s*$`, 'i'));
+      if (!dayOnlyMatch) return null;
+      day = Number(dayOnlyMatch[1]);
+    } else {
+      return null;
+    }
   }
   const yearNumber = Number(yearToken);
+  const yearFallback = Number.isFinite(currentMonthYear) ? currentMonthYear : fallbackYear;
   const year = Number.isFinite(yearNumber)
     ? (String(yearToken).length === 2 ? 2000 + yearNumber : yearNumber)
-    : fallbackYear;
+    : yearFallback;
   if (!Number.isFinite(day) || !Number.isFinite(year)) return null;
-  const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
+  const monthIndex = monthName
+    ? new Date(`${monthName} 1, ${year}`).getMonth()
+    : currentMonth;
   if (!Number.isFinite(monthIndex)) return null;
   const date = new Date(year, monthIndex, day);
   if (!Number.isFinite(date.getTime())) return null;
@@ -4587,6 +4624,8 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
   const daySummaries = {};
   let inAdditional = false;
   let currentDate = null;
+  let currentMonth = null;
+  let currentMonthYear = null;
   const endSection = /Additional Summary|Legend|Recurrent Training|Credits on each drop reason type|Allowable voluntary overtime|Trip Summary|Pairing Summary|Additional Details\s*\(continued\)|Crew Contacts/i;
   const ensureDay = (dateKey) => {
     if (!daySummaries[dateKey]){
@@ -4619,7 +4658,18 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
       currentDate = null;
       return;
     }
-    const dateKey = parseDateFromLine(line, fallbackYear);
+    const monthHeaderMatch = line.match(/^\s*([A-Za-z]+)\s*(\d{4})?\s*$/);
+    if (monthHeaderMatch){
+      const monthKey = monthHeaderMatch[1]?.toLowerCase();
+      if (monthKey && Object.prototype.hasOwnProperty.call(MONTH_NAME_TO_INDEX, monthKey)){
+        currentMonth = MONTH_NAME_TO_INDEX[monthKey];
+        const headerYear = Number(monthHeaderMatch[2]);
+        currentMonthYear = Number.isFinite(headerYear) ? headerYear : null;
+        currentDate = null;
+        return;
+      }
+    }
+    const dateKey = parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear);
     if (dateKey){
       currentDate = dateKey;
       ensureDay(dateKey);
