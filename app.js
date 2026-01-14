@@ -4555,90 +4555,94 @@ function buildLinesFromTextContent(textContent){
   return lines;
 }
 
-function parseScheduleLines(lines){
-  const year = inferYearFromLines(lines);
+function parseAdditionalDetailsLines(lines, fallbackYear){
   const eventsByDate = {};
-  const pendingCancellations = [];
-  let currentDate = null;
-  let inDutyPlan = false;
+  const daySummaries = {};
   let inAdditional = false;
-  const hasHeaders = lines.some(line => /Individual duty plan|Additional Details/i.test(line));
-  let fallbackMatches = 0;
-  const addDutyEventFromLine = (line, dateKey) => {
-    const identifiers = extractIdentifiersFromLine(line);
-    if (!identifiers.length) return false;
-    if (!eventsByDate[dateKey]) eventsByDate[dateKey] = { events: [] };
-    const dutyMinutes = extractDurationFromLine(line, ['Duty']);
-    const creditMinutes = extractDurationFromLine(line, ['Credit', 'CR']);
-    const legs = extractLegsFromLine(line);
-    const cancellation = extractCancellationStatus(line);
-    const label = identifiers.join(', ');
-    const eventId = `${dateKey}-${eventsByDate[dateKey].events.length}-${label.replace(/\s+/g, '')}`;
-    eventsByDate[dateKey].events.push({
-      id: eventId,
-      date: dateKey,
-      label,
-      identifiers,
-      dutyMinutes: Number.isFinite(dutyMinutes) ? dutyMinutes : null,
-      creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
-      legs,
-      cancellation
-    });
-    return true;
-  };
-  if (!hasHeaders){
-    lines.forEach((line) => {
-      const dateKey = parseDateFromLine(line, year);
-      if (dateKey){
-        currentDate = dateKey;
-      }
-      if (!currentDate) return;
-      const added = addDutyEventFromLine(line, currentDate);
-      if (added) fallbackMatches += 1;
-    });
-    return {
-      eventsByDate,
-      statusMessage: fallbackMatches ? '' : 'PDF format not recognized.'
-    };
-  }
-  lines.forEach((line) => {
-    if (/Individual duty plan/i.test(line)){
-      inDutyPlan = true;
-      inAdditional = false;
-      return;
+  let currentDate = null;
+  const endSection = /Additional Summary|Legend|Recurrent Training|Credits on each drop reason type|Allowable voluntary overtime/i;
+  const ensureDay = (dateKey) => {
+    if (!daySummaries[dateKey]){
+      daySummaries[dateKey] = {
+        creditMinutes: 0,
+        dutyMinutes: null,
+        identifiers: new Set()
+      };
     }
+    return daySummaries[dateKey];
+  };
+  lines.forEach((line) => {
     if (/Additional Details/i.test(line)){
       inAdditional = true;
-      inDutyPlan = false;
+      currentDate = null;
       return;
     }
-    if (!inDutyPlan && !inAdditional) return;
-    const dateKey = parseDateFromLine(line, year);
+    if (!inAdditional) return;
+    if (endSection.test(line)){
+      inAdditional = false;
+      currentDate = null;
+      return;
+    }
+    if (/^=+$/.test(line)){
+      return;
+    }
+    if (/^-+$/.test(line)){
+      currentDate = null;
+      return;
+    }
+    const dateKey = parseDateFromLine(line, fallbackYear);
     if (dateKey){
       currentDate = dateKey;
+      ensureDay(dateKey);
     }
     if (!currentDate) return;
-    if (inDutyPlan){
-      addDutyEventFromLine(line, currentDate);
-    } else if (inAdditional){
-      const cancellation = extractCancellationStatus(line);
-      if (!cancellation) return;
-      const identifiers = extractIdentifiersFromLine(line);
-      if (!identifiers.length) return;
-      const targetDate = parseDateFromLine(line, year) || currentDate;
-      pendingCancellations.push({ date: targetDate, identifiers, cancellation });
+    if (/TRIP TAFB/i.test(line)){
+      const tafbMatch = line.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
+      if (tafbMatch){
+        const minutes = parseDurationToMinutes(tafbMatch[1]);
+        if (Number.isFinite(minutes)){
+          daySummaries[currentDate].dutyMinutes = minutes;
+        }
+      }
+    }
+    const identifiers = extractIdentifiersFromLine(line);
+    if (!identifiers.length) return;
+    const daySummary = ensureDay(currentDate);
+    identifiers.forEach(id => daySummary.identifiers.add(id));
+    const durations = line.match(/\d{1,3}:\d{2}/g) || [];
+    if (!durations.length) return;
+    const totalDuration = durations[durations.length - 1];
+    const minutes = parseDurationToMinutes(totalDuration);
+    if (Number.isFinite(minutes)){
+      daySummary.creditMinutes += minutes;
     }
   });
-  pendingCancellations.forEach(({ date, identifiers, cancellation }) => {
-    const day = eventsByDate[date];
-    if (!day) return;
-    day.events.forEach((event) => {
-      if (event.identifiers.some(id => identifiers.includes(id))){
-        event.cancellation = cancellation;
-      }
-    });
+  Object.entries(daySummaries).forEach(([dateKey, summary]) => {
+    const identifiers = Array.from(summary.identifiers);
+    const label = identifiers.length ? identifiers.join(', ') : 'Pairing';
+    const eventId = `${dateKey}-0-${label.replace(/\s+/g, '')}`;
+    eventsByDate[dateKey] = {
+      events: [{
+        id: eventId,
+        date: dateKey,
+        label,
+        identifiers,
+        dutyMinutes: Number.isFinite(summary.dutyMinutes) ? summary.dutyMinutes : null,
+        creditMinutes: Number.isFinite(summary.creditMinutes) ? summary.creditMinutes : null,
+        legs: [],
+        cancellation: null
+      }]
+    };
   });
-  return { eventsByDate, statusMessage: '' };
+  return {
+    eventsByDate,
+    statusMessage: Object.keys(eventsByDate).length ? '' : 'No calendar events found in PDF.'
+  };
+}
+
+function parseScheduleLines(lines){
+  const year = inferYearFromLines(lines);
+  return parseAdditionalDetailsLines(lines, year);
 }
 
 async function parseSchedulePdf(file){
