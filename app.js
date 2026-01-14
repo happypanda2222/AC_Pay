@@ -4443,7 +4443,7 @@ const MONTH_NAME_TO_INDEX = {
 const DATE_MONTH_PATTERN = '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)';
 const DATE_DOW_PATTERN = '(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)';
 
-function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentMonthYear){
+function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentYear){
   const monthPattern = DATE_MONTH_PATTERN;
   const dowPattern = DATE_DOW_PATTERN;
   const monthRegex = new RegExp(`\\b${monthPattern}\\b`, 'i');
@@ -4456,14 +4456,14 @@ function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentMonth
     const match = line.match(pattern);
     if (!match) continue;
     const token = match[0];
-    const dateKey = parseDateFromLine(token, fallbackYear, currentMonth, currentMonthYear);
+    const dateKey = parseDateFromLine(token, fallbackYear, currentMonth, currentYear);
     if (!dateKey) continue;
     const remainingLine = line.replace(token, ' ').replace(/\s+/g, ' ').trim();
     return { dateKey, remainingLine };
   }
   const compactDowMatch = line.match(new RegExp(`\\b${dowPattern}\\d{1,2}\\b`, 'i'));
   if (compactDowMatch && monthRegex.test(line)){
-    const dateKey = parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear);
+    const dateKey = parseDateFromLine(line, fallbackYear, currentMonth, currentYear);
     if (dateKey){
       let remainingLine = line.replace(compactDowMatch[0], ' ');
       const monthMatch = line.match(monthRegex);
@@ -4479,7 +4479,7 @@ function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentMonth
     const dayOnlyMatch = line.match(new RegExp(`^\\s*(?:${dowPattern}\\s+)?(\\d{1,2})(?!\\s*:)\\b`, 'i'));
     if (dayOnlyMatch){
       const token = dayOnlyMatch[0];
-      const dateKey = parseDateFromLine(token, fallbackYear, currentMonth, currentMonthYear);
+      const dateKey = parseDateFromLine(token, fallbackYear, currentMonth, currentYear);
       if (dateKey){
         const remainingLine = line.slice(dayOnlyMatch[0].length).trim();
         return { dateKey, remainingLine };
@@ -4489,7 +4489,7 @@ function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentMonth
   return { dateKey: null, remainingLine: line };
 }
 
-function parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear){
+function parseDateFromLine(line, fallbackYear, currentMonth, currentYear){
   const monthPattern = DATE_MONTH_PATTERN;
   const dowPattern = DATE_DOW_PATTERN;
   const patterns = [
@@ -4530,7 +4530,7 @@ function parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear){
     }
   }
   const yearNumber = Number(yearToken);
-  const yearFallback = Number.isFinite(currentMonthYear) ? currentMonthYear : fallbackYear;
+  const yearFallback = Number.isFinite(currentYear) ? currentYear : fallbackYear;
   const year = Number.isFinite(yearNumber)
     ? (String(yearToken).length === 2 ? 2000 + yearNumber : yearNumber)
     : yearFallback;
@@ -4704,9 +4704,10 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
   const daySummaries = {};
   let inAdditional = false;
   let currentMonth = null;
-  let currentMonthYear = null;
+  let currentYear = null;
   const endSection = /Additional Summary|Legend|Recurrent Training|Credits on each drop reason type|Allowable voluntary overtime|Trip Summary|Pairing Summary|Additional Details\s*\(continued\)|Crew Contacts/i;
   const columns = deriveAdditionalDetailsColumns(rows);
+  const monthHeaderRegex = new RegExp(`^\\s*(${Object.keys(MONTH_NAME_TO_INDEX).join('|')})\\s*(\\d{4})?\\s*$`, 'i');
   const ensureDay = (dateKey) => {
     if (!daySummaries[dateKey]){
       daySummaries[dateKey] = {
@@ -4732,19 +4733,23 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
     if (/^\s*=+\s*$/.test(rowText) || /^\s*-+\s*$/.test(rowText)){
       return;
     }
-    const monthHeaderMatch = rowText.match(/^\s*([A-Za-z]+)\s*(\d{4})?\s*$/);
+    const monthHeaderMatch = rowText.match(monthHeaderRegex);
     if (monthHeaderMatch){
       const monthKey = monthHeaderMatch[1]?.toLowerCase();
       if (monthKey && Object.prototype.hasOwnProperty.call(MONTH_NAME_TO_INDEX, monthKey)){
         currentMonth = MONTH_NAME_TO_INDEX[monthKey];
         const headerYear = Number(monthHeaderMatch[2]);
-        currentMonthYear = Number.isFinite(headerYear) ? headerYear : null;
+        if (Number.isFinite(headerYear)){
+          currentYear = headerYear;
+        } else if (!Number.isFinite(currentYear)){
+          currentYear = fallbackYear;
+        }
         return;
       }
     }
     if (/\bDate\b/i.test(rowText) && /\b(Credit|Block)\b/i.test(rowText)) return;
     const columnData = splitRowIntoColumns(row, columns);
-    const dateKey = parseDateFromLine(columnData.date, fallbackYear, currentMonth, currentMonthYear);
+    const dateKey = parseDateFromLine(columnData.date, fallbackYear, currentMonth, currentYear);
     if (!dateKey) return;
     const creditMinutes = extractCreditMinutesFromColumn(columnData.credit);
     if (!Number.isFinite(creditMinutes)) return;
