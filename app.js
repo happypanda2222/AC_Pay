@@ -4507,6 +4507,46 @@ function parseScheduleLines(lines){
   let currentDate = null;
   let inDutyPlan = false;
   let inAdditional = false;
+  const hasHeaders = lines.some(line => /Individual duty plan|Additional Details/i.test(line));
+  let fallbackMatches = 0;
+  const addDutyEventFromLine = (line, dateKey) => {
+    if (!eventsByDate[dateKey]) eventsByDate[dateKey] = { events: [] };
+    const identifiers = extractIdentifiersFromLine(line);
+    if (!identifiers.length) return false;
+    const dutyMinutes = extractDurationFromLine(line, ['Duty']);
+    const creditMinutes = extractDurationFromLine(line, ['Credit', 'CR']);
+    const legs = extractLegsFromLine(line);
+    const cancellation = extractCancellationStatus(line);
+    const label = identifiers.join(', ');
+    const eventId = `${dateKey}-${eventsByDate[dateKey].events.length}-${label.replace(/\s+/g, '')}`;
+    eventsByDate[dateKey].events.push({
+      id: eventId,
+      date: dateKey,
+      label,
+      identifiers,
+      dutyMinutes: Number.isFinite(dutyMinutes) ? dutyMinutes : null,
+      creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
+      legs,
+      cancellation
+    });
+    return true;
+  };
+  if (!hasHeaders){
+    lines.forEach((line) => {
+      const dateKey = parseDateFromLine(line, year);
+      if (dateKey){
+        currentDate = dateKey;
+        if (!eventsByDate[currentDate]) eventsByDate[currentDate] = { events: [] };
+      }
+      if (!currentDate) return;
+      const added = addDutyEventFromLine(line, currentDate);
+      if (added) fallbackMatches += 1;
+    });
+    return {
+      eventsByDate,
+      statusMessage: fallbackMatches ? '' : 'PDF format not recognized.'
+    };
+  }
   lines.forEach((line) => {
     if (/Individual duty plan/i.test(line)){
       inDutyPlan = true;
@@ -4526,24 +4566,7 @@ function parseScheduleLines(lines){
     }
     if (!currentDate) return;
     if (inDutyPlan){
-      const identifiers = extractIdentifiersFromLine(line);
-      if (!identifiers.length) return;
-      const dutyMinutes = extractDurationFromLine(line, ['Duty']);
-      const creditMinutes = extractDurationFromLine(line, ['Credit', 'CR']);
-      const legs = extractLegsFromLine(line);
-      const cancellation = extractCancellationStatus(line);
-      const label = identifiers.join(', ');
-      const eventId = `${currentDate}-${eventsByDate[currentDate].events.length}-${label.replace(/\s+/g, '')}`;
-      eventsByDate[currentDate].events.push({
-        id: eventId,
-        date: currentDate,
-        label,
-        identifiers,
-        dutyMinutes: Number.isFinite(dutyMinutes) ? dutyMinutes : null,
-        creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
-        legs,
-        cancellation
-      });
+      addDutyEventFromLine(line, currentDate);
     } else if (inAdditional){
       const cancellation = extractCancellationStatus(line);
       if (!cancellation) return;
@@ -4562,7 +4585,7 @@ function parseScheduleLines(lines){
       }
     });
   });
-  return eventsByDate;
+  return { eventsByDate, statusMessage: '' };
 }
 
 async function parseSchedulePdf(file){
@@ -4773,10 +4796,10 @@ function initCalendar(){
       if (!file) return;
       if (statusEl) statusEl.textContent = 'Parsing PDF…';
       try {
-        const eventsByDate = await parseSchedulePdf(file);
+        const { eventsByDate, statusMessage } = await parseSchedulePdf(file);
         const parsedMonths = buildCalendarMonths(eventsByDate);
         if (!parsedMonths.length){
-          if (statusEl) statusEl.textContent = 'No calendar events found in PDF.';
+          if (statusEl) statusEl.textContent = statusMessage || 'No calendar events found in PDF.';
           return;
         }
         calendarState.eventsByDate = eventsByDate;
