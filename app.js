@@ -4486,6 +4486,21 @@ function extractLegsFromLine(line){
   return legs;
 }
 
+const FLIGHT_LINE_STOP_CODES = new Set(['PAIR', 'PAIRING', 'DUTY', 'CREDIT', 'CR', 'CNX', 'PP', 'UTC', 'GMT', 'LCL', 'LT', 'STD', 'STA', 'ATD', 'ATA', 'ETD', 'ETA', 'DEP', 'ARR']);
+
+function extractIataCodesFromLine(line){
+  const codes = line.match(/\b[A-Z]{3}\b/g) || [];
+  return codes.filter(code => !FLIGHT_LINE_STOP_CODES.has(code));
+}
+
+function isAdditionalDetailsFlightLine(line){
+  const hasFlightNumber = /\b[A-Z]{2,3}\s*\d{1,4}\b/.test(line);
+  if (!hasFlightNumber) return false;
+  const iataCodes = extractIataCodesFromLine(line);
+  if (iataCodes.length < 2) return false;
+  return /\b\d{1,3}:\d{2}\b/.test(line);
+}
+
 function extractCancellationStatus(line){
   if (/\bCNX\s+PP\b/i.test(line)) return 'CNX PP';
   if (/\bCNX\b/i.test(line)) return 'CNX';
@@ -4624,16 +4639,19 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
       const daySummary = ensureDay(currentDate);
       daySummary.cancellation = mergeCancellationStatus(daySummary.cancellation, cancellationStatus);
     }
+    const isFlightLine = isAdditionalDetailsFlightLine(line);
+    if (!isFlightLine) return;
     const identifiers = extractIdentifiersFromLine(line);
-    if (!identifiers.length) return;
-    const daySummary = ensureDay(currentDate);
-    identifiers.forEach(id => daySummary.identifiers.add(id));
+    if (identifiers.length){
+      const daySummary = ensureDay(currentDate);
+      identifiers.forEach(id => daySummary.identifiers.add(id));
+    }
     const durations = line.match(/\d{1,3}:\d{2}/g) || [];
     if (!durations.length) return;
     const totalDuration = durations[durations.length - 1];
     const minutes = parseDurationToMinutes(totalDuration);
     if (Number.isFinite(minutes)){
-      daySummary.creditMinutes += minutes;
+      ensureDay(currentDate).creditMinutes += minutes;
     }
   });
   Object.entries(daySummaries).forEach(([dateKey, summary]) => {
