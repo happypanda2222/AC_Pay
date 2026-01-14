@@ -4400,6 +4400,12 @@ function buildCalendarMonths(eventsByDate){
   return Array.from(months).sort();
 }
 
+function getCalendarMonthKey(date){
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
 function formatCalendarMonthLabel(monthKey){
   if (!monthKey) return 'Month';
   const [year, month] = monthKey.split('-').map(Number);
@@ -4578,9 +4584,12 @@ async function parseSchedulePdf(file){
 }
 
 function getCalendarMonthCandidates(){
-  if (calendarState.months.length) return calendarState.months;
   const now = new Date();
-  return [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`];
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const months = new Set(calendarState.months);
+  months.add(getCalendarMonthKey(now));
+  months.add(getCalendarMonthKey(nextMonth));
+  return Array.from(months).sort();
 }
 
 function ensureCalendarSelection(){
@@ -4765,14 +4774,25 @@ function initCalendar(){
       if (statusEl) statusEl.textContent = 'Parsing PDF…';
       try {
         const eventsByDate = await parseSchedulePdf(file);
+        const parsedMonths = buildCalendarMonths(eventsByDate);
+        if (!parsedMonths.length){
+          if (statusEl) statusEl.textContent = 'No calendar events found in PDF.';
+          return;
+        }
         calendarState.eventsByDate = eventsByDate;
-        calendarState.months = buildCalendarMonths(eventsByDate);
+        calendarState.months = parsedMonths;
         ensureCalendarSelection();
         saveCalendarState();
         renderCalendar();
+        if (statusEl){
+          const label = parsedMonths.length === 1 ? 'month' : 'months';
+          statusEl.textContent = `Loaded schedule for ${parsedMonths.length} ${label}.`;
+        }
       } catch (err){
         console.error('PDF schedule parse failed', err);
         if (statusEl) statusEl.textContent = 'PDF parse failed.';
+      } finally {
+        event.target.value = '';
       }
     });
   }
