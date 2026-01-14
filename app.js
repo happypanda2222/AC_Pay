@@ -4502,6 +4502,19 @@ function extractIdentifiersFromLine(line){
   flightMatches.forEach((match) => {
     if (!identifiers.includes(match)) identifiers.push(match);
   });
+  const spacedFlightMatches = [...line.matchAll(/\b([A-Z]{2,3})\s+(\d{1,4})\b/g)];
+  spacedFlightMatches.forEach((match) => {
+    const code = match[1];
+    const number = match[2];
+    const combined = `${code}${number}`;
+    if (code.length === 3 && number.length === 4){
+      const hours = Number(number.slice(0, 2));
+      const minutes = Number(number.slice(2));
+      const looksLikeTime = Number.isFinite(hours) && Number.isFinite(minutes) && hours <= 23 && minutes <= 59;
+      if (looksLikeTime) return;
+    }
+    if (!identifiers.includes(combined)) identifiers.push(combined);
+  });
   return identifiers;
 }
 
