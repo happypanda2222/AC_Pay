@@ -4414,12 +4414,42 @@ function formatCalendarMonthLabel(monthKey){
 }
 
 function parseDateFromLine(line, fallbackYear){
-  const dateMatch = line.match(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2})\s+([A-Za-z]{3})\s*(\d{4})?/i)
-    || line.match(/\b(\d{1,2})\s+([A-Za-z]{3})\s*(\d{4})?/i);
-  if (!dateMatch) return null;
-  const day = Number(dateMatch[1]);
-  const monthName = dateMatch[2];
-  const year = Number(dateMatch[3] || fallbackYear);
+  const monthPattern = '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)';
+  const dowPattern = '(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)';
+  const patterns = [
+    new RegExp(`\\b${dowPattern}\\s+(\\d{1,2})\\s+${monthPattern}\\s*(\\d{2,4})?\\b`, 'i'),
+    new RegExp(`\\b(\\d{1,2})\\s+${monthPattern}\\s*(\\d{2,4})?\\b`, 'i'),
+    new RegExp(`\\b(\\d{1,2})${monthPattern}(\\d{2,4})?\\b`, 'i')
+  ];
+  let dateMatch = null;
+  for (const pattern of patterns){
+    const match = line.match(pattern);
+    if (match){
+      dateMatch = match;
+      break;
+    }
+  }
+  let day = null;
+  let monthName = null;
+  let yearToken = null;
+  if (dateMatch){
+    day = Number(dateMatch[1]);
+    monthName = dateMatch[2];
+    yearToken = dateMatch[3];
+  } else {
+    const compactDowMatch = line.match(new RegExp(`\\b${dowPattern}(\\d{1,2})\\b`, 'i'));
+    if (!compactDowMatch) return null;
+    day = Number(compactDowMatch[1]);
+    const monthMatch = line.match(new RegExp(`\\b${monthPattern}\\b`, 'i'));
+    if (!monthMatch) return null;
+    monthName = monthMatch[1];
+    const yearMatch = line.match(/\b(\d{4}|\d{2})\b/);
+    yearToken = yearMatch?.[1];
+  }
+  const yearNumber = Number(yearToken);
+  const year = Number.isFinite(yearNumber)
+    ? (String(yearToken).length === 2 ? 2000 + yearNumber : yearNumber)
+    : fallbackYear;
   if (!Number.isFinite(day) || !Number.isFinite(year)) return null;
   const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
   if (!Number.isFinite(monthIndex)) return null;
