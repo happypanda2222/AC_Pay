@@ -4602,13 +4602,23 @@ function parseScheduleLines(lines){
 
 async function parseSchedulePdf(file){
   if (!window.pdfjsLib){
-    throw new Error('PDF parser unavailable.');
+    throw new Error('PDF parser unavailable—reload or use the hosted app.');
   }
   if (window.pdfjsLib.GlobalWorkerOptions){
     window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
   }
   const buffer = await file.arrayBuffer();
-  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  let pdf;
+  try {
+    pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  } catch (error) {
+    try {
+      pdf = await window.pdfjsLib.getDocument({ data: buffer, disableWorker: true }).promise;
+    } catch (retryError) {
+      const message = retryError?.message || error?.message || 'Unknown error.';
+      throw new Error(`PDF parser failed: ${message}`);
+    }
+  }
   const lines = [];
   for (let i = 1; i <= pdf.numPages; i += 1){
     const page = await pdf.getPage(i);
@@ -4806,6 +4816,13 @@ function initCalendar(){
       const statusEl = document.getElementById('modern-calendar-status');
       const file = event.target?.files?.[0];
       if (!file) return;
+      if (!window.pdfjsLib){
+        if (statusEl){
+          statusEl.textContent = 'PDF parser unavailable—reload or use the hosted app.';
+        }
+        event.target.value = '';
+        return;
+      }
       if (statusEl) statusEl.textContent = 'Parsing PDF…';
       try {
         const { eventsByDate, statusMessage } = await parseSchedulePdf(file);
@@ -4825,7 +4842,9 @@ function initCalendar(){
         }
       } catch (err){
         console.error('PDF schedule parse failed', err);
-        if (statusEl) statusEl.textContent = 'PDF parse failed.';
+        if (statusEl){
+          statusEl.textContent = err?.message || 'PDF parse failed.';
+        }
       } finally {
         event.target.value = '';
       }
