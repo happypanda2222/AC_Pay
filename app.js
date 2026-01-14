@@ -4546,45 +4546,12 @@ function parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear){
   return `${date.getFullYear()}-${month}-${dayLabel}`;
 }
 
-function inferYearFromLines(lines){
-  const combined = lines.join(' ');
-  const yearMatch = combined.match(/\b(20\d{2})\b/);
-  if (yearMatch) return Number(yearMatch[1]);
-  return new Date().getFullYear();
-}
-
 function extractDurationFromLine(line, keywords){
   const label = keywords.join('|');
   const regex = new RegExp(`\\b(?:${label})\\b\\s*[:\\-]?\\s*(\\d{1,3}:\\d{2}|\\d+(?:\\.\\d+)?)`, 'i');
   const match = line.match(regex);
   if (!match) return NaN;
   return parseDurationToMinutes(match[1]);
-}
-
-function extractLegsFromLine(line){
-  const codes = line.match(/\b[A-Z]{3,4}\b/g) || [];
-  const stop = new Set(['PAIR', 'PAIRING', 'DUTY', 'CREDIT', 'CR', 'CNX', 'PP', 'UTC', 'GMT', 'LCL', 'LT', 'STD', 'STA', 'ATD', 'ATA']);
-  const filtered = codes.filter(code => !stop.has(code));
-  const legs = [];
-  for (let i = 0; i < filtered.length - 1; i += 1){
-    legs.push({ from: filtered[i], to: filtered[i + 1] });
-  }
-  return legs;
-}
-
-const FLIGHT_LINE_STOP_CODES = new Set(['PAIR', 'PAIRING', 'DUTY', 'CREDIT', 'CR', 'CNX', 'PP', 'UTC', 'GMT', 'LCL', 'LT', 'STD', 'STA', 'ATD', 'ATA', 'ETD', 'ETA', 'DEP', 'ARR']);
-
-function extractIataCodesFromLine(line){
-  const codes = line.match(/\b[A-Z]{3}\b/g) || [];
-  return codes.filter(code => !FLIGHT_LINE_STOP_CODES.has(code));
-}
-
-function isAdditionalDetailsFlightLine(line){
-  const hasFlightNumber = /\b[A-Z]{2,3}\s*\d{1,4}\b/.test(line);
-  if (!hasFlightNumber) return false;
-  const iataCodes = extractIataCodesFromLine(line);
-  if (iataCodes.length < 2) return false;
-  return /\b\d{1,3}:\d{2}\b/.test(line);
 }
 
 function extractCancellationStatus(line){
@@ -4631,51 +4598,115 @@ function extractIdentifiersFromLine(line){
   return identifiers;
 }
 
-function buildLinesFromTextContent(textContent){
+function normalizePdfTextItems(textContent){
   const items = textContent?.items || [];
-  const lines = [];
-  const yTolerance = 2;
-  const normalizedItems = items
+  return items
     .map(item => ({
       text: String(item?.str || '').trim(),
       x: Number(item?.transform?.[4] || 0),
       y: Number(item?.transform?.[5] || 0)
     }))
     .filter(item => item.text);
-  const sortedItems = normalizedItems.sort((a, b) => {
+}
+
+function groupItemsIntoRows(items, yTolerance = 2){
+  const sortedItems = items.sort((a, b) => {
     if (a.y === b.y) return a.x - b.x;
     return a.y - b.y;
   });
-  let currentY = null;
-  let currentLine = [];
-  const pushLine = () => {
-    if (!currentLine.length) return;
-    const orderedLine = currentLine
-      .sort((a, b) => a.x - b.x)
-      .map(item => item.text);
-    lines.push(orderedLine.join(' ').replace(/\s+/g, ' ').trim());
-  };
+  const rows = [];
+  let currentRow = null;
   sortedItems.forEach((item) => {
-    if (currentY === null) currentY = item.y;
-    if (Math.abs(item.y - currentY) > yTolerance){
-      pushLine();
-      currentLine = [];
-      currentY = item.y;
+    if (!currentRow || Math.abs(item.y - currentRow.y) > yTolerance){
+      currentRow = { y: item.y, items: [] };
+      rows.push(currentRow);
     }
-    currentLine.push(item);
+    currentRow.items.push(item);
   });
-  pushLine();
-  return lines;
+  rows.forEach(row => row.items.sort((a, b) => a.x - b.x));
+  return rows;
 }
 
-function parseAdditionalDetailsLines(lines, fallbackYear){
+function buildRowsFromTextContent(textContent){
+  const normalizedItems = normalizePdfTextItems(textContent);
+  return groupItemsIntoRows(normalizedItems);
+}
+
+function getRowText(row){
+  return row.items.map(item => item.text).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+const DEFAULT_ADDITIONAL_DETAILS_COLUMNS = {
+  date: { min: -Infinity, max: 90 },
+  identifiers: { min: 90, max: 210 },
+  airportsTimes: { min: 210, max: 360 },
+  credit: { min: 360, max: Infinity }
+};
+
+function deriveAdditionalDetailsColumns(rows){
+  const headerRow = rows.find(row => /\bDate\b/i.test(getRowText(row)) && /\b(Credit|Block)\b/i.test(getRowText(row)));
+  if (!headerRow) return DEFAULT_ADDITIONAL_DETAILS_COLUMNS;
+  const headerTokens = headerRow.items.map(item => ({ text: item.text, x: item.x }));
+  const dateToken = headerTokens.find(token => /\bDate\b/i.test(token.text));
+  const creditToken = headerTokens.find(token => /\b(Credit|Block)\b/i.test(token.text));
+  const identifiersToken = headerTokens.find(token => /\b(Pairing|Pair|Flight|Flt|Trip)\b/i.test(token.text));
+  const airportsToken = headerTokens.find(token => /\b(From|To|Dep|Arr|Route|Routing|Airport|Leg|Sector)\b/i.test(token.text));
+  const dateX = Number.isFinite(dateToken?.x) ? dateToken.x : DEFAULT_ADDITIONAL_DETAILS_COLUMNS.date.max;
+  const identifiersX = Number.isFinite(identifiersToken?.x) ? identifiersToken.x : DEFAULT_ADDITIONAL_DETAILS_COLUMNS.identifiers.min;
+  const airportsX = Number.isFinite(airportsToken?.x) ? airportsToken.x : DEFAULT_ADDITIONAL_DETAILS_COLUMNS.airportsTimes.min;
+  const creditX = Number.isFinite(creditToken?.x) ? creditToken.x : DEFAULT_ADDITIONAL_DETAILS_COLUMNS.credit.min;
+  if (!(dateX < identifiersX && identifiersX < airportsX && airportsX < creditX)){
+    return DEFAULT_ADDITIONAL_DETAILS_COLUMNS;
+  }
+  const dateToIdentifiers = (dateX + identifiersX) / 2;
+  const identifiersToAirports = (identifiersX + airportsX) / 2;
+  const airportsToCredit = (airportsX + creditX) / 2;
+  return {
+    date: { min: -Infinity, max: dateToIdentifiers },
+    identifiers: { min: dateToIdentifiers, max: identifiersToAirports },
+    airportsTimes: { min: identifiersToAirports, max: airportsToCredit },
+    credit: { min: airportsToCredit, max: Infinity }
+  };
+}
+
+function assignItemToColumn(x, columns){
+  if (x >= columns.date.min && x < columns.date.max) return 'date';
+  if (x >= columns.identifiers.min && x < columns.identifiers.max) return 'identifiers';
+  if (x >= columns.airportsTimes.min && x < columns.airportsTimes.max) return 'airportsTimes';
+  if (x >= columns.credit.min && x < columns.credit.max) return 'credit';
+  return null;
+}
+
+function splitRowIntoColumns(row, columns){
+  const bucket = { date: [], identifiers: [], airportsTimes: [], credit: [] };
+  row.items.forEach((item) => {
+    const key = assignItemToColumn(item.x, columns);
+    if (!key) return;
+    bucket[key].push(item.text);
+  });
+  return {
+    date: bucket.date.join(' ').replace(/\s+/g, ' ').trim(),
+    identifiers: bucket.identifiers.join(' ').replace(/\s+/g, ' ').trim(),
+    airportsTimes: bucket.airportsTimes.join(' ').replace(/\s+/g, ' ').trim(),
+    credit: bucket.credit.join(' ').replace(/\s+/g, ' ').trim()
+  };
+}
+
+function extractCreditMinutesFromColumn(creditText){
+  const durations = creditText.match(/\d{1,3}:\d{2}/g) || [];
+  if (!durations.length) return NaN;
+  const totalDuration = durations[durations.length - 1];
+  return parseDurationToMinutes(totalDuration);
+}
+
+function parseAdditionalDetailsRows(rows, fallbackYear){
   const eventsByDate = {};
   const daySummaries = {};
   let inAdditional = false;
-  let currentDate = null;
   let currentMonth = null;
   let currentMonthYear = null;
   const endSection = /Additional Summary|Legend|Recurrent Training|Credits on each drop reason type|Allowable voluntary overtime|Trip Summary|Pairing Summary|Additional Details\s*\(continued\)|Crew Contacts/i;
+  const columns = deriveAdditionalDetailsColumns(rows);
   const ensureDay = (dateKey) => {
     if (!daySummaries[dateKey]){
       daySummaries[dateKey] = {
@@ -4687,78 +4718,53 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
     }
     return daySummaries[dateKey];
   };
-  lines.forEach((line) => {
-    let workingLine = line;
-    if (/Additional Details/i.test(line)){
+  rows.forEach((row) => {
+    const rowText = getRowText(row);
+    if (/Additional Details/i.test(rowText)){
       inAdditional = true;
-      currentDate = null;
       return;
     }
     if (!inAdditional) return;
-    if (endSection.test(line)){
+    if (endSection.test(rowText)){
       inAdditional = false;
-      currentDate = null;
       return;
     }
-    if (/^\s*=+\s*$/.test(line)){
-      currentDate = null;
+    if (/^\s*=+\s*$/.test(rowText) || /^\s*-+\s*$/.test(rowText)){
       return;
     }
-    if (/^\s*-+\s*$/.test(line)){
-      currentDate = null;
-      return;
-    }
-    const monthHeaderMatch = line.match(/^\s*([A-Za-z]+)\s*(\d{4})?\s*$/);
+    const monthHeaderMatch = rowText.match(/^\s*([A-Za-z]+)\s*(\d{4})?\s*$/);
     if (monthHeaderMatch){
       const monthKey = monthHeaderMatch[1]?.toLowerCase();
       if (monthKey && Object.prototype.hasOwnProperty.call(MONTH_NAME_TO_INDEX, monthKey)){
         currentMonth = MONTH_NAME_TO_INDEX[monthKey];
         const headerYear = Number(monthHeaderMatch[2]);
         currentMonthYear = Number.isFinite(headerYear) ? headerYear : null;
-        currentDate = null;
         return;
       }
     }
-    const extractedDate = extractDateTokenFromLine(workingLine, fallbackYear, currentMonth, currentMonthYear);
-    if (extractedDate.dateKey){
-      currentDate = extractedDate.dateKey;
-      ensureDay(currentDate);
-      workingLine = extractedDate.remainingLine;
-    } else {
-      const dateKey = parseDateFromLine(workingLine, fallbackYear, currentMonth, currentMonthYear);
-      if (dateKey){
-        currentDate = dateKey;
-        ensureDay(dateKey);
-      }
-    }
-    if (!currentDate) return;
-    if (/TRIP TAFB/i.test(workingLine)){
-      const tafbMatch = workingLine.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
+    if (/\bDate\b/i.test(rowText) && /\b(Credit|Block)\b/i.test(rowText)) return;
+    const columnData = splitRowIntoColumns(row, columns);
+    const dateKey = parseDateFromLine(columnData.date, fallbackYear, currentMonth, currentMonthYear);
+    if (!dateKey) return;
+    const creditMinutes = extractCreditMinutesFromColumn(columnData.credit);
+    if (!Number.isFinite(creditMinutes)) return;
+    const daySummary = ensureDay(dateKey);
+    daySummary.creditMinutes += creditMinutes;
+    const identifiers = extractIdentifiersFromLine(columnData.identifiers);
+    identifiers.forEach(id => daySummary.identifiers.add(id));
+    const combinedContext = `${columnData.identifiers} ${columnData.airportsTimes}`.trim();
+    if (/TRIP TAFB/i.test(combinedContext)){
+      const tafbMatch = combinedContext.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
       if (tafbMatch){
         const minutes = parseDurationToMinutes(tafbMatch[1]);
         if (Number.isFinite(minutes)){
-          daySummaries[currentDate].dutyMinutes = minutes;
+          daySummary.dutyMinutes = minutes;
         }
       }
     }
-    const cancellationStatus = extractCancellationStatus(workingLine);
+    const cancellationStatus = extractCancellationStatus(combinedContext);
     if (cancellationStatus){
-      const daySummary = ensureDay(currentDate);
       daySummary.cancellation = mergeCancellationStatus(daySummary.cancellation, cancellationStatus);
-    }
-    const isFlightLine = isAdditionalDetailsFlightLine(workingLine);
-    if (!isFlightLine) return;
-    const identifiers = extractIdentifiersFromLine(workingLine);
-    if (identifiers.length){
-      const daySummary = ensureDay(currentDate);
-      identifiers.forEach(id => daySummary.identifiers.add(id));
-    }
-    const durations = workingLine.match(/\d{1,3}:\d{2}/g) || [];
-    if (!durations.length) return;
-    const totalDuration = durations[durations.length - 1];
-    const minutes = parseDurationToMinutes(totalDuration);
-    if (Number.isFinite(minutes)){
-      ensureDay(currentDate).creditMinutes += minutes;
     }
   });
   Object.entries(daySummaries).forEach(([dateKey, summary]) => {
@@ -4784,9 +4790,16 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
   };
 }
 
-function parseScheduleLines(lines){
-  const year = inferYearFromLines(lines);
-  return parseAdditionalDetailsLines(lines, year);
+function inferYearFromRows(rows){
+  const combined = rows.map(row => getRowText(row)).join(' ');
+  const yearMatch = combined.match(/\b(20\d{2})\b/);
+  if (yearMatch) return Number(yearMatch[1]);
+  return new Date().getFullYear();
+}
+
+function parseScheduleRows(rows){
+  const year = inferYearFromRows(rows);
+  return parseAdditionalDetailsRows(rows, year);
 }
 
 async function parseSchedulePdf(file){
@@ -4808,13 +4821,13 @@ async function parseSchedulePdf(file){
       throw new Error(`PDF parser failed: ${message}`);
     }
   }
-  const lines = [];
+  const rows = [];
   for (let i = 1; i <= pdf.numPages; i += 1){
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
-    lines.push(...buildLinesFromTextContent(textContent));
+    rows.push(...buildRowsFromTextContent(textContent));
   }
-  return parseScheduleLines(lines);
+  return parseScheduleRows(rows);
 }
 
 function getCalendarMonthCandidates(){
