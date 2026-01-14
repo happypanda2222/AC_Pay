@@ -4699,6 +4699,36 @@ function extractCreditMinutesFromColumn(creditText){
   return parseDurationToMinutes(totalDuration);
 }
 
+const AIRPORT_CODE_EXCLUSIONS = new Set([
+  'ARR', 'ATD', 'ATA', 'CREDIT', 'DEP', 'DH', 'ETA', 'ETD', 'FLT', 'FLIGHT',
+  'GMT', 'LCL', 'LAY', 'PAIR', 'PAIRING', 'STA', 'STD', 'TAFB', 'TIME', 'TRIP',
+  'UTC', 'CNX', 'POS'
+]);
+
+function extractAirportCodesFromLine(line){
+  const tokens = String(line || '').toUpperCase().match(/\b[A-Z]{3,4}\b/g) || [];
+  return tokens.filter(token => !AIRPORT_CODE_EXCLUSIONS.has(token));
+}
+
+function hasFlightNumberToken(line){
+  const identifiers = extractIdentifiersFromLine(String(line || ''));
+  return identifiers.some(id => /^[A-Z]{2,3}\d{1,4}$/.test(id));
+}
+
+function isAuxiliaryRowText(rowText){
+  return /\b(layover|phone|summary)\b/i.test(rowText);
+}
+
+function isValidFlightRow(columnData, rowText, creditMinutes){
+  if (isAuxiliaryRowText(rowText)) return false;
+  const combinedText = `${columnData.identifiers} ${columnData.airportsTimes}`.trim();
+  if (!hasFlightNumberToken(combinedText)) return false;
+  const airportCodes = extractAirportCodesFromLine(columnData.airportsTimes);
+  const uniqueCodes = Array.from(new Set(airportCodes));
+  if (uniqueCodes.length < 2) return false;
+  return Number.isFinite(creditMinutes);
+}
+
 function parseAdditionalDetailsRows(rows, fallbackYear){
   const eventsByDate = {};
   const daySummaries = {};
@@ -4752,7 +4782,7 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
     const dateKey = parseDateFromLine(columnData.date, fallbackYear, currentMonth, currentYear);
     if (!dateKey) return;
     const creditMinutes = extractCreditMinutesFromColumn(columnData.credit);
-    if (!Number.isFinite(creditMinutes)) return;
+    if (!isValidFlightRow(columnData, rowText, creditMinutes)) return;
     const daySummary = ensureDay(dateKey);
     daySummary.creditMinutes += creditMinutes;
     const identifiers = extractIdentifiersFromLine(columnData.identifiers);
