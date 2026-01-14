@@ -4656,10 +4656,10 @@ function updateCalendarTotals(events){
     eventCount += 1;
   });
   const creditEl = document.getElementById('modern-calendar-total-credit');
-  const dutyEl = document.getElementById('modern-calendar-total-duty');
+  const tafbEl = document.getElementById('modern-calendar-total-tafb');
   const eventsEl = document.getElementById('modern-calendar-total-events');
   if (creditEl) creditEl.textContent = formatDurationMinutes(creditMinutes);
-  if (dutyEl) dutyEl.textContent = formatDurationMinutes(dutyMinutes);
+  if (tafbEl) tafbEl.textContent = formatDurationMinutes(dutyMinutes);
   if (eventsEl) eventsEl.textContent = String(eventCount);
 }
 
@@ -4744,7 +4744,7 @@ function renderCalendar(){
       meta.className = 'calendar-event-meta';
       const parts = [];
       if (Number.isFinite(event.creditMinutes)) parts.push(`Credit ${formatDurationMinutes(event.creditMinutes)}`);
-      if (Number.isFinite(event.dutyMinutes)) parts.push(`Duty ${formatDurationMinutes(event.dutyMinutes)}`);
+      if (Number.isFinite(event.dutyMinutes)) parts.push(`TAFB ${formatDurationMinutes(event.dutyMinutes)}`);
       if (event.legs?.length){
         const legsLabel = event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ');
         if (legsLabel) parts.push(legsLabel);
@@ -4777,7 +4777,7 @@ function renderCalendar(){
       });
       const totalParts = [];
       if (dayCredit) totalParts.push(`C ${formatDurationMinutes(dayCredit)}`);
-      if (dayDuty) totalParts.push(`D ${formatDurationMinutes(dayDuty)}`);
+      if (dayDuty) totalParts.push(`T ${formatDurationMinutes(dayDuty)}`);
       if (totalParts.length){
         const total = document.createElement('div');
         total.className = 'calendar-day-total';

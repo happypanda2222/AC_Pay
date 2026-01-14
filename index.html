@@ -243,6 +243,7 @@
     .modern-cta{display:flex;justify-content:flex-end;margin-top:12px}
     .btn-primary{background:var(--btn-primary);color:var(--btn-primary-text);border:none;border-radius:12px;padding:14px 16px;font-weight:800;cursor:pointer;box-shadow:var(--btn-primary-shadow)}
     .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:6px}
+    .calendar-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
     .metric-card{background:#0c101a;border:1px solid #1f2633;border-radius:12px;padding:12px}
     .metric-label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-bottom:4px}
     .metric-value{font-size:22px;font-weight:900;letter-spacing:.2px}
@@ -1223,14 +1224,14 @@
             </div>
             <div class="calendar-summary-header">
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
-              <div class="metric-grid">
+              <div class="metric-grid calendar-summary-grid">
                 <div class="metric-card">
                   <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits exclude CNX; CNX PP remains credited."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits exclude CNX. CNX PP remains credited.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-credit">--</div>
                 </div>
                 <div class="metric-card">
-                  <div class="metric-label">Duty <span class="info-hover" tabindex="0" aria-label="Duty excludes CNX; CNX PP remains credited."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Duty excludes CNX. CNX PP remains credited.</span></span></div>
-                  <div class="metric-value" id="modern-calendar-total-duty">--</div>
+                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="Time away from base (TAFB) excludes CNX; CNX PP remains credited."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Time away from base (TAFB) excludes CNX. CNX PP remains credited.</span></span></div>
+                  <div class="metric-value" id="modern-calendar-total-tafb">--</div>
                 </div>
                 <div class="metric-card">
                   <div class="metric-label">Events</div>
