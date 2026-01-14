@@ -4478,25 +4478,37 @@ function extractIdentifiersFromLine(line){
 function buildLinesFromTextContent(textContent){
   const items = textContent?.items || [];
   const lines = [];
+  const yTolerance = 2;
+  const normalizedItems = items
+    .map(item => ({
+      text: String(item?.str || '').trim(),
+      x: Number(item?.transform?.[4] || 0),
+      y: Number(item?.transform?.[5] || 0)
+    }))
+    .filter(item => item.text);
+  const sortedItems = normalizedItems.sort((a, b) => {
+    if (a.y === b.y) return a.x - b.x;
+    return a.y - b.y;
+  });
   let currentY = null;
   let currentLine = [];
-  items.forEach((item) => {
-    const text = String(item?.str || '').trim();
-    if (!text) return;
-    const y = Math.round(item?.transform?.[5] || 0);
-    if (currentY === null) currentY = y;
-    if (Math.abs(y - currentY) > 2){
-      if (currentLine.length){
-        lines.push(currentLine.join(' ').replace(/\s+/g, ' ').trim());
-      }
+  const pushLine = () => {
+    if (!currentLine.length) return;
+    const orderedLine = currentLine
+      .sort((a, b) => a.x - b.x)
+      .map(item => item.text);
+    lines.push(orderedLine.join(' ').replace(/\s+/g, ' ').trim());
+  };
+  sortedItems.forEach((item) => {
+    if (currentY === null) currentY = item.y;
+    if (Math.abs(item.y - currentY) > yTolerance){
+      pushLine();
       currentLine = [];
-      currentY = y;
+      currentY = item.y;
     }
-    currentLine.push(text);
+    currentLine.push(item);
   });
-  if (currentLine.length){
-    lines.push(currentLine.join(' ').replace(/\s+/g, ' ').trim());
-  }
+  pushLine();
   return lines;
 }
 
