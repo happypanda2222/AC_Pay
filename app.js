@@ -4492,8 +4492,20 @@ function extractCancellationStatus(line){
   return null;
 }
 
+function mergeCancellationStatus(currentStatus, nextStatus){
+  if (!nextStatus) return currentStatus;
+  if (nextStatus === 'CNX PP') return 'CNX PP';
+  return currentStatus || nextStatus;
+}
+
+function isCancelledEvent(event){
+  return event?.cancellation === 'CNX' || event?.cancellation === 'CNX PP';
+}
+
 function extractIdentifiersFromLine(line){
   const identifiers = [];
+  const timeContextPattern = /\b(?:STD|STA|ATD|ATA|ETD|ETA|DEP|ARR|LCL|UTC|GMT|LT)\b/i;
+  const hasTimeContext = timeContextPattern.test(line);
   const pairingMatch = line.match(/\b(?:Pairing|Pair)\s*#?\s*([A-Z0-9]{2,6})\b/i);
   if (pairingMatch){
     identifiers.push(`Pairing ${pairingMatch[1]}`);
@@ -4511,7 +4523,7 @@ function extractIdentifiersFromLine(line){
       const hours = Number(number.slice(0, 2));
       const minutes = Number(number.slice(2));
       const looksLikeTime = Number.isFinite(hours) && Number.isFinite(minutes) && hours <= 23 && minutes <= 59;
-      if (looksLikeTime) return;
+      if (looksLikeTime && hasTimeContext) return;
     }
     if (!identifiers.includes(combined)) identifiers.push(combined);
   });
@@ -4566,7 +4578,8 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
       daySummaries[dateKey] = {
         creditMinutes: 0,
         dutyMinutes: null,
-        identifiers: new Set()
+        identifiers: new Set(),
+        cancellation: null
       };
     }
     return daySummaries[dateKey];
@@ -4605,6 +4618,11 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
         }
       }
     }
+    const cancellationStatus = extractCancellationStatus(line);
+    if (cancellationStatus){
+      const daySummary = ensureDay(currentDate);
+      daySummary.cancellation = mergeCancellationStatus(daySummary.cancellation, cancellationStatus);
+    }
     const identifiers = extractIdentifiersFromLine(line);
     if (!identifiers.length) return;
     const daySummary = ensureDay(currentDate);
@@ -4630,7 +4648,7 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
         dutyMinutes: Number.isFinite(summary.dutyMinutes) ? summary.dutyMinutes : null,
         creditMinutes: Number.isFinite(summary.creditMinutes) ? summary.creditMinutes : null,
         legs: [],
-        cancellation: null
+        cancellation: summary.cancellation || null
       }]
     };
   });
@@ -4695,8 +4713,7 @@ function updateCalendarTotals(events){
   let eventCount = 0;
   events.forEach((event) => {
     if (!event) return;
-    const isCancelled = event.cancellation === 'CNX';
-    if (!isCancelled){
+    if (!isCancelledEvent(event)){
       if (Number.isFinite(event.creditMinutes)) creditMinutes += event.creditMinutes;
       if (Number.isFinite(event.dutyMinutes)) dutyMinutes += event.dutyMinutes;
     }
@@ -4775,7 +4792,7 @@ function renderCalendar(){
       const eventBtn = document.createElement('button');
       eventBtn.type = 'button';
       eventBtn.className = 'calendar-event';
-      if (event.cancellation === 'CNX') eventBtn.classList.add('is-cnx');
+      if (isCancelledEvent(event)) eventBtn.classList.add('is-cnx');
       const title = document.createElement('div');
       title.className = 'calendar-event-title';
       title.textContent = event.label;
@@ -4818,7 +4835,7 @@ function renderCalendar(){
       let dayCredit = 0;
       let dayDuty = 0;
       dayEvents.forEach((event) => {
-        if (event.cancellation === 'CNX') return;
+        if (isCancelledEvent(event)) return;
         if (Number.isFinite(event.creditMinutes)) dayCredit += event.creditMinutes;
         if (Number.isFinite(event.dutyMinutes)) dayDuty += event.dutyMinutes;
       });
