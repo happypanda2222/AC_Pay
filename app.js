@@ -4440,9 +4440,58 @@ const MONTH_NAME_TO_INDEX = {
   december: 11
 };
 
+const DATE_MONTH_PATTERN = '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)';
+const DATE_DOW_PATTERN = '(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)';
+
+function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentMonthYear){
+  const monthPattern = DATE_MONTH_PATTERN;
+  const dowPattern = DATE_DOW_PATTERN;
+  const monthRegex = new RegExp(`\\b${monthPattern}\\b`, 'i');
+  const tokenPatterns = [
+    new RegExp(`\\b${dowPattern}\\s+\\d{1,2}\\s+${monthPattern}\\s*(?:\\d{2,4})?\\b`, 'i'),
+    new RegExp(`\\b\\d{1,2}\\s+${monthPattern}\\s*(?:\\d{2,4})?\\b`, 'i'),
+    new RegExp(`\\b\\d{1,2}${monthPattern}(?:\\d{2,4})?\\b`, 'i')
+  ];
+  for (const pattern of tokenPatterns){
+    const match = line.match(pattern);
+    if (!match) continue;
+    const token = match[0];
+    const dateKey = parseDateFromLine(token, fallbackYear, currentMonth, currentMonthYear);
+    if (!dateKey) continue;
+    const remainingLine = line.replace(token, ' ').replace(/\s+/g, ' ').trim();
+    return { dateKey, remainingLine };
+  }
+  const compactDowMatch = line.match(new RegExp(`\\b${dowPattern}\\d{1,2}\\b`, 'i'));
+  if (compactDowMatch && monthRegex.test(line)){
+    const dateKey = parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear);
+    if (dateKey){
+      let remainingLine = line.replace(compactDowMatch[0], ' ');
+      const monthMatch = line.match(monthRegex);
+      if (monthMatch){
+        remainingLine = remainingLine.replace(monthMatch[0], ' ');
+      }
+      remainingLine = remainingLine.replace(/\b\d{2,4}\b/, ' ');
+      remainingLine = remainingLine.replace(/\s+/g, ' ').trim();
+      return { dateKey, remainingLine };
+    }
+  }
+  if (Number.isFinite(currentMonth)){
+    const dayOnlyMatch = line.match(new RegExp(`^\\s*(?:${dowPattern}\\s+)?(\\d{1,2})(?!\\s*:)\\b`, 'i'));
+    if (dayOnlyMatch){
+      const token = dayOnlyMatch[0];
+      const dateKey = parseDateFromLine(token, fallbackYear, currentMonth, currentMonthYear);
+      if (dateKey){
+        const remainingLine = line.slice(dayOnlyMatch[0].length).trim();
+        return { dateKey, remainingLine };
+      }
+    }
+  }
+  return { dateKey: null, remainingLine: line };
+}
+
 function parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear){
-  const monthPattern = '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)';
-  const dowPattern = '(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)';
+  const monthPattern = DATE_MONTH_PATTERN;
+  const dowPattern = DATE_DOW_PATTERN;
   const patterns = [
     new RegExp(`\\b${dowPattern}\\s+(\\d{1,2})\\s+${monthPattern}\\s*(\\d{2,4})?\\b`, 'i'),
     new RegExp(`\\b(\\d{1,2})\\s+${monthPattern}\\s*(\\d{2,4})?\\b`, 'i'),
@@ -4639,6 +4688,7 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
     return daySummaries[dateKey];
   };
   lines.forEach((line) => {
+    let workingLine = line;
     if (/Additional Details/i.test(line)){
       inAdditional = true;
       currentDate = null;
@@ -4669,14 +4719,21 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
         return;
       }
     }
-    const dateKey = parseDateFromLine(line, fallbackYear, currentMonth, currentMonthYear);
-    if (dateKey){
-      currentDate = dateKey;
-      ensureDay(dateKey);
+    const extractedDate = extractDateTokenFromLine(workingLine, fallbackYear, currentMonth, currentMonthYear);
+    if (extractedDate.dateKey){
+      currentDate = extractedDate.dateKey;
+      ensureDay(currentDate);
+      workingLine = extractedDate.remainingLine;
+    } else {
+      const dateKey = parseDateFromLine(workingLine, fallbackYear, currentMonth, currentMonthYear);
+      if (dateKey){
+        currentDate = dateKey;
+        ensureDay(dateKey);
+      }
     }
     if (!currentDate) return;
-    if (/TRIP TAFB/i.test(line)){
-      const tafbMatch = line.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
+    if (/TRIP TAFB/i.test(workingLine)){
+      const tafbMatch = workingLine.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
       if (tafbMatch){
         const minutes = parseDurationToMinutes(tafbMatch[1]);
         if (Number.isFinite(minutes)){
@@ -4684,19 +4741,19 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
         }
       }
     }
-    const cancellationStatus = extractCancellationStatus(line);
+    const cancellationStatus = extractCancellationStatus(workingLine);
     if (cancellationStatus){
       const daySummary = ensureDay(currentDate);
       daySummary.cancellation = mergeCancellationStatus(daySummary.cancellation, cancellationStatus);
     }
-    const isFlightLine = isAdditionalDetailsFlightLine(line);
+    const isFlightLine = isAdditionalDetailsFlightLine(workingLine);
     if (!isFlightLine) return;
-    const identifiers = extractIdentifiersFromLine(line);
+    const identifiers = extractIdentifiersFromLine(workingLine);
     if (identifiers.length){
       const daySummary = ensureDay(currentDate);
       identifiers.forEach(id => daySummary.identifiers.add(id));
     }
-    const durations = line.match(/\d{1,3}:\d{2}/g) || [];
+    const durations = workingLine.match(/\d{1,3}:\d{2}/g) || [];
     if (!durations.length) return;
     const totalDuration = durations[durations.length - 1];
     const minutes = parseDurationToMinutes(totalDuration);
