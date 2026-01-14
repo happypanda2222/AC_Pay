@@ -4572,7 +4572,7 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
   const daySummaries = {};
   let inAdditional = false;
   let currentDate = null;
-  const endSection = /Additional Summary|Legend|Recurrent Training|Credits on each drop reason type|Allowable voluntary overtime/i;
+  const endSection = /Additional Summary|Legend|Recurrent Training|Credits on each drop reason type|Allowable voluntary overtime|Trip Summary|Pairing Summary|Additional Details\s*\(continued\)|Crew Contacts/i;
   const ensureDay = (dateKey) => {
     if (!daySummaries[dateKey]){
       daySummaries[dateKey] = {
@@ -4596,10 +4596,11 @@ function parseAdditionalDetailsLines(lines, fallbackYear){
       currentDate = null;
       return;
     }
-    if (/^=+$/.test(line)){
+    if (/^\s*=+\s*$/.test(line)){
+      currentDate = null;
       return;
     }
-    if (/^-+$/.test(line)){
+    if (/^\s*-+\s*$/.test(line)){
       currentDate = null;
       return;
     }
