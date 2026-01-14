@@ -104,6 +104,9 @@ const FLIGHTRADAR24_DEFAULT_VERSION = 'v1';
 const FLIGHTRADAR24_PUBLIC_BASE = 'https://api.flightradar24.com';
 const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
+const CALENDAR_STORAGE_KEY = 'acpay.calendar.schedule';
+const CALENDAR_PREFS_KEY = 'acpay.calendar.prefs';
+const CALENDAR_WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 let finAirportCodeMode = 'iata';
 const finHiddenContext = { page: null, fin: null, registration: '' };
 let flightLookupCarrier = 'ACA';
@@ -1756,6 +1759,28 @@ function formatHoursMinutes(value){
   const hoursLabel = `${hours} hour${hours === 1 ? '' : 's'}`;
   if (!minutes) return hoursLabel;
   return `${hoursLabel} ${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+function parseDurationToMinutes(value){
+  if (!value) return NaN;
+  const text = String(value).trim();
+  if (!text) return NaN;
+  if (text.includes(':')){
+    const [hours, minutes] = text.split(':').map(Number);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return NaN;
+    return (hours * 60) + minutes;
+  }
+  const asNumber = Number(text);
+  if (!Number.isFinite(asNumber)) return NaN;
+  return Math.round(asNumber * 60);
+}
+
+function formatDurationMinutes(totalMinutes){
+  if (!Number.isFinite(totalMinutes)) return '--:--';
+  const safeMinutes = Math.max(0, Math.round(totalMinutes));
+  const hours = Math.floor(safeMinutes / 60);
+  const minutes = safeMinutes % 60;
+  return `${hours}:${String(minutes).padStart(2,'0')}`;
 }
 
 function normalizeAirportCode(code){
@@ -4323,6 +4348,470 @@ function refreshFinResults(){
   }
 }
 
+let calendarState = {
+  eventsByDate: {},
+  months: [],
+  selectedMonth: null
+};
+
+function loadCalendarState(){
+  try {
+    const stored = JSON.parse(localStorage.getItem(CALENDAR_STORAGE_KEY) || '{}');
+    if (!stored || typeof stored !== 'object') return;
+    calendarState = {
+      eventsByDate: stored.eventsByDate || {},
+      months: Array.isArray(stored.months) ? stored.months : [],
+      selectedMonth: stored.selectedMonth || null
+    };
+  } catch (err){
+    console.warn('Failed to load calendar schedule', err);
+  }
+  try {
+    const prefs = JSON.parse(localStorage.getItem(CALENDAR_PREFS_KEY) || '{}');
+    if (prefs?.selectedMonth){
+      calendarState.selectedMonth = prefs.selectedMonth;
+    }
+  } catch (err){
+    console.warn('Failed to load calendar prefs', err);
+  }
+}
+
+function saveCalendarState(){
+  const payload = {
+    eventsByDate: calendarState.eventsByDate,
+    months: calendarState.months,
+    selectedMonth: calendarState.selectedMonth
+  };
+  try {
+    localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(payload));
+    localStorage.setItem(CALENDAR_PREFS_KEY, JSON.stringify({ selectedMonth: calendarState.selectedMonth }));
+  } catch (err){
+    console.warn('Failed to save calendar schedule', err);
+  }
+}
+
+function buildCalendarMonths(eventsByDate){
+  const months = new Set();
+  Object.keys(eventsByDate || {}).forEach((dateKey) => {
+    if (typeof dateKey === 'string' && dateKey.length >= 7){
+      months.add(dateKey.slice(0, 7));
+    }
+  });
+  return Array.from(months).sort();
+}
+
+function formatCalendarMonthLabel(monthKey){
+  if (!monthKey) return 'Month';
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return 'Month';
+  return new Date(year, month - 1, 1).toLocaleString('en', { month: 'long', year: 'numeric' });
+}
+
+function parseDateFromLine(line, fallbackYear){
+  const dateMatch = line.match(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2})\s+([A-Za-z]{3})\s*(\d{4})?/i)
+    || line.match(/\b(\d{1,2})\s+([A-Za-z]{3})\s*(\d{4})?/i);
+  if (!dateMatch) return null;
+  const day = Number(dateMatch[1]);
+  const monthName = dateMatch[2];
+  const year = Number(dateMatch[3] || fallbackYear);
+  if (!Number.isFinite(day) || !Number.isFinite(year)) return null;
+  const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
+  if (!Number.isFinite(monthIndex)) return null;
+  const date = new Date(year, monthIndex, day);
+  if (!Number.isFinite(date.getTime())) return null;
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const dayLabel = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${dayLabel}`;
+}
+
+function inferYearFromLines(lines){
+  const combined = lines.join(' ');
+  const yearMatch = combined.match(/\b(20\d{2})\b/);
+  if (yearMatch) return Number(yearMatch[1]);
+  return new Date().getFullYear();
+}
+
+function extractDurationFromLine(line, keywords){
+  const label = keywords.join('|');
+  const regex = new RegExp(`\\b(?:${label})\\b\\s*[:\\-]?\\s*(\\d{1,3}:\\d{2}|\\d+(?:\\.\\d+)?)`, 'i');
+  const match = line.match(regex);
+  if (!match) return NaN;
+  return parseDurationToMinutes(match[1]);
+}
+
+function extractLegsFromLine(line){
+  const codes = line.match(/\b[A-Z]{3,4}\b/g) || [];
+  const stop = new Set(['PAIR', 'PAIRING', 'DUTY', 'CREDIT', 'CR', 'CNX', 'PP', 'UTC', 'GMT', 'LCL', 'LT', 'STD', 'STA', 'ATD', 'ATA']);
+  const filtered = codes.filter(code => !stop.has(code));
+  const legs = [];
+  for (let i = 0; i < filtered.length - 1; i += 1){
+    legs.push({ from: filtered[i], to: filtered[i + 1] });
+  }
+  return legs;
+}
+
+function extractCancellationStatus(line){
+  if (/\bCNX\s+PP\b/i.test(line)) return 'CNX PP';
+  if (/\bCNX\b/i.test(line)) return 'CNX';
+  return null;
+}
+
+function extractIdentifiersFromLine(line){
+  const identifiers = [];
+  const pairingMatch = line.match(/\b(?:Pairing|Pair)\s*#?\s*([A-Z0-9]{2,6})\b/i);
+  if (pairingMatch){
+    identifiers.push(`Pairing ${pairingMatch[1]}`);
+  }
+  const flightMatches = line.match(/\b[A-Z]{2,3}\d{1,4}\b/g) || [];
+  flightMatches.forEach((match) => {
+    if (!identifiers.includes(match)) identifiers.push(match);
+  });
+  return identifiers;
+}
+
+function buildLinesFromTextContent(textContent){
+  const items = textContent?.items || [];
+  const lines = [];
+  let currentY = null;
+  let currentLine = [];
+  items.forEach((item) => {
+    const text = String(item?.str || '').trim();
+    if (!text) return;
+    const y = Math.round(item?.transform?.[5] || 0);
+    if (currentY === null) currentY = y;
+    if (Math.abs(y - currentY) > 2){
+      if (currentLine.length){
+        lines.push(currentLine.join(' ').replace(/\s+/g, ' ').trim());
+      }
+      currentLine = [];
+      currentY = y;
+    }
+    currentLine.push(text);
+  });
+  if (currentLine.length){
+    lines.push(currentLine.join(' ').replace(/\s+/g, ' ').trim());
+  }
+  return lines;
+}
+
+function parseScheduleLines(lines){
+  const year = inferYearFromLines(lines);
+  const eventsByDate = {};
+  const pendingCancellations = [];
+  let currentDate = null;
+  let inDutyPlan = false;
+  let inAdditional = false;
+  lines.forEach((line) => {
+    if (/Individual duty plan/i.test(line)){
+      inDutyPlan = true;
+      inAdditional = false;
+      return;
+    }
+    if (/Additional Details/i.test(line)){
+      inAdditional = true;
+      inDutyPlan = false;
+      return;
+    }
+    if (!inDutyPlan && !inAdditional) return;
+    const dateKey = parseDateFromLine(line, year);
+    if (dateKey){
+      currentDate = dateKey;
+      if (!eventsByDate[currentDate]) eventsByDate[currentDate] = { events: [] };
+    }
+    if (!currentDate) return;
+    if (inDutyPlan){
+      const identifiers = extractIdentifiersFromLine(line);
+      if (!identifiers.length) return;
+      const dutyMinutes = extractDurationFromLine(line, ['Duty']);
+      const creditMinutes = extractDurationFromLine(line, ['Credit', 'CR']);
+      const legs = extractLegsFromLine(line);
+      const cancellation = extractCancellationStatus(line);
+      const label = identifiers.join(', ');
+      const eventId = `${currentDate}-${eventsByDate[currentDate].events.length}-${label.replace(/\s+/g, '')}`;
+      eventsByDate[currentDate].events.push({
+        id: eventId,
+        date: currentDate,
+        label,
+        identifiers,
+        dutyMinutes: Number.isFinite(dutyMinutes) ? dutyMinutes : null,
+        creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
+        legs,
+        cancellation
+      });
+    } else if (inAdditional){
+      const cancellation = extractCancellationStatus(line);
+      if (!cancellation) return;
+      const identifiers = extractIdentifiersFromLine(line);
+      if (!identifiers.length) return;
+      const targetDate = parseDateFromLine(line, year) || currentDate;
+      pendingCancellations.push({ date: targetDate, identifiers, cancellation });
+    }
+  });
+  pendingCancellations.forEach(({ date, identifiers, cancellation }) => {
+    const day = eventsByDate[date];
+    if (!day) return;
+    day.events.forEach((event) => {
+      if (event.identifiers.some(id => identifiers.includes(id))){
+        event.cancellation = cancellation;
+      }
+    });
+  });
+  return eventsByDate;
+}
+
+async function parseSchedulePdf(file){
+  if (!window.pdfjsLib){
+    throw new Error('PDF parser unavailable.');
+  }
+  if (window.pdfjsLib.GlobalWorkerOptions){
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
+  }
+  const buffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  const lines = [];
+  for (let i = 1; i <= pdf.numPages; i += 1){
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    lines.push(...buildLinesFromTextContent(textContent));
+  }
+  return parseScheduleLines(lines);
+}
+
+function getCalendarMonthCandidates(){
+  if (calendarState.months.length) return calendarState.months;
+  const now = new Date();
+  return [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`];
+}
+
+function ensureCalendarSelection(){
+  const months = getCalendarMonthCandidates();
+  if (!calendarState.selectedMonth || !months.includes(calendarState.selectedMonth)){
+    calendarState.selectedMonth = months[0];
+  }
+}
+
+function updateCalendarTotals(events){
+  let creditMinutes = 0;
+  let dutyMinutes = 0;
+  let eventCount = 0;
+  events.forEach((event) => {
+    if (!event) return;
+    const isCancelled = event.cancellation === 'CNX';
+    if (!isCancelled){
+      if (Number.isFinite(event.creditMinutes)) creditMinutes += event.creditMinutes;
+      if (Number.isFinite(event.dutyMinutes)) dutyMinutes += event.dutyMinutes;
+    }
+    eventCount += 1;
+  });
+  const creditEl = document.getElementById('modern-calendar-total-credit');
+  const dutyEl = document.getElementById('modern-calendar-total-duty');
+  const eventsEl = document.getElementById('modern-calendar-total-events');
+  if (creditEl) creditEl.textContent = formatDurationMinutes(creditMinutes);
+  if (dutyEl) dutyEl.textContent = formatDurationMinutes(dutyMinutes);
+  if (eventsEl) eventsEl.textContent = String(eventCount);
+}
+
+function renderCalendar(){
+  const monthSelect = document.getElementById('modern-calendar-month');
+  const headerEl = document.getElementById('modern-calendar-summary-header');
+  const gridEl = document.getElementById('modern-calendar-grid');
+  const statusEl = document.getElementById('modern-calendar-status');
+  if (!monthSelect || !gridEl || !headerEl) return;
+  calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
+  ensureCalendarSelection();
+  const monthOptions = getCalendarMonthCandidates();
+  monthSelect.innerHTML = '';
+  monthOptions.forEach((month) => {
+    const option = document.createElement('option');
+    option.value = month;
+    option.textContent = formatCalendarMonthLabel(month);
+    monthSelect.appendChild(option);
+  });
+  monthSelect.value = calendarState.selectedMonth || monthOptions[0] || '';
+  headerEl.textContent = formatCalendarMonthLabel(calendarState.selectedMonth);
+  const [year, month] = (calendarState.selectedMonth || '').split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)){
+    gridEl.innerHTML = '';
+    updateCalendarTotals([]);
+    if (statusEl) statusEl.textContent = 'No schedule loaded.';
+    return;
+  }
+  const events = [];
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)){
+      day?.events?.forEach(event => events.push(event));
+    }
+  });
+  updateCalendarTotals(events);
+  if (statusEl){
+    statusEl.textContent = events.length ? '' : 'No schedule loaded.';
+  }
+  const firstOfMonth = new Date(year, month - 1, 1);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  gridEl.innerHTML = '';
+  CALENDAR_WEEKDAYS.forEach((weekday) => {
+    const label = document.createElement('div');
+    label.className = 'calendar-weekday';
+    label.textContent = weekday;
+    gridEl.appendChild(label);
+  });
+  for (let i = 0; i < firstOfMonth.getDay(); i += 1){
+    const empty = document.createElement('div');
+    empty.className = 'calendar-day is-empty';
+    gridEl.appendChild(empty);
+  }
+  for (let day = 1; day <= daysInMonth; day += 1){
+    const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dayEvents = calendarState.eventsByDate?.[dateKey]?.events || [];
+    const dayCell = document.createElement('div');
+    dayCell.className = 'calendar-day';
+    const dayNumber = document.createElement('div');
+    dayNumber.className = 'calendar-day-number';
+    dayNumber.textContent = String(day);
+    dayCell.appendChild(dayNumber);
+    dayEvents.forEach((event) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'calendar-event-item';
+      wrapper.dataset.eventId = event.id;
+      const eventBtn = document.createElement('button');
+      eventBtn.type = 'button';
+      eventBtn.className = 'calendar-event';
+      if (event.cancellation === 'CNX') eventBtn.classList.add('is-cnx');
+      const title = document.createElement('div');
+      title.className = 'calendar-event-title';
+      title.textContent = event.label;
+      if (event.cancellation){
+        const status = document.createElement('span');
+        status.className = 'calendar-event-status';
+        status.textContent = event.cancellation;
+        if (event.cancellation === 'CNX PP') status.classList.add('is-pp');
+        title.appendChild(document.createTextNode(' '));
+        title.appendChild(status);
+      }
+      const meta = document.createElement('div');
+      meta.className = 'calendar-event-meta';
+      const parts = [];
+      if (Number.isFinite(event.creditMinutes)) parts.push(`Credit ${formatDurationMinutes(event.creditMinutes)}`);
+      if (Number.isFinite(event.dutyMinutes)) parts.push(`Duty ${formatDurationMinutes(event.dutyMinutes)}`);
+      if (event.legs?.length){
+        const legsLabel = event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ');
+        if (legsLabel) parts.push(legsLabel);
+      }
+      meta.textContent = parts.join(' · ');
+      eventBtn.appendChild(title);
+      if (meta.textContent) eventBtn.appendChild(meta);
+      wrapper.appendChild(eventBtn);
+      const menu = document.createElement('div');
+      menu.className = 'calendar-cnx-menu hidden';
+      ['CNX', 'CNX PP'].forEach((status) => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'calendar-cnx-option';
+        option.dataset.cnxStatus = status;
+        option.textContent = status;
+        if (event.cancellation === status) option.classList.add('active');
+        menu.appendChild(option);
+      });
+      wrapper.appendChild(menu);
+      dayCell.appendChild(wrapper);
+    });
+    if (dayEvents.length){
+      let dayCredit = 0;
+      let dayDuty = 0;
+      dayEvents.forEach((event) => {
+        if (event.cancellation === 'CNX') return;
+        if (Number.isFinite(event.creditMinutes)) dayCredit += event.creditMinutes;
+        if (Number.isFinite(event.dutyMinutes)) dayDuty += event.dutyMinutes;
+      });
+      const totalParts = [];
+      if (dayCredit) totalParts.push(`C ${formatDurationMinutes(dayCredit)}`);
+      if (dayDuty) totalParts.push(`D ${formatDurationMinutes(dayDuty)}`);
+      if (totalParts.length){
+        const total = document.createElement('div');
+        total.className = 'calendar-day-total';
+        total.textContent = totalParts.join(' · ');
+        dayCell.appendChild(total);
+      }
+    }
+    gridEl.appendChild(dayCell);
+  }
+}
+
+function setCalendarEventCancellation(eventId, status){
+  let updated = false;
+  Object.values(calendarState.eventsByDate || {}).forEach((day) => {
+    day?.events?.forEach((event) => {
+      if (event.id === eventId){
+        event.cancellation = event.cancellation === status ? null : status;
+        updated = true;
+      }
+    });
+  });
+  if (updated){
+    saveCalendarState();
+    renderCalendar();
+  }
+}
+
+function initCalendar(){
+  loadCalendarState();
+  renderCalendar();
+  const fileInput = document.getElementById('modern-calendar-file');
+  if (fileInput){
+    fileInput.addEventListener('change', async (event) => {
+      const statusEl = document.getElementById('modern-calendar-status');
+      const file = event.target?.files?.[0];
+      if (!file) return;
+      if (statusEl) statusEl.textContent = 'Parsing PDF…';
+      try {
+        const eventsByDate = await parseSchedulePdf(file);
+        calendarState.eventsByDate = eventsByDate;
+        calendarState.months = buildCalendarMonths(eventsByDate);
+        ensureCalendarSelection();
+        saveCalendarState();
+        renderCalendar();
+      } catch (err){
+        console.error('PDF schedule parse failed', err);
+        if (statusEl) statusEl.textContent = 'PDF parse failed.';
+      }
+    });
+  }
+  const monthSelect = document.getElementById('modern-calendar-month');
+  if (monthSelect){
+    monthSelect.addEventListener('change', () => {
+      calendarState.selectedMonth = monthSelect.value;
+      saveCalendarState();
+      renderCalendar();
+    });
+  }
+  const grid = document.getElementById('modern-calendar-grid');
+  if (grid){
+    grid.addEventListener('click', (event) => {
+      const target = event.target;
+      const statusButton = target instanceof Element ? target.closest('[data-cnx-status]') : null;
+      if (statusButton){
+        const wrapper = statusButton.closest('[data-event-id]');
+        const eventId = wrapper?.dataset?.eventId;
+        if (eventId) setCalendarEventCancellation(eventId, statusButton.dataset.cnxStatus);
+        return;
+      }
+      const eventButton = target instanceof Element ? target.closest('.calendar-event') : null;
+      if (eventButton){
+        const wrapper = eventButton.closest('[data-event-id]');
+        if (!wrapper) return;
+        document.querySelectorAll('.calendar-cnx-menu').forEach((menu) => menu.classList.add('hidden'));
+        const menu = wrapper.querySelector('.calendar-cnx-menu');
+        if (menu) menu.classList.toggle('hidden');
+      }
+    });
+  }
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest('#modern-calendar-grid')) return;
+    document.querySelectorAll('.calendar-cnx-menu').forEach((menu) => menu.classList.add('hidden'));
+  });
+}
+
 let currentLegacySubTab = 'annual';
 let currentModernSubTab = 'modern-annual';
 let currentLegacyDutyTab = 'duty';
@@ -4333,22 +4822,27 @@ function setLegacyPrimaryTab(which){
   const payBtn = document.getElementById('tabbtn-pay');
   const weatherBtn = document.getElementById('tabbtn-weather');
   const dutyBtn = document.getElementById('tabbtn-duty-rest');
+  const calendarBtn = document.getElementById('tabbtn-calendar');
   const finBtn = document.getElementById('tabbtn-fin');
   const payPane = document.getElementById('legacy-pay');
   const weatherPane = document.getElementById('tab-weather');
   const dutyPane = document.getElementById('tab-duty-rest');
+  const calendarPane = document.getElementById('tab-calendar');
   const finPane = document.getElementById('tab-fin');
   const showPay = which === 'pay';
   const showWeather = which === 'weather';
   const showDuty = which === 'duty-rest';
+  const showCalendar = which === 'calendar';
   const showFin = which === 'fin';
   payBtn?.classList.toggle('active', showPay);
   weatherBtn?.classList.toggle('active', showWeather);
   dutyBtn?.classList.toggle('active', showDuty);
+  calendarBtn?.classList.toggle('active', showCalendar);
   finBtn?.classList.toggle('active', showFin);
   payPane?.classList.toggle('hidden', !showPay);
   weatherPane?.classList.toggle('hidden', !showWeather);
   dutyPane?.classList.toggle('hidden', !showDuty);
+  calendarPane?.classList.toggle('hidden', !showCalendar);
   finPane?.classList.toggle('hidden', !showFin);
   if (showPay) setLegacySubTab(currentLegacySubTab);
   if (showDuty) setLegacyDutyTab(currentLegacyDutyTab);
@@ -4402,11 +4896,13 @@ function setModernPrimaryTab(which){
   const payBtn = document.getElementById('tabbtn-modern-pay');
   const weatherBtn = document.getElementById('tabbtn-modern-weather');
   const dutyBtn = document.getElementById('tabbtn-modern-duty-rest');
+  const calendarBtn = document.getElementById('tabbtn-modern-calendar');
   const finBtn = document.getElementById('tabbtn-modern-fin');
   const payPane = document.getElementById('modern-pay');
   const weatherPane = document.getElementById('modern-weather');
   const metarHistoryPane = document.getElementById('modern-metar-history');
   const dutyPane = document.getElementById('modern-duty-rest');
+  const calendarPane = document.getElementById('modern-calendar');
   const finPane = document.getElementById('modern-fin');
   const finHiddenPane = document.getElementById('modern-fin-hidden');
   const showPay = which === 'modern-pay';
@@ -4414,16 +4910,19 @@ function setModernPrimaryTab(which){
   const showMetarHistory = which === 'modern-metar-history';
   const showWeatherTab = showWeather || showMetarHistory;
   const showDuty = which === 'modern-duty-rest';
+  const showCalendar = which === 'modern-calendar';
   const showFin = which === 'modern-fin';
   const showingHiddenFin = showFin && finHiddenContext.page !== null;
   payBtn?.classList.toggle('active', showPay);
   weatherBtn?.classList.toggle('active', showWeatherTab);
   dutyBtn?.classList.toggle('active', showDuty);
+  calendarBtn?.classList.toggle('active', showCalendar);
   finBtn?.classList.toggle('active', showFin);
   payPane?.classList.toggle('hidden', !showPay);
   weatherPane?.classList.toggle('hidden', !showWeather);
   metarHistoryPane?.classList.toggle('hidden', !showMetarHistory);
   dutyPane?.classList.toggle('hidden', !showDuty);
+  calendarPane?.classList.toggle('hidden', !showCalendar);
   finPane?.classList.toggle('hidden', !showFin || showingHiddenFin);
   finHiddenPane?.classList.toggle('hidden', !showFin || !showingHiddenFin);
   if (!showMetarHistory){
@@ -8335,6 +8834,7 @@ function init(){
   addTapListener(document.getElementById('tabbtn-modern-pay'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-pay'); });
   addTapListener(document.getElementById('tabbtn-modern-weather'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-weather'); });
   addTapListener(document.getElementById('tabbtn-modern-duty-rest'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-duty-rest'); });
+  addTapListener(document.getElementById('tabbtn-modern-calendar'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-calendar'); });
   addTapListener(document.getElementById('tabbtn-modern-fin'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-fin'); });
   addTapListener(document.getElementById('tabbtn-modern-annual'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
   addTapListener(document.getElementById('tabbtn-modern-monthly'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
@@ -8523,6 +9023,7 @@ function init(){
   setFlightLookupCarrier(flightLookupCarrier);
   populateFr24ConfigForm();
   investigateBackgroundFinSync();
+  initCalendar();
   // After initializing defaults and tie logic, automatically select the
   // current pay year and step.  This runs once on page load and does not
   // lock the controls.  If tie checkboxes remain unchecked, this does

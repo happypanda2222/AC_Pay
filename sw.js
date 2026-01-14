@@ -1,5 +1,5 @@
 // sw.js
-const CACHE = 'acpay-v259'; // ⬅️ bump this (v2, v3, ...) whenever you change assets
+const CACHE = 'acpay-v260'; // ⬅️ bump this (v2, v3, ...) whenever you change assets
 const ASSETS = [
   './',
   './index.html',
@@ -9,7 +9,9 @@ const ASSETS = [
   './icons/icon-192-red.png',
   './icons/icon-512-red.png',
   './icons/apple-touch-icon-180-red.png',
-  './apple-touch-icon.png'
+  './apple-touch-icon.png',
+  './vendor/pdfjs/pdf.min.js',
+  './vendor/pdfjs/pdf.worker.min.js'
 ];
 
 self.addEventListener('install', event => {
