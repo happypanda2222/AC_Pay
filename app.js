@@ -4522,9 +4522,9 @@ function parseScheduleLines(lines){
   const hasHeaders = lines.some(line => /Individual duty plan|Additional Details/i.test(line));
   let fallbackMatches = 0;
   const addDutyEventFromLine = (line, dateKey) => {
-    if (!eventsByDate[dateKey]) eventsByDate[dateKey] = { events: [] };
     const identifiers = extractIdentifiersFromLine(line);
     if (!identifiers.length) return false;
+    if (!eventsByDate[dateKey]) eventsByDate[dateKey] = { events: [] };
     const dutyMinutes = extractDurationFromLine(line, ['Duty']);
     const creditMinutes = extractDurationFromLine(line, ['Credit', 'CR']);
     const legs = extractLegsFromLine(line);
@@ -4548,7 +4548,6 @@ function parseScheduleLines(lines){
       const dateKey = parseDateFromLine(line, year);
       if (dateKey){
         currentDate = dateKey;
-        if (!eventsByDate[currentDate]) eventsByDate[currentDate] = { events: [] };
       }
       if (!currentDate) return;
       const added = addDutyEventFromLine(line, currentDate);
@@ -4574,7 +4573,6 @@ function parseScheduleLines(lines){
     const dateKey = parseDateFromLine(line, year);
     if (dateKey){
       currentDate = dateKey;
-      if (!eventsByDate[currentDate]) eventsByDate[currentDate] = { events: [] };
     }
     if (!currentDate) return;
     if (inDutyPlan){
