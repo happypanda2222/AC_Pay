@@ -4726,12 +4726,15 @@ function extractIdentifiersFromLine(line){
   }
   const flightMatches = line.match(/\b[A-Z]{2}\d{1,4}\b/g) || [];
   flightMatches.forEach((match) => {
+    const prefix = match.slice(0, 2);
+    if (!hasAllowedCalendarFlightPrefix(prefix)) return;
     if (!identifiers.includes(match)) identifiers.push(match);
   });
   const spacedFlightMatches = [...line.matchAll(/\b([A-Z]{2})\s+(\d{1,4})\b/g)];
   spacedFlightMatches.forEach((match) => {
     const code = match[1];
     const number = match[2];
+    if (!hasAllowedCalendarFlightPrefix(code)) return;
     const combined = `${code}${number}`;
     const hours = Number(number.slice(0, 2));
     const minutes = Number(number.slice(2));
@@ -4848,6 +4851,11 @@ const AIRPORT_CODE_EXCLUSIONS = new Set([
   'GMT', 'LCL', 'LAY', 'PAIR', 'PAIRING', 'STA', 'STD', 'TAFB', 'TIME', 'TRIP',
   'UTC', 'CNX', 'POS'
 ]);
+const CALENDAR_FLIGHT_PREFIXES = new Set(['RV', 'AC', 'QK']);
+
+function hasAllowedCalendarFlightPrefix(prefix){
+  return CALENDAR_FLIGHT_PREFIXES.has(String(prefix || '').toUpperCase());
+}
 
 function extractAirportCodesFromLine(line){
   const tokens = String(line || '').toUpperCase().match(/\b[A-Z]{3,4}\b/g) || [];
@@ -5074,7 +5082,10 @@ function buildCalendarEventFromText(dateKey, lines){
     }
     const flightMatch = trimmed.match(/\b([A-Z]{2}(?:\/[A-Z]{2})?)\s+(\d{1,4})\b/);
     if (flightMatch){
-      const identifier = `${flightMatch[1]} ${flightMatch[2]}`;
+      const rawPrefix = flightMatch[1];
+      const primaryPrefix = rawPrefix.split('/')[0];
+      if (!hasAllowedCalendarFlightPrefix(primaryPrefix)) return;
+      const identifier = `${rawPrefix} ${flightMatch[2]}`;
       const airports = trimmed.match(/\b[A-Z]{3}\b/g) || [];
       const legs = airports.length >= 2 ? [{ from: airports[0], to: airports[1] }] : [];
       const minutes = durations.length ? parseDurationToMinutes(durations[durations.length - 1]) : NaN;
