@@ -570,6 +570,16 @@
       grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
       gap:10px;
     }
+    .calendar-paste{
+      grid-column:1/-1;
+    }
+    .calendar-paste textarea{
+      min-height:130px;
+      resize:vertical;
+    }
+    .calendar-parse{
+      align-self:end;
+    }
     @media(max-width:600px){
       .calendar-grid{grid-template-columns:repeat(7,minmax(36px,1fr))}
       .calendar-day{min-height:90px;padding:6px}
@@ -1213,9 +1223,12 @@
           <div class="modern-panel">
             <h3>Calendar</h3>
             <div class="calendar-toolbar">
-              <div>
-                <label>PDF</label>
-                <input id="modern-calendar-file" type="file" accept="application/pdf">
+              <div class="calendar-paste">
+                <label for="modern-calendar-text">Paste schedule</label>
+                <textarea id="modern-calendar-text" rows="6" placeholder="Paste schedule text"></textarea>
+              </div>
+              <div class="calendar-parse">
+                <button id="modern-calendar-parse" class="btn-primary" type="button">Parse schedule</button>
               </div>
               <div>
                 <label>Month</label>
@@ -1226,11 +1239,11 @@
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
                 <div class="metric-card">
-                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits sum block time from Additional Details rows that include a flight number, two airport codes, and a credit-column block-time value; layover/phone/summary rows plus CNX/CNX PP excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits sum block time from Additional Details rows that include a flight number, two airport codes, and a credit-column block-time value; layover/phone/summary rows plus CNX/CNX PP excluded.</span></span></div>
+                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines; CNX/CNX PP excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines; CNX/CNX PP excluded.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-credit">--</div>
                 </div>
                 <div class="metric-card">
-                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="Time away from base (TAFB) excludes CNX and CNX PP."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Time away from base (TAFB) excludes CNX and CNX PP.</span></span></div>
+                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB comes from the pasted schedule summary line (fourth duration) or TRIP TAFB rows; CNX/CNX PP excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB comes from the pasted schedule summary line (fourth duration) or TRIP TAFB rows; CNX/CNX PP excluded.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-tafb">--</div>
                 </div>
                 <div class="metric-card">
