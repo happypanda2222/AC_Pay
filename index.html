@@ -560,6 +560,46 @@
       color:var(--btn-primary-text);
       background:var(--acc);
     }
+    .calendar-detail{
+      display:flex;
+      flex-direction:column;
+      gap:16px;
+    }
+    .calendar-detail-header{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      flex-wrap:wrap;
+    }
+    .calendar-detail-title{
+      font-size:18px;
+      font-weight:600;
+    }
+    .calendar-detail-grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+      gap:12px;
+    }
+    .calendar-detail-actions{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+      gap:12px;
+    }
+    .calendar-detail-cancel{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+    .calendar-detail-cancel-buttons{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .calendar-detail-growth{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
     .calendar-summary-header{
       display:flex;
       flex-wrap:wrap;
@@ -1261,7 +1301,7 @@
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
                 <div class="metric-card">
-                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines; CNX excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines; CNX excluded.</span></span></div>
+                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines plus any block growth entered for a flight; CNX excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines plus any block growth entered for a flight; CNX excluded.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-credit">--</div>
                 </div>
                 <div class="metric-card">
@@ -1274,8 +1314,34 @@
                 </div>
               </div>
             </div>
-            <div class="calendar-grid" id="modern-calendar-grid"></div>
-            <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
+            <div id="modern-calendar-main">
+              <div class="calendar-grid" id="modern-calendar-grid"></div>
+              <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
+            </div>
+            <div id="modern-calendar-detail" class="hidden">
+              <div class="calendar-detail">
+                <div class="calendar-detail-header">
+                  <button id="calendar-detail-back" class="btn btn-secondary" type="button">Back</button>
+                  <div class="calendar-detail-title" id="calendar-detail-title">Flight</div>
+                </div>
+                <div class="calendar-detail-grid" id="calendar-detail-info"></div>
+                <div class="calendar-detail-actions">
+                  <div class="calendar-detail-cancel">
+                    <div class="metric-label">Cancellation</div>
+                    <div class="calendar-detail-cancel-buttons">
+                      <button class="btn btn-secondary" type="button" data-calendar-cancel="CNX">CNX</button>
+                      <button class="btn btn-secondary" type="button" data-calendar-cancel="CNX PP">CNX PP</button>
+                    </div>
+                  </div>
+                  <div class="calendar-detail-growth">
+                    <label for="calendar-block-growth">Block growth (HH:MM)</label>
+                    <input id="calendar-block-growth" type="text" inputmode="numeric" placeholder="0:00">
+                    <button id="calendar-block-growth-save" class="btn" type="button">Apply block growth</button>
+                  </div>
+                </div>
+                <div class="muted-note" id="calendar-detail-status" aria-live="polite"></div>
+              </div>
+            </div>
           </div>
         </div>
 
