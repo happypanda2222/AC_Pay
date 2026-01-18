@@ -4616,8 +4616,47 @@ function isCreditCancelled(event){
   return event?.cancellation === 'CNX';
 }
 
-function isTafbCancelled(event){
-  return event?.cancellation === 'CNX' || event?.cancellation === 'CNX PP';
+function getCalendarPairingKey(event){
+  if (!event) return '';
+  const identifiers = Array.isArray(event.identifiers) ? event.identifiers : [];
+  if (identifiers.length){
+    return identifiers.map(id => String(id).trim().toUpperCase()).filter(Boolean).sort().join('|');
+  }
+  return String(event.label || '').trim().toUpperCase();
+}
+
+function getCalendarAdjacentDateKey(dateKey, delta){
+  const [year, month, day] = String(dateKey || '').split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return '';
+  const date = new Date(year, month - 1, day + delta);
+  if (!Number.isFinite(date.getTime())) return '';
+  const nextMonth = String(date.getMonth() + 1).padStart(2, '0');
+  const nextDay = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${nextMonth}-${nextDay}`;
+}
+
+function findCalendarEventByKey(dateKey, pairingKey){
+  if (!pairingKey) return null;
+  const day = calendarState.eventsByDate?.[dateKey];
+  if (!day?.events?.length) return null;
+  return day.events.find(event => getCalendarPairingKey(event) === pairingKey) || null;
+}
+
+function isTafbCancelled(event, dateKey){
+  if (!event?.cancellation) return false;
+  if (event.cancellation !== 'CNX' && event.cancellation !== 'CNX PP') return false;
+  const pairingKey = getCalendarPairingKey(event);
+  if (!pairingKey || !dateKey) return false;
+  const prevKey = getCalendarAdjacentDateKey(dateKey, -1);
+  const nextKey = getCalendarAdjacentDateKey(dateKey, 1);
+  const prevEvent = prevKey ? findCalendarEventByKey(prevKey, pairingKey) : null;
+  const nextEvent = nextKey ? findCalendarEventByKey(nextKey, pairingKey) : null;
+  const hasPrev = !!prevEvent;
+  const hasNext = !!nextEvent;
+  if (!hasPrev && !hasNext) return true;
+  if (hasPrev && hasNext) return false;
+  const alreadyCancelled = [prevEvent, nextEvent].some(adjacent => adjacent?.cancellation);
+  return !alreadyCancelled;
 }
 
 function getCalendarFlightLabel(event){
@@ -5066,19 +5105,22 @@ function ensureCalendarSelection(){
   }
 }
 
-function updateCalendarTotals(events){
+function updateCalendarTotals(year, month){
   let creditMinutes = 0;
   let dutyMinutes = 0;
   let eventCount = 0;
-  events.forEach((event) => {
-    if (!event) return;
-    if (!isCreditCancelled(event) && Number.isFinite(event.creditMinutes)){
-      creditMinutes += event.creditMinutes;
-    }
-    if (!isTafbCancelled(event) && Number.isFinite(event.dutyMinutes)){
-      dutyMinutes += event.dutyMinutes;
-    }
-    eventCount += 1;
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (!dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)) return;
+    day?.events?.forEach((event) => {
+      if (!event) return;
+      if (!isCreditCancelled(event) && Number.isFinite(event.creditMinutes)){
+        creditMinutes += event.creditMinutes;
+      }
+      if (!isTafbCancelled(event, dateKey) && Number.isFinite(event.dutyMinutes)){
+        dutyMinutes += event.dutyMinutes;
+      }
+      eventCount += 1;
+    });
   });
   const creditEl = document.getElementById('modern-calendar-total-credit');
   const tafbEl = document.getElementById('modern-calendar-total-tafb');
@@ -5109,7 +5151,7 @@ function renderCalendar(){
   const [year, month] = (calendarState.selectedMonth || '').split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month)){
     gridEl.innerHTML = '';
-    updateCalendarTotals([]);
+    updateCalendarTotals(0, 0);
     if (statusEl) statusEl.textContent = 'No schedule loaded.';
     return;
   }
@@ -5119,7 +5161,7 @@ function renderCalendar(){
       day?.events?.forEach(event => events.push(event));
     }
   });
-  updateCalendarTotals(events);
+  updateCalendarTotals(year, month);
   if (statusEl){
     statusEl.textContent = events.length ? '' : 'No schedule loaded.';
   }
@@ -5193,7 +5235,7 @@ function renderCalendar(){
         if (!isCreditCancelled(event) && Number.isFinite(event.creditMinutes)){
           dayCredit += event.creditMinutes;
         }
-        if (!isTafbCancelled(event) && Number.isFinite(event.dutyMinutes)){
+        if (!isTafbCancelled(event, dateKey) && Number.isFinite(event.dutyMinutes)){
           dayDuty += event.dutyMinutes;
         }
       });
