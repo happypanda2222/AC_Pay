@@ -4353,6 +4353,7 @@ let calendarState = {
   months: [],
   selectedMonth: null
 };
+let calendarDetailEventId = null;
 
 function loadCalendarState(){
   try {
@@ -4374,6 +4375,21 @@ function loadCalendarState(){
   } catch (err){
     console.warn('Failed to load calendar prefs', err);
   }
+  normalizeCalendarState();
+}
+
+function normalizeCalendarState(){
+  Object.values(calendarState.eventsByDate || {}).forEach((day) => {
+    if (!day || typeof day !== 'object') return;
+    if (!Array.isArray(day.events)) day.events = [];
+    day.events = day.events.map((event) => {
+      if (!event || typeof event !== 'object') return null;
+      if (!Array.isArray(event.identifiers)) event.identifiers = [];
+      if (!Array.isArray(event.legs)) event.legs = [];
+      if (!Number.isFinite(event.blockGrowthMinutes)) event.blockGrowthMinutes = 0;
+      return event;
+    }).filter(Boolean);
+  });
 }
 
 function saveCalendarState(){
@@ -4432,6 +4448,21 @@ function formatCalendarMonthLabel(monthKey){
   const [year, month] = monthKey.split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month)) return 'Month';
   return new Date(year, month - 1, 1).toLocaleString('en', { month: 'long', year: 'numeric' });
+}
+
+function formatCalendarDateLabel(dateKey){
+  const [year, month, day] = String(dateKey || '').split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)){
+    return String(dateKey || '');
+  }
+  const date = new Date(year, month - 1, day);
+  if (!Number.isFinite(date.getTime())) return String(dateKey || '');
+  return date.toLocaleDateString('en-CA', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
 }
 
 const MONTH_NAME_TO_INDEX = {
@@ -4614,6 +4645,17 @@ function isCancelledEvent(event){
 
 function isCreditCancelled(event){
   return event?.cancellation === 'CNX';
+}
+
+function getCalendarEventBlockGrowth(event){
+  const growth = Number(event?.blockGrowthMinutes);
+  return Number.isFinite(growth) ? growth : 0;
+}
+
+function getCalendarEventCreditTotal(event){
+  const base = Number(event?.creditMinutes);
+  const baseMinutes = Number.isFinite(base) ? base : 0;
+  return baseMinutes + getCalendarEventBlockGrowth(event);
 }
 
 function getCalendarPairingKey(event){
@@ -4842,16 +4884,19 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
   const endSection = /Additional Summary|Legend|Recurrent Training|Credits on each drop reason type|Allowable voluntary overtime|Trip Summary|Pairing Summary|Additional Details\s*\(continued\)|Crew Contacts/i;
   const columns = deriveAdditionalDetailsColumns(rows);
   const monthHeaderRegex = new RegExp(`^\\s*(${Object.keys(MONTH_NAME_TO_INDEX).join('|')})\\s*(\\d{4})?\\s*$`, 'i');
-  const ensureDay = (dateKey) => {
+  const ensureDaySummary = (dateKey) => {
     if (!daySummaries[dateKey]){
       daySummaries[dateKey] = {
-        creditMinutes: 0,
-        dutyMinutes: null,
-        identifiers: new Set(),
-        cancellation: null
+        dutyMinutes: null
       };
     }
     return daySummaries[dateKey];
+  };
+  const ensureDayEvents = (dateKey) => {
+    if (!eventsByDate[dateKey]){
+      eventsByDate[dateKey] = { events: [] };
+    }
+    return eventsByDate[dateKey];
   };
   rows.forEach((row) => {
     const rowText = getRowText(row);
@@ -4887,41 +4932,42 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
     if (!dateKey) return;
     const creditMinutes = extractCreditMinutesFromColumn(columnData.credit);
     if (!isValidFlightRow(columnData, rowText, creditMinutes)) return;
-    const daySummary = ensureDay(dateKey);
-    daySummary.creditMinutes += creditMinutes;
+    const dayEvents = ensureDayEvents(dateKey);
     const identifiers = extractIdentifiersFromLine(columnData.identifiers);
-    identifiers.forEach(id => daySummary.identifiers.add(id));
+    const label = identifiers.length ? identifiers.join(', ') : 'Trip';
+    const airports = extractAirportCodesFromLine(columnData.airportsTimes);
+    const legs = airports.length >= 2 ? [{ from: airports[0], to: airports[1] }] : [];
     const combinedContext = `${columnData.identifiers} ${columnData.airportsTimes}`.trim();
+    const cancellationStatus = extractCancellationStatus(combinedContext);
+    const eventId = `${dateKey}-${dayEvents.events.length}-${label.replace(/\s+/g, '')}`;
+    dayEvents.events.push({
+      id: eventId,
+      date: dateKey,
+      label,
+      identifiers,
+      dutyMinutes: null,
+      creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
+      legs,
+      cancellation: cancellationStatus || null,
+      blockGrowthMinutes: 0
+    });
     if (/TRIP TAFB/i.test(combinedContext)){
       const tafbMatch = combinedContext.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
       if (tafbMatch){
         const minutes = parseDurationToMinutes(tafbMatch[1]);
         if (Number.isFinite(minutes)){
-          daySummary.dutyMinutes = minutes;
+          ensureDaySummary(dateKey).dutyMinutes = minutes;
         }
       }
     }
-    const cancellationStatus = extractCancellationStatus(combinedContext);
-    if (cancellationStatus){
-      daySummary.cancellation = mergeCancellationStatus(daySummary.cancellation, cancellationStatus);
-    }
   });
   Object.entries(daySummaries).forEach(([dateKey, summary]) => {
-    const identifiers = Array.from(summary.identifiers);
-    const label = identifiers.length ? identifiers.join(', ') : 'Pairing';
-    const eventId = `${dateKey}-0-${label.replace(/\s+/g, '')}`;
-    eventsByDate[dateKey] = {
-      events: [{
-        id: eventId,
-        date: dateKey,
-        label,
-        identifiers,
-        dutyMinutes: Number.isFinite(summary.dutyMinutes) ? summary.dutyMinutes : null,
-        creditMinutes: Number.isFinite(summary.creditMinutes) ? summary.creditMinutes : null,
-        legs: [],
-        cancellation: summary.cancellation || null
-      }]
-    };
+    const day = eventsByDate[dateKey];
+    if (!day?.events?.length) return;
+    const primary = day.events[0];
+    if (primary && Number.isFinite(summary.dutyMinutes) && !Number.isFinite(primary.dutyMinutes)){
+      primary.dutyMinutes = summary.dutyMinutes;
+    }
   });
   return {
     eventsByDate,
@@ -5002,12 +5048,9 @@ function parsePastedScheduleText(text){
 
 function buildCalendarEventFromText(dateKey, lines){
   if (!Array.isArray(lines) || !lines.length) return null;
-  let creditMinutes = null;
+  let summaryCreditMinutes = null;
   let dutyMinutes = null;
-  let creditFromLegs = 0;
-  let hasSummaryCredit = false;
-  const identifiers = new Set();
-  const legs = [];
+  const events = [];
 
   lines.forEach((line) => {
     const trimmed = String(line || '').trim();
@@ -5017,9 +5060,8 @@ function buildCalendarEventFromText(dateKey, lines){
       if (durations.length >= 4){
         const credit = parseDurationToMinutes(durations[2]);
         const duty = parseDurationToMinutes(durations[3]);
-        if (Number.isFinite(credit)) creditMinutes = credit;
+        if (Number.isFinite(credit)) summaryCreditMinutes = credit;
         if (Number.isFinite(duty)) dutyMinutes = duty;
-        hasSummaryCredit = true;
         return;
       }
     }
@@ -5030,44 +5072,58 @@ function buildCalendarEventFromText(dateKey, lines){
     }
     if (/^DPG\b/i.test(trimmed) && durations.length){
       const minutes = parseDurationToMinutes(durations[durations.length - 1]);
-      if (Number.isFinite(minutes) && !Number.isFinite(creditMinutes)) creditMinutes = minutes;
+      if (Number.isFinite(minutes) && !Number.isFinite(summaryCreditMinutes)) summaryCreditMinutes = minutes;
     }
     const flightMatch = trimmed.match(/\b([A-Z]{2,3}(?:\/[A-Z]{2,3})?)\s+(\d{1,4})\b/);
     if (flightMatch){
-      identifiers.add(`${flightMatch[1]} ${flightMatch[2]}`);
+      const identifier = `${flightMatch[1]} ${flightMatch[2]}`;
       const airports = trimmed.match(/\b[A-Z]{3}\b/g) || [];
-      if (airports.length >= 2){
-        legs.push({ from: airports[0], to: airports[1] });
-      }
-      if (!hasSummaryCredit && durations.length){
-        const minutes = parseDurationToMinutes(durations[durations.length - 1]);
-        if (Number.isFinite(minutes)) creditFromLegs += minutes;
-      }
+      const legs = airports.length >= 2 ? [{ from: airports[0], to: airports[1] }] : [];
+      const minutes = durations.length ? parseDurationToMinutes(durations[durations.length - 1]) : NaN;
+      const cancellationStatus = extractCancellationStatus(trimmed);
+      const eventId = `${dateKey}-${events.length}-${identifier.replace(/\s+/g, '')}`;
+      events.push({
+        id: eventId,
+        date: dateKey,
+        label: identifier,
+        identifiers: [identifier],
+        dutyMinutes: null,
+        creditMinutes: Number.isFinite(minutes) ? minutes : null,
+        legs,
+        cancellation: cancellationStatus || null,
+        blockGrowthMinutes: 0
+      });
     }
   });
 
-  if (!Number.isFinite(creditMinutes) && creditFromLegs > 0){
-    creditMinutes = creditFromLegs;
-  }
-  if (!identifiers.size && !Number.isFinite(creditMinutes) && !Number.isFinite(dutyMinutes)){
+  if (!events.length && !Number.isFinite(summaryCreditMinutes) && !Number.isFinite(dutyMinutes)){
     return null;
   }
 
-  const identifierList = Array.from(identifiers);
-  const label = identifierList.length ? identifierList.join(', ') : 'Trip';
-  const eventId = `${dateKey}-0-${label.replace(/\s+/g, '')}`;
-  return {
-    events: [{
+  if (!events.length){
+    const eventId = `${dateKey}-0-Trip`;
+    events.push({
       id: eventId,
       date: dateKey,
-      label,
-      identifiers: identifierList,
+      label: 'Trip',
+      identifiers: [],
       dutyMinutes: Number.isFinite(dutyMinutes) ? dutyMinutes : null,
-      creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
-      legs,
-      cancellation: null
-    }]
-  };
+      creditMinutes: Number.isFinite(summaryCreditMinutes) ? summaryCreditMinutes : null,
+      legs: [],
+      cancellation: null,
+      blockGrowthMinutes: 0
+    });
+  }
+
+  const hasAnyCredits = events.some(event => Number.isFinite(event.creditMinutes));
+  if (!hasAnyCredits && Number.isFinite(summaryCreditMinutes)){
+    events[0].creditMinutes = summaryCreditMinutes;
+  }
+  if (Number.isFinite(dutyMinutes)){
+    events[0].dutyMinutes = dutyMinutes;
+  }
+
+  return { events };
 }
 
 function getCalendarMonthCandidates(){
@@ -5113,8 +5169,9 @@ function updateCalendarTotals(year, month){
     if (!dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)) return;
     day?.events?.forEach((event) => {
       if (!event) return;
-      if (!isCreditCancelled(event) && Number.isFinite(event.creditMinutes)){
-        creditMinutes += event.creditMinutes;
+      const creditTotal = getCalendarEventCreditTotal(event);
+      if (!isCreditCancelled(event) && creditTotal){
+        creditMinutes += creditTotal;
       }
       if (!isTafbCancelled(event, dateKey) && Number.isFinite(event.dutyMinutes)){
         dutyMinutes += event.dutyMinutes;
@@ -5204,7 +5261,14 @@ function renderCalendar(){
       const parts = [];
       if (event.cancellation) parts.push(`Status ${event.cancellation}`);
       if (event.identifiers?.length) parts.push(event.identifiers.join(', '));
-      if (Number.isFinite(event.creditMinutes)) parts.push(`Credit ${formatDurationMinutes(event.creditMinutes)}`);
+      const creditTotal = getCalendarEventCreditTotal(event);
+      if (creditTotal){
+        const growth = getCalendarEventBlockGrowth(event);
+        const creditText = growth
+          ? `Credit ${formatDurationMinutes(creditTotal)} (BG ${formatDurationMinutes(growth)})`
+          : `Credit ${formatDurationMinutes(creditTotal)}`;
+        parts.push(creditText);
+      }
       if (Number.isFinite(event.dutyMinutes)) parts.push(`TAFB ${formatDurationMinutes(event.dutyMinutes)}`);
       if (event.legs?.length){
         const legsLabel = event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ');
@@ -5214,26 +5278,15 @@ function renderCalendar(){
       eventBtn.appendChild(title);
       if (meta.textContent) eventBtn.appendChild(meta);
       wrapper.appendChild(eventBtn);
-      const menu = document.createElement('div');
-      menu.className = 'calendar-cnx-menu hidden';
-      ['CNX', 'CNX PP'].forEach((status) => {
-        const option = document.createElement('button');
-        option.type = 'button';
-        option.className = 'calendar-cnx-option';
-        option.dataset.cnxStatus = status;
-        option.textContent = status;
-        if (event.cancellation === status) option.classList.add('active');
-        menu.appendChild(option);
-      });
-      wrapper.appendChild(menu);
       dayCell.appendChild(wrapper);
     });
     if (dayEvents.length){
       let dayCredit = 0;
       let dayDuty = 0;
       dayEvents.forEach((event) => {
-        if (!isCreditCancelled(event) && Number.isFinite(event.creditMinutes)){
-          dayCredit += event.creditMinutes;
+        const creditTotal = getCalendarEventCreditTotal(event);
+        if (!isCreditCancelled(event) && creditTotal){
+          dayCredit += creditTotal;
         }
         if (!isTafbCancelled(event, dateKey) && Number.isFinite(event.dutyMinutes)){
           dayDuty += event.dutyMinutes;
@@ -5251,6 +5304,81 @@ function renderCalendar(){
     }
     gridEl.appendChild(dayCell);
   }
+  refreshCalendarDetail();
+}
+
+function findCalendarEventById(eventId){
+  if (!eventId) return null;
+  for (const [dateKey, day] of Object.entries(calendarState.eventsByDate || {})){
+    const match = day?.events?.find(event => event?.id === eventId);
+    if (match) return { event: match, dateKey };
+  }
+  return null;
+}
+
+function renderCalendarDetail(event, dateKey){
+  const titleEl = document.getElementById('calendar-detail-title');
+  const infoEl = document.getElementById('calendar-detail-info');
+  const statusEl = document.getElementById('calendar-detail-status');
+  const growthInput = document.getElementById('calendar-block-growth');
+  if (!titleEl || !infoEl) return;
+  const label = getCalendarFlightLabel(event);
+  titleEl.textContent = `${label} · ${formatCalendarDateLabel(dateKey)}`;
+  const blocks = [];
+  const addBlock = (blockLabel, value) => {
+    if (!value) return;
+    blocks.push(`<div class="block"><div class="label">${escapeHtml(blockLabel)}</div><div class="value">${escapeHtml(value)}</div></div>`);
+  };
+  addBlock('Date', formatCalendarDateLabel(dateKey));
+  addBlock('Identifiers', event.identifiers?.length ? event.identifiers.join(', ') : '—');
+  const legsLabel = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '—';
+  addBlock('Route', legsLabel);
+  addBlock('Credit', Number.isFinite(event.creditMinutes) ? formatDurationMinutes(event.creditMinutes) : '—');
+  addBlock('Block growth', formatDurationMinutes(getCalendarEventBlockGrowth(event)));
+  addBlock('Total credit', formatDurationMinutes(getCalendarEventCreditTotal(event)));
+  addBlock('TAFB', Number.isFinite(event.dutyMinutes) ? formatDurationMinutes(event.dutyMinutes) : '—');
+  addBlock('Status', event.cancellation ? event.cancellation : 'Scheduled');
+  infoEl.innerHTML = `<div class="simple">${blocks.join('')}</div>`;
+  if (growthInput){
+    const growthMinutes = getCalendarEventBlockGrowth(event);
+    growthInput.value = growthMinutes ? formatDurationMinutes(growthMinutes) : '';
+  }
+  document.querySelectorAll('[data-calendar-cancel]').forEach((button) => {
+    const status = button.getAttribute('data-calendar-cancel');
+    const active = status === event.cancellation;
+    button.classList.toggle('btn-primary', active);
+    button.classList.toggle('btn-secondary', !active);
+  });
+  if (statusEl) statusEl.textContent = '';
+}
+
+function openCalendarDetail(eventId){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-detail');
+  const entry = findCalendarEventById(eventId);
+  if (!entry || !mainEl || !detailEl) return;
+  calendarDetailEventId = eventId;
+  renderCalendarDetail(entry.event, entry.dateKey);
+  mainEl.classList.add('hidden');
+  detailEl.classList.remove('hidden');
+}
+
+function closeCalendarDetail(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-detail');
+  if (mainEl) mainEl.classList.remove('hidden');
+  if (detailEl) detailEl.classList.add('hidden');
+  calendarDetailEventId = null;
+}
+
+function refreshCalendarDetail(){
+  if (!calendarDetailEventId) return;
+  const entry = findCalendarEventById(calendarDetailEventId);
+  if (!entry){
+    closeCalendarDetail();
+    return;
+  }
+  renderCalendarDetail(entry.event, entry.dateKey);
 }
 
 function setCalendarEventCancellation(eventId, status){
@@ -5266,6 +5394,7 @@ function setCalendarEventCancellation(eventId, status){
   if (updated){
     saveCalendarState();
     renderCalendar();
+    refreshCalendarDetail();
   }
 }
 
@@ -5327,35 +5456,49 @@ function initCalendar(){
   if (grid){
     grid.addEventListener('click', (event) => {
       const target = event.target;
-      const statusButton = target instanceof Element ? target.closest('[data-cnx-status]') : null;
-      if (statusButton){
-        const wrapper = statusButton.closest('[data-event-id]');
-        const eventId = wrapper?.dataset?.eventId;
-        if (eventId) setCalendarEventCancellation(eventId, statusButton.dataset.cnxStatus);
-        return;
-      }
       const eventButton = target instanceof Element ? target.closest('.calendar-event') : null;
       if (eventButton){
         const wrapper = eventButton.closest('[data-event-id]');
-        if (!wrapper) return;
-        document.querySelectorAll('[data-event-id]').forEach((item) => {
-          if (item !== wrapper) item.classList.remove('is-expanded');
-        });
-        document.querySelectorAll('.calendar-cnx-menu').forEach((menu) => {
-          if (!wrapper.contains(menu)) menu.classList.add('hidden');
-        });
-        wrapper.classList.toggle('is-expanded');
-        const menu = wrapper.querySelector('.calendar-cnx-menu');
-        if (menu) menu.classList.toggle('hidden');
+        const eventId = wrapper?.dataset?.eventId;
+        if (eventId) openCalendarDetail(eventId);
       }
     });
   }
-  document.addEventListener('click', (event) => {
-    const target = event.target;
-    if (target instanceof Element && target.closest('#modern-calendar-grid')) return;
-    document.querySelectorAll('.calendar-cnx-menu').forEach((menu) => menu.classList.add('hidden'));
-    document.querySelectorAll('[data-event-id]').forEach((item) => item.classList.remove('is-expanded'));
+  const detailBack = document.getElementById('calendar-detail-back');
+  if (detailBack){
+    detailBack.addEventListener('click', () => {
+      closeCalendarDetail();
+    });
+  }
+  const detailCancelButtons = document.querySelectorAll('[data-calendar-cancel]');
+  detailCancelButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!calendarDetailEventId) return;
+      const status = button.getAttribute('data-calendar-cancel');
+      if (status) setCalendarEventCancellation(calendarDetailEventId, status);
+    });
   });
+  const growthSave = document.getElementById('calendar-block-growth-save');
+  if (growthSave){
+    growthSave.addEventListener('click', () => {
+      if (!calendarDetailEventId) return;
+      const entry = findCalendarEventById(calendarDetailEventId);
+      if (!entry) return;
+      const growthInput = document.getElementById('calendar-block-growth');
+      const statusEl = document.getElementById('calendar-detail-status');
+      const rawValue = String(growthInput?.value || '').trim();
+      const minutes = rawValue ? parseDurationToMinutes(rawValue) : 0;
+      if (rawValue && !Number.isFinite(minutes)){
+        if (statusEl) statusEl.textContent = 'Enter block growth as H:MM.';
+        return;
+      }
+      entry.event.blockGrowthMinutes = Number.isFinite(minutes) ? minutes : 0;
+      saveCalendarState();
+      renderCalendar();
+      refreshCalendarDetail();
+      if (statusEl) statusEl.textContent = 'Block growth saved.';
+    });
+  }
 }
 
 let currentLegacySubTab = 'annual';
