@@ -4837,32 +4837,132 @@ function parseScheduleRows(rows){
   return parseAdditionalDetailsRows(rows, year);
 }
 
-async function parseSchedulePdf(file){
-  if (!window.pdfjsLib){
-    throw new Error('PDF parser unavailable—reload or use the hosted app.');
+function parsePastedScheduleText(text){
+  const raw = String(text || '').trim();
+  if (!raw){
+    return { eventsByDate: {}, statusMessage: 'Paste schedule text to parse.' };
   }
-  if (window.pdfjsLib.GlobalWorkerOptions){
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
-  }
-  const buffer = await file.arrayBuffer();
-  let pdf;
-  try {
-    pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
-  } catch (error) {
-    try {
-      pdf = await window.pdfjsLib.getDocument({ data: buffer, disableWorker: true }).promise;
-    } catch (retryError) {
-      const message = retryError?.message || error?.message || 'Unknown error.';
-      throw new Error(`PDF parser failed: ${message}`);
+  const yearMatch = raw.match(/\b(20\d{2})\b/);
+  let currentYear = yearMatch ? Number(yearMatch[1]) : new Date().getFullYear();
+  let lastMonthIndex = null;
+  const eventsByDate = {};
+  let currentDateKey = null;
+  let currentLines = [];
+
+  const finalizeDay = () => {
+    if (!currentDateKey) return;
+    const dayEvent = buildCalendarEventFromText(currentDateKey, currentLines);
+    if (dayEvent){
+      eventsByDate[currentDateKey] = dayEvent;
     }
+  };
+
+  const lines = raw.split(/\r?\n/);
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (/^[-=]{3,}\s*$/.test(trimmed)){
+      finalizeDay();
+      currentDateKey = null;
+      currentLines = [];
+      return;
+    }
+    const dateMatch = trimmed.match(/^(\d{1,2})\s*([A-Za-z]{3})\b/);
+    if (dateMatch){
+      finalizeDay();
+      const day = Number(dateMatch[1]);
+      const monthKey = dateMatch[2].toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(MONTH_NAME_TO_INDEX, monthKey)) return;
+      const monthIndex = MONTH_NAME_TO_INDEX[monthKey];
+      if (!yearMatch && lastMonthIndex !== null && monthIndex < lastMonthIndex){
+        currentYear += 1;
+      }
+      lastMonthIndex = monthIndex;
+      const dateKey = `${currentYear}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      currentDateKey = dateKey;
+      currentLines = [trimmed];
+      return;
+    }
+    if (currentDateKey){
+      currentLines.push(trimmed);
+    }
+  });
+  finalizeDay();
+
+  return {
+    eventsByDate,
+    statusMessage: Object.keys(eventsByDate).length ? '' : 'No calendar events found in pasted schedule.'
+  };
+}
+
+function buildCalendarEventFromText(dateKey, lines){
+  if (!Array.isArray(lines) || !lines.length) return null;
+  let creditMinutes = null;
+  let dutyMinutes = null;
+  let creditFromLegs = 0;
+  let hasSummaryCredit = false;
+  const identifiers = new Set();
+  const legs = [];
+
+  lines.forEach((line) => {
+    const trimmed = String(line || '').trim();
+    if (!trimmed) return;
+    const durations = trimmed.match(/\d{1,2}:\d{2}/g) || [];
+    if (/^[\d:\s]+$/.test(trimmed) && durations.length >= 3){
+      if (durations.length >= 4){
+        const credit = parseDurationToMinutes(durations[2]);
+        const duty = parseDurationToMinutes(durations[3]);
+        if (Number.isFinite(credit)) creditMinutes = credit;
+        if (Number.isFinite(duty)) dutyMinutes = duty;
+        hasSummaryCredit = true;
+        return;
+      }
+    }
+    const tafbMatch = trimmed.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
+    if (tafbMatch){
+      const minutes = parseDurationToMinutes(tafbMatch[1]);
+      if (Number.isFinite(minutes)) dutyMinutes = minutes;
+    }
+    if (/^DPG\b/i.test(trimmed) && durations.length){
+      const minutes = parseDurationToMinutes(durations[durations.length - 1]);
+      if (Number.isFinite(minutes) && !Number.isFinite(creditMinutes)) creditMinutes = minutes;
+    }
+    const flightMatch = trimmed.match(/\b([A-Z]{2,3}(?:\/[A-Z]{2,3})?)\s+(\d{1,4})\b/);
+    if (flightMatch){
+      identifiers.add(`${flightMatch[1]} ${flightMatch[2]}`);
+      const airports = trimmed.match(/\b[A-Z]{3}\b/g) || [];
+      if (airports.length >= 2){
+        legs.push({ from: airports[0], to: airports[1] });
+      }
+      if (!hasSummaryCredit && durations.length){
+        const minutes = parseDurationToMinutes(durations[durations.length - 1]);
+        if (Number.isFinite(minutes)) creditFromLegs += minutes;
+      }
+    }
+  });
+
+  if (!Number.isFinite(creditMinutes) && creditFromLegs > 0){
+    creditMinutes = creditFromLegs;
   }
-  const rows = [];
-  for (let i = 1; i <= pdf.numPages; i += 1){
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    rows.push(...buildRowsFromTextContent(textContent));
+  if (!identifiers.size && !Number.isFinite(creditMinutes) && !Number.isFinite(dutyMinutes)){
+    return null;
   }
-  return parseScheduleRows(rows);
+
+  const identifierList = Array.from(identifiers);
+  const label = identifierList.length ? identifierList.join(', ') : 'Trip';
+  const eventId = `${dateKey}-0-${label.replace(/\s+/g, '')}`;
+  return {
+    events: [{
+      id: eventId,
+      date: dateKey,
+      label,
+      identifiers: identifierList,
+      dutyMinutes: Number.isFinite(dutyMinutes) ? dutyMinutes : null,
+      creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
+      legs,
+      cancellation: null
+    }]
+  };
 }
 
 function getCalendarMonthCandidates(){
@@ -5046,25 +5146,17 @@ function setCalendarEventCancellation(eventId, status){
 function initCalendar(){
   loadCalendarState();
   renderCalendar();
-  const fileInput = document.getElementById('modern-calendar-file');
-  if (fileInput){
-    fileInput.addEventListener('change', async (event) => {
+  const pasteInput = document.getElementById('modern-calendar-text');
+  const parseButton = document.getElementById('modern-calendar-parse');
+  if (parseButton && pasteInput){
+    parseButton.addEventListener('click', () => {
       const statusEl = document.getElementById('modern-calendar-status');
-      const file = event.target?.files?.[0];
-      if (!file) return;
-      if (!window.pdfjsLib){
-        if (statusEl){
-          statusEl.textContent = 'PDF parser unavailable—reload or use the hosted app.';
-        }
-        event.target.value = '';
-        return;
-      }
-      if (statusEl) statusEl.textContent = 'Parsing PDF…';
+      if (statusEl) statusEl.textContent = 'Parsing schedule…';
       try {
-        const { eventsByDate, statusMessage } = await parseSchedulePdf(file);
+        const { eventsByDate, statusMessage } = parsePastedScheduleText(pasteInput.value);
         const parsedMonths = buildCalendarMonths(eventsByDate);
         if (!parsedMonths.length){
-          if (statusEl) statusEl.textContent = statusMessage || 'No calendar events found in PDF.';
+          if (statusEl) statusEl.textContent = statusMessage || 'No calendar events found in pasted schedule.';
           return;
         }
         calendarState.eventsByDate = eventsByDate;
@@ -5077,12 +5169,10 @@ function initCalendar(){
           statusEl.textContent = `Loaded schedule for ${parsedMonths.length} ${label}.`;
         }
       } catch (err){
-        console.error('PDF schedule parse failed', err);
+        console.error('Schedule text parse failed', err);
         if (statusEl){
-          statusEl.textContent = err?.message || 'PDF parse failed.';
+          statusEl.textContent = err?.message || 'Schedule parse failed.';
         }
-      } finally {
-        event.target.value = '';
       }
     });
   }
