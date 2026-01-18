@@ -5242,7 +5242,7 @@ function initCalendar(){
           return;
         }
         calendarState.eventsByDate = eventsByDate;
-        calendarState.months = parsedMonths;
+        calendarState.months = mergeCalendarMonths(calendarState.months, parsedMonths);
         ensureCalendarSelection();
         saveCalendarState();
         renderCalendar();
