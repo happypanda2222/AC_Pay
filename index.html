@@ -452,6 +452,8 @@
       grid-template-columns:repeat(7,minmax(48px,1fr));
       gap:8px;
       margin-top:12px;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
     }
     .calendar-weekday{
       text-transform:uppercase;
@@ -570,6 +572,16 @@
       grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
       gap:10px;
     }
+    .calendar-month-controls{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .calendar-month-actions{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
     .calendar-paste{
       grid-column:1/-1;
     }
@@ -581,10 +593,11 @@
       align-self:end;
     }
     @media(max-width:600px){
-      .calendar-grid{grid-template-columns:repeat(7,minmax(36px,1fr))}
-      .calendar-day{min-height:90px;padding:6px}
-      .calendar-event{font-size:11px}
-      .calendar-event-meta{font-size:10px}
+      .calendar-grid{grid-template-columns:repeat(7,minmax(64px,1fr));gap:6px}
+      .calendar-day{min-height:96px;padding:6px}
+      .calendar-event{font-size:10px;padding:5px 6px}
+      .calendar-event-meta{font-size:9px}
+      .calendar-month-actions{flex-direction:column;align-items:stretch}
     }
   </style>
 </head>
@@ -1230,9 +1243,13 @@
               <div class="calendar-parse">
                 <button id="modern-calendar-parse" class="btn-primary" type="button">Parse schedule</button>
               </div>
-              <div>
+              <div class="calendar-month-controls">
                 <label>Month</label>
                 <select id="modern-calendar-month"></select>
+                <div class="calendar-month-actions">
+                  <button id="modern-calendar-add-month" class="btn btn-secondary" type="button">Add month</button>
+                  <button id="modern-calendar-delete-month" class="btn btn-secondary" type="button">Delete month</button>
+                </div>
               </div>
             </div>
             <div class="calendar-summary-header">

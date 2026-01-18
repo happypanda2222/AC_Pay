@@ -4400,10 +4400,31 @@ function buildCalendarMonths(eventsByDate){
   return Array.from(months).sort();
 }
 
+function mergeCalendarMonths(...monthLists){
+  const months = new Set();
+  monthLists.forEach((list) => {
+    if (!Array.isArray(list)) return;
+    list.forEach((month) => {
+      if (typeof month === 'string' && month.length >= 7) months.add(month.slice(0, 7));
+    });
+  });
+  return Array.from(months).sort();
+}
+
 function getCalendarMonthKey(date){
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   return `${year}-${month}`;
+}
+
+function normalizeCalendarMonthKey(value){
+  const trimmed = String(value || '').trim();
+  const match = trimmed.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return `${year}-${String(month).padStart(2, '0')}`;
 }
 
 function formatCalendarMonthLabel(monthKey){
@@ -4974,6 +4995,44 @@ function getCalendarMonthCandidates(){
   return Array.from(months).sort();
 }
 
+function getSuggestedCalendarInsertMonth(){
+  const now = new Date();
+  const currentKey = getCalendarMonthKey(now);
+  const nextKey = getCalendarMonthKey(new Date(now.getFullYear(), now.getMonth() + 1, 1));
+  const months = new Set(calendarState.months);
+  if (!months.has(currentKey)) return currentKey;
+  if (!months.has(nextKey)) return nextKey;
+  return currentKey;
+}
+
+function insertCalendarMonth(){
+  const monthKey = getSuggestedCalendarInsertMonth();
+  if (!monthKey) return;
+  calendarState.months = mergeCalendarMonths(calendarState.months, [monthKey]);
+  calendarState.selectedMonth = monthKey;
+  saveCalendarState();
+  renderCalendar();
+}
+
+function deleteCalendarMonth(monthKey){
+  const normalized = normalizeCalendarMonthKey(monthKey);
+  if (!normalized) return;
+  const prefix = `${normalized}-`;
+  const nextEvents = {};
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (dateKey.startsWith(prefix)) return;
+    nextEvents[dateKey] = day;
+  });
+  calendarState.eventsByDate = nextEvents;
+  calendarState.months = (calendarState.months || []).filter(month => month !== normalized);
+  if (calendarState.selectedMonth === normalized){
+    calendarState.selectedMonth = null;
+  }
+  ensureCalendarSelection();
+  saveCalendarState();
+  renderCalendar();
+}
+
 function ensureCalendarSelection(){
   const months = getCalendarMonthCandidates();
   if (!calendarState.selectedMonth || !months.includes(calendarState.selectedMonth)){
@@ -5007,7 +5066,7 @@ function renderCalendar(){
   const gridEl = document.getElementById('modern-calendar-grid');
   const statusEl = document.getElementById('modern-calendar-status');
   if (!monthSelect || !gridEl || !headerEl) return;
-  calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
+  calendarState.months = mergeCalendarMonths(calendarState.months, buildCalendarMonths(calendarState.eventsByDate));
   ensureCalendarSelection();
   const monthOptions = getCalendarMonthCandidates();
   monthSelect.innerHTML = '';
@@ -5146,6 +5205,29 @@ function setCalendarEventCancellation(eventId, status){
 function initCalendar(){
   loadCalendarState();
   renderCalendar();
+  const addMonthButton = document.getElementById('modern-calendar-add-month');
+  if (addMonthButton){
+    addMonthButton.addEventListener('click', () => {
+      insertCalendarMonth();
+      const statusEl = document.getElementById('modern-calendar-status');
+      if (statusEl){
+        statusEl.textContent = `Added ${formatCalendarMonthLabel(calendarState.selectedMonth)}.`;
+      }
+    });
+  }
+  const deleteMonthButton = document.getElementById('modern-calendar-delete-month');
+  if (deleteMonthButton){
+    deleteMonthButton.addEventListener('click', () => {
+      if (!calendarState.selectedMonth) return;
+      const label = formatCalendarMonthLabel(calendarState.selectedMonth);
+      if (!window.confirm(`Delete ${label} from the calendar?`)) return;
+      deleteCalendarMonth(calendarState.selectedMonth);
+      const statusEl = document.getElementById('modern-calendar-status');
+      if (statusEl){
+        statusEl.textContent = `Deleted ${label}.`;
+      }
+    });
+  }
   const pasteInput = document.getElementById('modern-calendar-text');
   const parseButton = document.getElementById('modern-calendar-parse');
   if (parseButton && pasteInput){
