@@ -5105,23 +5105,8 @@ function buildCalendarEventFromText(dateKey, lines){
     }
   });
 
-  if (!events.length && !Number.isFinite(summaryCreditMinutes) && !Number.isFinite(dutyMinutes)){
-    return null;
-  }
-
   if (!events.length){
-    const eventId = `${dateKey}-0-Trip`;
-    events.push({
-      id: eventId,
-      date: dateKey,
-      label: 'Trip',
-      identifiers: [],
-      dutyMinutes: Number.isFinite(dutyMinutes) ? dutyMinutes : null,
-      creditMinutes: Number.isFinite(summaryCreditMinutes) ? summaryCreditMinutes : null,
-      legs: [],
-      cancellation: null,
-      blockGrowthMinutes: 0
-    });
+    return null;
   }
 
   const hasAnyCredits = events.some(event => Number.isFinite(event.creditMinutes));
