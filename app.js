@@ -4705,7 +4705,7 @@ function getCalendarFlightLabel(event){
   const identifiers = Array.isArray(event?.identifiers) ? event.identifiers : [];
   const normalize = (value) => {
     const cleaned = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const match = cleaned.match(/[A-Z]{2,3}\d{1,4}/);
+    const match = cleaned.match(/[A-Z]{2}\d{1,4}/);
     return match ? match[0] : '';
   };
   for (const id of identifiers){
@@ -4724,21 +4724,19 @@ function extractIdentifiersFromLine(line){
   if (pairingMatch){
     identifiers.push(`Pairing ${pairingMatch[1]}`);
   }
-  const flightMatches = line.match(/\b[A-Z]{2,3}\d{1,4}\b/g) || [];
+  const flightMatches = line.match(/\b[A-Z]{2}\d{1,4}\b/g) || [];
   flightMatches.forEach((match) => {
     if (!identifiers.includes(match)) identifiers.push(match);
   });
-  const spacedFlightMatches = [...line.matchAll(/\b([A-Z]{2,3})\s+(\d{1,4})\b/g)];
+  const spacedFlightMatches = [...line.matchAll(/\b([A-Z]{2})\s+(\d{1,4})\b/g)];
   spacedFlightMatches.forEach((match) => {
     const code = match[1];
     const number = match[2];
     const combined = `${code}${number}`;
-    if (code.length === 3 && number.length === 4){
-      const hours = Number(number.slice(0, 2));
-      const minutes = Number(number.slice(2));
-      const looksLikeTime = Number.isFinite(hours) && Number.isFinite(minutes) && hours <= 23 && minutes <= 59;
-      if (looksLikeTime && hasTimeContext) return;
-    }
+    const hours = Number(number.slice(0, 2));
+    const minutes = Number(number.slice(2));
+    const looksLikeTime = Number.isFinite(hours) && Number.isFinite(minutes) && hours <= 23 && minutes <= 59;
+    if (number.length === 4 && looksLikeTime && hasTimeContext) return;
     if (!identifiers.includes(combined)) identifiers.push(combined);
   });
   return identifiers;
@@ -4858,7 +4856,7 @@ function extractAirportCodesFromLine(line){
 
 function hasFlightNumberToken(line){
   const identifiers = extractIdentifiersFromLine(String(line || ''));
-  return identifiers.some(id => /^[A-Z]{2,3}\d{1,4}$/.test(id));
+  return identifiers.some(id => /^[A-Z]{2}\d{1,4}$/.test(id));
 }
 
 function isAuxiliaryRowText(rowText){
@@ -5074,7 +5072,7 @@ function buildCalendarEventFromText(dateKey, lines){
       const minutes = parseDurationToMinutes(durations[durations.length - 1]);
       if (Number.isFinite(minutes) && !Number.isFinite(summaryCreditMinutes)) summaryCreditMinutes = minutes;
     }
-    const flightMatch = trimmed.match(/\b([A-Z]{2,3}(?:\/[A-Z]{2,3})?)\s+(\d{1,4})\b/);
+    const flightMatch = trimmed.match(/\b([A-Z]{2}(?:\/[A-Z]{2})?)\s+(\d{1,4})\b/);
     if (flightMatch){
       const identifier = `${flightMatch[1]} ${flightMatch[2]}`;
       const airports = trimmed.match(/\b[A-Z]{3}\b/g) || [];
@@ -5261,15 +5259,6 @@ function renderCalendar(){
       const parts = [];
       if (event.cancellation) parts.push(`Status ${event.cancellation}`);
       if (event.identifiers?.length) parts.push(event.identifiers.join(', '));
-      const creditTotal = getCalendarEventCreditTotal(event);
-      if (creditTotal){
-        const growth = getCalendarEventBlockGrowth(event);
-        const creditText = growth
-          ? `Credit ${formatDurationMinutes(creditTotal)} (BG ${formatDurationMinutes(growth)})`
-          : `Credit ${formatDurationMinutes(creditTotal)}`;
-        parts.push(creditText);
-      }
-      if (Number.isFinite(event.dutyMinutes)) parts.push(`TAFB ${formatDurationMinutes(event.dutyMinutes)}`);
       if (event.legs?.length){
         const legsLabel = event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ');
         if (legsLabel) parts.push(legsLabel);
@@ -5280,28 +5269,6 @@ function renderCalendar(){
       wrapper.appendChild(eventBtn);
       dayCell.appendChild(wrapper);
     });
-    if (dayEvents.length){
-      let dayCredit = 0;
-      let dayDuty = 0;
-      dayEvents.forEach((event) => {
-        const creditTotal = getCalendarEventCreditTotal(event);
-        if (!isCreditCancelled(event) && creditTotal){
-          dayCredit += creditTotal;
-        }
-        if (!isTafbCancelled(event, dateKey) && Number.isFinite(event.dutyMinutes)){
-          dayDuty += event.dutyMinutes;
-        }
-      });
-      const totalParts = [];
-      if (dayCredit) totalParts.push(`C ${formatDurationMinutes(dayCredit)}`);
-      if (dayDuty) totalParts.push(`T ${formatDurationMinutes(dayDuty)}`);
-      if (totalParts.length){
-        const total = document.createElement('div');
-        total.className = 'calendar-day-total';
-        total.textContent = totalParts.join(' · ');
-        dayCell.appendChild(total);
-      }
-    }
     gridEl.appendChild(dayCell);
   }
   refreshCalendarDetail();
