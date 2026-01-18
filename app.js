@@ -4464,6 +4464,25 @@ const MONTH_NAME_TO_INDEX = {
 const DATE_MONTH_PATTERN = '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)';
 const DATE_DOW_PATTERN = '(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)';
 
+function getCalendarAllowedMonthMap(){
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const nextMonthDate = new Date(currentYear, currentMonth + 1, 1);
+  return new Map([
+    [currentMonth, currentYear],
+    [nextMonthDate.getMonth(), nextMonthDate.getFullYear()]
+  ]);
+}
+
+function resolveCalendarYearForMonth(monthIndex, parsedYear, fallbackYear){
+  const allowed = getCalendarAllowedMonthMap();
+  if (allowed.has(monthIndex)){
+    return allowed.get(monthIndex);
+  }
+  return Number.isFinite(parsedYear) ? parsedYear : fallbackYear;
+}
+
 function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentYear){
   const monthPattern = DATE_MONTH_PATTERN;
   const dowPattern = DATE_DOW_PATTERN;
@@ -4552,14 +4571,16 @@ function parseDateFromLine(line, fallbackYear, currentMonth, currentYear){
   }
   const yearNumber = Number(yearToken);
   const yearFallback = Number.isFinite(currentYear) ? currentYear : fallbackYear;
-  const year = Number.isFinite(yearNumber)
+  const parsedYear = Number.isFinite(yearNumber)
     ? (String(yearToken).length === 2 ? 2000 + yearNumber : yearNumber)
     : yearFallback;
-  if (!Number.isFinite(day) || !Number.isFinite(year)) return null;
+  const baseYearForMonth = Number.isFinite(parsedYear) ? parsedYear : yearFallback;
   const monthIndex = monthName
-    ? new Date(`${monthName} 1, ${year}`).getMonth()
+    ? new Date(`${monthName} 1, ${baseYearForMonth}`).getMonth()
     : currentMonth;
   if (!Number.isFinite(monthIndex)) return null;
+  const year = resolveCalendarYearForMonth(monthIndex, parsedYear, yearFallback);
+  if (!Number.isFinite(day) || !Number.isFinite(year)) return null;
   const date = new Date(year, monthIndex, day);
   if (!Number.isFinite(date.getTime())) return null;
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -4589,6 +4610,29 @@ function mergeCancellationStatus(currentStatus, nextStatus){
 
 function isCancelledEvent(event){
   return event?.cancellation === 'CNX' || event?.cancellation === 'CNX PP';
+}
+
+function isCreditCancelled(event){
+  return event?.cancellation === 'CNX';
+}
+
+function isTafbCancelled(event){
+  return event?.cancellation === 'CNX' || event?.cancellation === 'CNX PP';
+}
+
+function getCalendarFlightLabel(event){
+  const identifiers = Array.isArray(event?.identifiers) ? event.identifiers : [];
+  const normalize = (value) => {
+    const cleaned = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const match = cleaned.match(/[A-Z]{2,3}\d{1,4}/);
+    return match ? match[0] : '';
+  };
+  for (const id of identifiers){
+    const normalized = normalize(id);
+    if (normalized) return normalized;
+  }
+  const fallback = normalize(event?.label);
+  return fallback || 'Trip';
 }
 
 function extractIdentifiersFromLine(line){
@@ -4899,7 +4943,8 @@ function parsePastedScheduleText(text){
         currentYear += 1;
       }
       lastMonthIndex = monthIndex;
-      const dateKey = `${currentYear}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const yearForMonth = resolveCalendarYearForMonth(monthIndex, currentYear, currentYear);
+      const dateKey = `${yearForMonth}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       currentDateKey = dateKey;
       currentLines = [trimmed];
       return;
@@ -4995,25 +5040,6 @@ function getCalendarMonthCandidates(){
   return Array.from(months).sort();
 }
 
-function getSuggestedCalendarInsertMonth(){
-  const now = new Date();
-  const currentKey = getCalendarMonthKey(now);
-  const nextKey = getCalendarMonthKey(new Date(now.getFullYear(), now.getMonth() + 1, 1));
-  const months = new Set(calendarState.months);
-  if (!months.has(currentKey)) return currentKey;
-  if (!months.has(nextKey)) return nextKey;
-  return currentKey;
-}
-
-function insertCalendarMonth(){
-  const monthKey = getSuggestedCalendarInsertMonth();
-  if (!monthKey) return;
-  calendarState.months = mergeCalendarMonths(calendarState.months, [monthKey]);
-  calendarState.selectedMonth = monthKey;
-  saveCalendarState();
-  renderCalendar();
-}
-
 function deleteCalendarMonth(monthKey){
   const normalized = normalizeCalendarMonthKey(monthKey);
   if (!normalized) return;
@@ -5046,9 +5072,11 @@ function updateCalendarTotals(events){
   let eventCount = 0;
   events.forEach((event) => {
     if (!event) return;
-    if (!isCancelledEvent(event)){
-      if (Number.isFinite(event.creditMinutes)) creditMinutes += event.creditMinutes;
-      if (Number.isFinite(event.dutyMinutes)) dutyMinutes += event.dutyMinutes;
+    if (!isCreditCancelled(event) && Number.isFinite(event.creditMinutes)){
+      creditMinutes += event.creditMinutes;
+    }
+    if (!isTafbCancelled(event) && Number.isFinite(event.dutyMinutes)){
+      dutyMinutes += event.dutyMinutes;
     }
     eventCount += 1;
   });
@@ -5128,18 +5156,12 @@ function renderCalendar(){
       if (isCancelledEvent(event)) eventBtn.classList.add('is-cnx');
       const title = document.createElement('div');
       title.className = 'calendar-event-title';
-      title.textContent = event.label;
-      if (event.cancellation){
-        const status = document.createElement('span');
-        status.className = 'calendar-event-status';
-        status.textContent = event.cancellation;
-        if (event.cancellation === 'CNX PP') status.classList.add('is-pp');
-        title.appendChild(document.createTextNode(' '));
-        title.appendChild(status);
-      }
+      title.textContent = getCalendarFlightLabel(event);
       const meta = document.createElement('div');
       meta.className = 'calendar-event-meta';
       const parts = [];
+      if (event.cancellation) parts.push(`Status ${event.cancellation}`);
+      if (event.identifiers?.length) parts.push(event.identifiers.join(', '));
       if (Number.isFinite(event.creditMinutes)) parts.push(`Credit ${formatDurationMinutes(event.creditMinutes)}`);
       if (Number.isFinite(event.dutyMinutes)) parts.push(`TAFB ${formatDurationMinutes(event.dutyMinutes)}`);
       if (event.legs?.length){
@@ -5168,9 +5190,12 @@ function renderCalendar(){
       let dayCredit = 0;
       let dayDuty = 0;
       dayEvents.forEach((event) => {
-        if (isCancelledEvent(event)) return;
-        if (Number.isFinite(event.creditMinutes)) dayCredit += event.creditMinutes;
-        if (Number.isFinite(event.dutyMinutes)) dayDuty += event.dutyMinutes;
+        if (!isCreditCancelled(event) && Number.isFinite(event.creditMinutes)){
+          dayCredit += event.creditMinutes;
+        }
+        if (!isTafbCancelled(event) && Number.isFinite(event.dutyMinutes)){
+          dayDuty += event.dutyMinutes;
+        }
       });
       const totalParts = [];
       if (dayCredit) totalParts.push(`C ${formatDurationMinutes(dayCredit)}`);
@@ -5205,16 +5230,6 @@ function setCalendarEventCancellation(eventId, status){
 function initCalendar(){
   loadCalendarState();
   renderCalendar();
-  const addMonthButton = document.getElementById('modern-calendar-add-month');
-  if (addMonthButton){
-    addMonthButton.addEventListener('click', () => {
-      insertCalendarMonth();
-      const statusEl = document.getElementById('modern-calendar-status');
-      if (statusEl){
-        statusEl.textContent = `Added ${formatCalendarMonthLabel(calendarState.selectedMonth)}.`;
-      }
-    });
-  }
   const deleteMonthButton = document.getElementById('modern-calendar-delete-month');
   if (deleteMonthButton){
     deleteMonthButton.addEventListener('click', () => {
@@ -5281,7 +5296,13 @@ function initCalendar(){
       if (eventButton){
         const wrapper = eventButton.closest('[data-event-id]');
         if (!wrapper) return;
-        document.querySelectorAll('.calendar-cnx-menu').forEach((menu) => menu.classList.add('hidden'));
+        document.querySelectorAll('[data-event-id]').forEach((item) => {
+          if (item !== wrapper) item.classList.remove('is-expanded');
+        });
+        document.querySelectorAll('.calendar-cnx-menu').forEach((menu) => {
+          if (!wrapper.contains(menu)) menu.classList.add('hidden');
+        });
+        wrapper.classList.toggle('is-expanded');
         const menu = wrapper.querySelector('.calendar-cnx-menu');
         if (menu) menu.classList.toggle('hidden');
       }
@@ -5291,6 +5312,7 @@ function initCalendar(){
     const target = event.target;
     if (target instanceof Element && target.closest('#modern-calendar-grid')) return;
     document.querySelectorAll('.calendar-cnx-menu').forEach((menu) => menu.classList.add('hidden'));
+    document.querySelectorAll('[data-event-id]').forEach((item) => item.classList.remove('is-expanded'));
   });
 }
 
