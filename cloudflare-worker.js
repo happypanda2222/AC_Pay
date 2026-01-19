@@ -112,7 +112,11 @@ async function handlePut(request, env, origin) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const origin = env.PWA_ORIGIN && request.headers.get('Origin') === env.PWA_ORIGIN ? env.PWA_ORIGIN : '';
+    const requestOrigin = request.headers.get('Origin') || '';
+    const configuredOrigin = env.PWA_ORIGIN ? env.PWA_ORIGIN.trim() : '';
+    const origin = configuredOrigin
+      ? (requestOrigin === configuredOrigin ? configuredOrigin : '')
+      : requestOrigin;
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: withCors({}, origin) });
