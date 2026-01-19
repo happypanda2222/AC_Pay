@@ -128,6 +128,13 @@ export default {
       return new Response('Not found', { status: 404, headers: withCors({}, origin) });
     }
 
+    if (!env.AC_PAY_CALENDAR) {
+      return jsonResponse(
+        { error: 'Calendar storage not configured.' },
+        { status: 503, headers: withCors({}, origin) }
+      );
+    }
+
     if (!isAuthorized(request, env)) {
       return jsonResponse({ error: 'Unauthorized.' }, { status: 401, headers: withCors({}, origin) });
     }
