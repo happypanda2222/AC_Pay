@@ -111,6 +111,7 @@ const CALENDAR_SYNC_TOKEN_KEY = 'acpay.calendar.sync.token';
 const CALENDAR_SYNC_PENDING_KEY = 'acpay.calendar.sync.pending';
 const CALENDAR_SYNC_LAST_KEY = 'acpay.calendar.sync.last';
 const CALENDAR_PREFS_KEY = 'acpay.calendar.prefs';
+const CALENDAR_VACATION_CREDIT_KEY_PREFIX = 'acpay.calendar.vacationCredit.';
 const CALENDAR_WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 let finAirportCodeMode = 'iata';
 const finHiddenContext = { page: null, fin: null, registration: '' };
@@ -4363,6 +4364,7 @@ let calendarDetailEventId = null;
 let calendarDetailSource = 'main';
 let calendarPairingId = null;
 let calendarDayDetailDateKey = null;
+let calendarCreditDetailOpen = false;
 const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
 let calendarAutoSyncTimer = null;
 
@@ -6022,12 +6024,18 @@ function updateCalendarTotals(year, month){
   let creditMinutes = 0;
   let dutyMinutes = 0;
   let eventCount = 0;
+  const monthKey = Number.isFinite(year) && Number.isFinite(month) && year > 0 && month > 0
+    ? `${year}-${String(month).padStart(2, '0')}`
+    : null;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)) return;
     creditMinutes += getCalendarDayCreditTotal(dateKey, day);
     dutyMinutes += getCalendarDayTafbTotal(dateKey, day);
     eventCount += day?.events?.length || 0;
   });
+  if (monthKey){
+    creditMinutes += getCalendarVacationCreditMinutes(monthKey);
+  }
   const creditEl = document.getElementById('modern-calendar-total-credit');
   const tafbEl = document.getElementById('modern-calendar-total-tafb');
   const eventsEl = document.getElementById('modern-calendar-total-events');
@@ -6133,6 +6141,7 @@ function renderCalendar(){
   refreshCalendarDetail();
   refreshCalendarPairingDetail();
   refreshCalendarDayDetail();
+  refreshCalendarCreditDetail();
 }
 
 function findCalendarEventById(eventId){
@@ -6336,6 +6345,8 @@ function openCalendarDetail(eventId, source = 'main'){
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  calendarCreditDetailOpen = false;
 }
 
 function closeCalendarDetail(){
@@ -6424,6 +6435,8 @@ function openCalendarPairingDetail(pairingId){
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  calendarCreditDetailOpen = false;
 }
 
 function closeCalendarPairingDetail(){
@@ -6448,6 +6461,8 @@ function openCalendarDayDetail(dateKey){
   mainEl?.classList.add('hidden');
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  calendarCreditDetailOpen = false;
   detailEl.classList.remove('hidden');
 }
 
@@ -6467,6 +6482,118 @@ function refreshCalendarDayDetail(){
   renderCalendarDayDetail(calendarDayDetailDateKey);
 }
 
+function getCalendarVacationCreditKey(monthKey){
+  const normalized = normalizeCalendarMonthKey(monthKey);
+  if (!normalized) return null;
+  return `${CALENDAR_VACATION_CREDIT_KEY_PREFIX}${normalized}`;
+}
+
+function getCalendarVacationCreditMinutes(monthKey){
+  const key = getCalendarVacationCreditKey(monthKey);
+  if (!key) return 0;
+  try {
+    const stored = localStorage.getItem(key);
+    if (!stored) return 0;
+    const minutes = Number(stored);
+    if (!Number.isFinite(minutes) || minutes < 0) return 0;
+    return Math.round(minutes);
+  } catch (err){
+    console.warn('Failed to read vacation credit', err);
+  }
+  return 0;
+}
+
+function setCalendarVacationCreditMinutes(monthKey, minutes){
+  const key = getCalendarVacationCreditKey(monthKey);
+  if (!key) return;
+  try {
+    if (!Number.isFinite(minutes) || minutes <= 0){
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, String(Math.round(minutes)));
+    }
+  } catch (err){
+    console.warn('Failed to save vacation credit', err);
+  }
+}
+
+function renderCalendarCreditDetail(){
+  const titleEl = document.getElementById('calendar-credit-detail-title');
+  const infoEl = document.getElementById('calendar-credit-detail-info');
+  const statusEl = document.getElementById('calendar-credit-detail-status');
+  const vacationInput = document.getElementById('calendar-vacation-credit');
+  if (!titleEl || !infoEl) return;
+  const monthKey = calendarState.selectedMonth;
+  if (!monthKey){
+    titleEl.textContent = 'Credit detail';
+    infoEl.innerHTML = '';
+    if (vacationInput) vacationInput.value = '';
+    if (statusEl) statusEl.textContent = 'No month selected.';
+    return;
+  }
+  titleEl.textContent = `${formatCalendarMonthLabel(monthKey)} credit`;
+  const prefix = `${monthKey}-`;
+  let totalCreditMinutes = 0;
+  let ppCreditMinutes = 0;
+  let lostCreditMinutes = 0;
+  let blockGrowthMinutes = 0;
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (!dateKey.startsWith(prefix)) return;
+    totalCreditMinutes += getCalendarDayCreditTotal(dateKey, day);
+    (day?.events || []).forEach((event) => {
+      const creditTotal = getCalendarEventCreditTotal(event);
+      if (event?.cancellation === 'CNX PP' && creditTotal){
+        ppCreditMinutes += creditTotal;
+      } else if (event?.cancellation === 'CNX' && creditTotal){
+        lostCreditMinutes += creditTotal;
+      }
+      blockGrowthMinutes += getCalendarEventBlockGrowth(event);
+    });
+  });
+  const vacationMinutes = getCalendarVacationCreditMinutes(monthKey);
+  const totalWithVacation = totalCreditMinutes + vacationMinutes;
+  const blocks = [
+    { label: 'Total credit', value: formatDurationMinutes(totalWithVacation) },
+    { label: 'PP credit (CNX PP)', value: formatDurationMinutes(ppCreditMinutes) },
+    { label: 'Lost credit (CNX)', value: formatDurationMinutes(lostCreditMinutes) },
+    { label: 'Vacation credit', value: formatDurationMinutes(vacationMinutes) },
+    { label: 'Block growth', value: formatDurationMinutes(blockGrowthMinutes) }
+  ];
+  infoEl.innerHTML = `<div class="simple">${blocks
+    .map(block => `<div class="block"><div class="label">${escapeHtml(block.label)}</div><div class="value">${escapeHtml(block.value)}</div></div>`)
+    .join('')}</div>`;
+  if (vacationInput){
+    vacationInput.value = vacationMinutes ? formatDurationMinutes(vacationMinutes) : '';
+  }
+  if (statusEl) statusEl.textContent = '';
+}
+
+function openCalendarCreditDetail(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-credit-detail');
+  if (!mainEl || !detailEl) return;
+  calendarCreditDetailOpen = true;
+  renderCalendarCreditDetail();
+  mainEl.classList.add('hidden');
+  detailEl.classList.remove('hidden');
+  document.getElementById('modern-calendar-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+}
+
+function closeCalendarCreditDetail(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-credit-detail');
+  if (mainEl) mainEl.classList.remove('hidden');
+  if (detailEl) detailEl.classList.add('hidden');
+  calendarCreditDetailOpen = false;
+}
+
+function refreshCalendarCreditDetail(){
+  if (!calendarCreditDetailOpen) return;
+  renderCalendarCreditDetail();
+}
+
 function setCalendarEventCancellation(eventId, status){
   let updated = false;
   Object.values(calendarState.eventsByDate || {}).forEach((day) => {
@@ -6484,6 +6611,7 @@ function setCalendarEventCancellation(eventId, status){
     refreshCalendarDetail();
     refreshCalendarPairingDetail();
     refreshCalendarDayDetail();
+    refreshCalendarCreditDetail();
   }
 }
 
@@ -6656,6 +6784,44 @@ function initCalendar(){
       closeCalendarDetail();
     });
   }
+  const creditCard = document.getElementById('modern-calendar-credit-card');
+  if (creditCard){
+    creditCard.addEventListener('click', () => {
+      openCalendarCreditDetail();
+    });
+  }
+  const creditDetailBack = document.getElementById('calendar-credit-detail-back');
+  if (creditDetailBack){
+    creditDetailBack.addEventListener('click', () => {
+      closeCalendarCreditDetail();
+    });
+  }
+  const creditVacationInput = document.getElementById('calendar-vacation-credit');
+  const creditVacationSave = document.getElementById('calendar-vacation-credit-save');
+  const handleVacationSave = () => {
+    const statusEl = document.getElementById('calendar-credit-detail-status');
+    const monthKey = calendarState.selectedMonth;
+    if (!monthKey){
+      if (statusEl) statusEl.textContent = 'Select a month first.';
+      return;
+    }
+    const rawValue = String(creditVacationInput?.value || '').trim();
+    const minutes = rawValue ? parseDurationToMinutes(rawValue) : 0;
+    if (rawValue && !Number.isFinite(minutes)){
+      if (statusEl) statusEl.textContent = 'Enter vacation credit as H:MM.';
+      return;
+    }
+    setCalendarVacationCreditMinutes(monthKey, minutes);
+    renderCalendar();
+    refreshCalendarCreditDetail();
+    if (statusEl) statusEl.textContent = 'Vacation credit saved.';
+  };
+  if (creditVacationSave){
+    creditVacationSave.addEventListener('click', handleVacationSave);
+  }
+  if (creditVacationInput){
+    creditVacationInput.addEventListener('change', handleVacationSave);
+  }
   const detailCancelButtons = document.querySelectorAll('[data-calendar-cancel]');
   detailCancelButtons.forEach((button) => {
     button.addEventListener('click', () => {
@@ -6684,6 +6850,7 @@ function initCalendar(){
       refreshCalendarDetail();
       refreshCalendarPairingDetail();
       refreshCalendarDayDetail();
+      refreshCalendarCreditDetail();
       if (statusEl) statusEl.textContent = 'Block growth saved.';
     });
   }

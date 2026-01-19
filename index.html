@@ -1396,10 +1396,10 @@
             <div class="calendar-summary-header">
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
-                <div class="metric-card">
-                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits roll up to day totals (shown in day detail) and pairing totals from the pasted schedule summary line (third duration), plus block growth and DPG/THG extras; CNX excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits roll up to day totals (shown in day detail) and pairing totals from the pasted schedule summary line (third duration), plus block growth and DPG/THG extras; CNX excluded.</span></span></div>
+                <button class="metric-card actionable" id="modern-calendar-credit-card" type="button">
+                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals include scheduled and CNX PP credit, block growth, DPG/THG extras, and vacation credit; CNX (non-PP) is tracked as lost credit in the breakdown."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals include scheduled and CNX PP credit, block growth, DPG/THG extras, and vacation credit; CNX (non-PP) is tracked as lost credit in the breakdown.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-credit">--</div>
-                </div>
+                </button>
                 <div class="metric-card">
                   <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight; TRIP TAFB rows are used as fallback."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight; TRIP TAFB rows are used as fallback.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-tafb">--</div>
@@ -1460,6 +1460,23 @@
                 </div>
                 <div class="calendar-detail-grid" id="calendar-day-detail-info"></div>
                 <div class="muted-note" id="calendar-day-detail-status" aria-live="polite"></div>
+              </div>
+            </div>
+            <div id="modern-calendar-credit-detail" class="hidden">
+              <div class="calendar-detail">
+                <div class="calendar-detail-header">
+                  <button id="calendar-credit-detail-back" class="btn btn-secondary" type="button">Back</button>
+                  <div class="calendar-detail-title" id="calendar-credit-detail-title">Credit detail</div>
+                </div>
+                <div class="calendar-detail-grid" id="calendar-credit-detail-info"></div>
+                <div class="calendar-detail-actions">
+                  <div class="calendar-detail-growth">
+                    <label for="calendar-vacation-credit">Vacation credit (HH:MM)</label>
+                    <input id="calendar-vacation-credit" type="text" inputmode="numeric" placeholder="0:00">
+                    <button id="calendar-vacation-credit-save" class="btn" type="button">Save vacation credit</button>
+                  </div>
+                </div>
+                <div class="muted-note" id="calendar-credit-detail-status" aria-live="polite"></div>
               </div>
             </div>
             <div class="calendar-sync-footer">
