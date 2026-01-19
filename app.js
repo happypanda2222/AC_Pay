@@ -4644,14 +4644,11 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
     } else if (Number.isFinite(checkOutMs)){
       pairingCheckOutMs = checkOutMs;
     }
-    let tafbMinutes = null;
-    if (Number.isFinite(pairingCheckInMs) && Number.isFinite(pairingCheckOutMs)){
+    const tafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.tafbMinutes));
+    let tafbMinutes = Number.isFinite(tafbOverride?.day?.tafbMinutes) ? tafbOverride.day.tafbMinutes : null;
+    if (!Number.isFinite(tafbMinutes) && Number.isFinite(pairingCheckInMs) && Number.isFinite(pairingCheckOutMs)){
       const diffMinutes = Math.round((pairingCheckOutMs - pairingCheckInMs) / 60000);
       tafbMinutes = diffMinutes >= 0 ? diffMinutes : null;
-    }
-    if (!Number.isFinite(tafbMinutes)){
-      const fallback = dayEntries.find(entry => Number.isFinite(entry.day?.tafbMinutes));
-      if (fallback) tafbMinutes = fallback.day.tafbMinutes;
     }
     let dpgTotal = 0;
     let thgTotal = 0;
@@ -5375,7 +5372,9 @@ function getCalendarPairingTafbMinutes(day, dateKey){
 function getCalendarDayTafbDisplayMinutes(day, dateKey){
   const pairing = day?.pairing;
   if (pairing && Number.isFinite(pairing.tafbMinutes)){
-    const pairingDays = Array.isArray(pairing.pairingDays) ? pairing.pairingDays : [];
+    const pairingDays = Array.isArray(pairing.pairingDays) && pairing.pairingDays.length
+      ? pairing.pairingDays
+      : getCalendarPairingDays(pairing.pairingId);
     if (pairingDays.length && dateKey !== pairingDays[0]) return null;
     return pairing.tafbMinutes;
   }
@@ -5727,7 +5726,9 @@ function inferYearFromRows(rows){
 
 function parseScheduleRows(rows){
   const year = inferYearFromRows(rows);
-  return parseAdditionalDetailsRows(rows, year);
+  const result = parseAdditionalDetailsRows(rows, year);
+  updateCalendarPairingMetrics(result.eventsByDate);
+  return result;
 }
 
 function parsePastedScheduleText(text){
