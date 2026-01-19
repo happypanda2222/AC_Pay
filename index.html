@@ -699,6 +699,27 @@
       gap:8px;
       flex-wrap:wrap;
     }
+    .calendar-sync-actions{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .calendar-sync-settings{
+      margin-top:10px;
+      border:1px solid #2a2f3b;
+      border-radius:12px;
+      padding:8px 10px;
+      background:#0f1218;
+    }
+    .calendar-sync-settings summary{
+      cursor:pointer;
+      font-size:13px;
+      color:var(--muted);
+      font-weight:600;
+      list-style:none;
+    }
+    .calendar-sync-settings summary::-webkit-details-marker{display:none;}
+    .calendar-sync-settings .stacked-fields{margin-top:8px;}
     .calendar-paste{
       grid-column:1/-1;
     }
@@ -714,7 +735,8 @@
       .calendar-day{min-height:96px;padding:6px}
       .calendar-event{font-size:10px;padding:5px 6px}
       .calendar-event-meta{font-size:9px}
-      .calendar-month-actions{flex-direction:column;align-items:stretch}
+      .calendar-month-actions,
+      .calendar-sync-actions{flex-direction:column;align-items:stretch}
     }
   </style>
 </head>
@@ -1366,8 +1388,22 @@
                 <div class="calendar-month-actions">
                   <button id="modern-calendar-delete-month" class="btn btn-secondary" type="button">Delete month</button>
                 </div>
+                <div class="calendar-sync-actions">
+                  <button id="modern-calendar-sync-now" class="btn" type="button">Sync Now</button>
+                  <button id="modern-calendar-pull" class="btn btn-secondary" type="button">Pull from Cloud</button>
+                </div>
               </div>
             </div>
+            <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
+            <details class="calendar-sync-settings">
+              <summary>Sync settings</summary>
+              <div class="stacked-fields">
+                <div>
+                  <label for="modern-calendar-sync-token">Sync token</label>
+                  <input id="modern-calendar-sync-token" type="text" inputmode="text" autocomplete="off" autocapitalize="none" spellcheck="false">
+                </div>
+              </div>
+            </details>
             <div class="calendar-summary-header">
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
@@ -1387,7 +1423,6 @@
             </div>
             <div id="modern-calendar-main">
               <div class="calendar-grid" id="modern-calendar-grid"></div>
-              <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
             </div>
             <div id="modern-calendar-detail" class="hidden">
               <div class="calendar-detail">
