@@ -4710,12 +4710,28 @@ function getCalendarSyncEndpoint(){
   try {
     const stored = localStorage.getItem(CALENDAR_SYNC_ENDPOINT_KEY);
     if (typeof stored === 'string' && stored.trim()){
-      return stored.trim();
+      return normalizeCalendarSyncEndpoint(stored);
     }
   } catch (err){
     console.warn('Failed to read calendar sync endpoint', err);
   }
   return CALENDAR_SYNC_ENDPOINT;
+}
+
+function normalizeCalendarSyncEndpoint(value){
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('/')) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function normalizeCalendarSyncEndpointForSave(value){
+  const normalized = normalizeCalendarSyncEndpoint(value);
+  if (!normalized && typeof value === 'string' && value.trim()){
+    return value.trim();
+  }
+  return normalized;
 }
 
 function getCalendarSyncTimestampLabel(){
@@ -4751,6 +4767,9 @@ async function syncCalendarToCloud(){
     throw new Error('Missing calendar sync token.');
   }
   const endpoint = getCalendarSyncEndpoint();
+  if (!endpoint){
+    throw new Error('Missing calendar sync endpoint.');
+  }
   const payload = {
     calendarState: {
       eventsByDate: calendarState.eventsByDate,
@@ -4758,15 +4777,20 @@ async function syncCalendarToCloud(){
     },
     selectedMonth: calendarState.selectedMonth
   };
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify(payload),
-    cache: 'no-store'
-  });
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(payload),
+      cache: 'no-store'
+    });
+  } catch (err){
+    throw new Error(`Unable to reach calendar sync endpoint (${endpoint}). Check the URL and https.`, { cause: err });
+  }
   if (!response.ok){
     throw new Error(`Calendar sync failed (${response.status})`);
   }
@@ -4794,13 +4818,21 @@ async function loadCalendarFromCloud(){
     throw new Error('Missing calendar sync token.');
   }
   const endpoint = getCalendarSyncEndpoint();
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${token}`
-    },
-    cache: 'no-store'
-  });
+  if (!endpoint){
+    throw new Error('Missing calendar sync endpoint.');
+  }
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      cache: 'no-store'
+    });
+  } catch (err){
+    throw new Error(`Unable to reach calendar sync endpoint (${endpoint}). Check the URL and https.`, { cause: err });
+  }
   if (!response.ok){
     throw new Error(`Calendar load failed (${response.status})`);
   }
@@ -6449,7 +6481,9 @@ function initCalendar(){
     syncEndpointInput.value = getCalendarSyncEndpoint();
     syncEndpointInput.addEventListener('change', () => {
       try {
-        localStorage.setItem(CALENDAR_SYNC_ENDPOINT_KEY, syncEndpointInput.value.trim());
+        const normalized = normalizeCalendarSyncEndpointForSave(syncEndpointInput.value);
+        localStorage.setItem(CALENDAR_SYNC_ENDPOINT_KEY, normalized);
+        syncEndpointInput.value = normalized;
         setCalendarStatus('Sync endpoint saved.');
       } catch (err){
         console.warn('Failed to store calendar sync endpoint', err);
