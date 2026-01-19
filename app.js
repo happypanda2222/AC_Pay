@@ -4498,6 +4498,18 @@ function getCalendarDayLastFlightEndMs(day, dateKey){
   return Number.isFinite(lastFlightMs) ? lastFlightMs : null;
 }
 
+function getCalendarDayFirstFlightStartMs(day, dateKey){
+  let firstFlightMs = null;
+  (day?.events || []).forEach((event) => {
+    const timing = getCalendarEventTiming(event, dateKey);
+    if (!timing) return;
+    if (!Number.isFinite(firstFlightMs) || timing.startMs < firstFlightMs){
+      firstFlightMs = timing.startMs;
+    }
+  });
+  return Number.isFinite(firstFlightMs) ? firstFlightMs : null;
+}
+
 function getCalendarLayoverStartMs(day, dateKey){
   if (!day || !dateKey) return null;
   if (Number.isFinite(day.checkOutMinutes)){
@@ -5441,16 +5453,36 @@ function getCalendarPairingLayoverLabel(day, dateKey){
 
 function getCalendarPairingLabel(day, dateKey){
   const pairingDays = getCalendarPairingDaysForDay(day);
-  if (dateKey && pairingDays.length && dateKey === pairingDays[pairingDays.length - 1]){
-    let endMinutes = Number.isFinite(day?.checkOutMinutes) ? day.checkOutMinutes : null;
-    if (!Number.isFinite(endMinutes) && dateKey){
-      const lastFlightMs = getCalendarDayLastFlightEndMs(day, dateKey);
-      const dayStartMs = getDateKeyStartMs(dateKey);
-      if (Number.isFinite(lastFlightMs) && Number.isFinite(dayStartMs)){
-        endMinutes = Math.round((lastFlightMs - dayStartMs) / 60000);
+  if (dateKey && pairingDays.length){
+    const firstDay = pairingDays[0];
+    const lastDay = pairingDays[pairingDays.length - 1];
+    if (dateKey === lastDay){
+      let endMinutes = Number.isFinite(day?.checkOutMinutes) ? day.checkOutMinutes : null;
+      if (!Number.isFinite(endMinutes) && dateKey){
+        const lastFlightMs = getCalendarDayLastFlightEndMs(day, dateKey);
+        const dayStartMs = getDateKeyStartMs(dateKey);
+        if (Number.isFinite(lastFlightMs) && Number.isFinite(dayStartMs)){
+          endMinutes = Math.round((lastFlightMs - dayStartMs) / 60000);
+        }
       }
+      return Number.isFinite(endMinutes) ? formatMinutesToTime(endMinutes) : 'Check out';
     }
-    return Number.isFinite(endMinutes) ? `End ${formatMinutesToTime(endMinutes)}` : 'End';
+    if (dateKey === firstDay){
+      let checkInMinutes = Number.isFinite(day?.checkInMinutes) ? day.checkInMinutes : null;
+      if (!Number.isFinite(checkInMinutes) && dateKey){
+        const firstFlightMs = getCalendarDayFirstFlightStartMs(day, dateKey);
+        const dayStartMs = getDateKeyStartMs(dateKey);
+        if (Number.isFinite(firstFlightMs) && Number.isFinite(dayStartMs)){
+          const adjustedMinutes = Math.round((firstFlightMs - dayStartMs) / 60000) - 75;
+          if (adjustedMinutes >= 0) checkInMinutes = adjustedMinutes;
+        }
+      }
+      const timeLabel = Number.isFinite(checkInMinutes)
+        ? formatMinutesToTime(checkInMinutes)
+        : 'Check in';
+      const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
+      return layoverLabel ? `${timeLabel} ${layoverLabel}` : timeLabel;
+    }
   }
   const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
   if (layoverLabel) return layoverLabel;
