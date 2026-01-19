@@ -4363,6 +4363,8 @@ let calendarDetailEventId = null;
 let calendarDetailSource = 'main';
 let calendarPairingId = null;
 let calendarDayDetailDateKey = null;
+const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
+let calendarAutoSyncTimer = null;
 
 function normalizeCalendarUpdatedAt(value){
   if (Number.isFinite(value)) return value;
@@ -4679,6 +4681,9 @@ function saveCalendarState({ bumpUpdatedAt = true } = {}){
   } catch (err){
     console.warn('Failed to save calendar schedule', err);
   }
+  if (bumpUpdatedAt){
+    scheduleCalendarAutoSync();
+  }
 }
 
 function queueCalendarSyncRetry(){
@@ -4758,6 +4763,41 @@ function setCalendarStatus(message = ''){
   const lastSync = getCalendarSyncTimestampLabel();
   parts.push(`Last sync: ${lastSync || 'not yet'}`);
   statusEl.textContent = parts.join(' · ');
+}
+
+function scheduleCalendarAutoSync(){
+  if (calendarAutoSyncTimer){
+    clearTimeout(calendarAutoSyncTimer);
+  }
+  calendarAutoSyncTimer = setTimeout(() => {
+    calendarAutoSyncTimer = null;
+    triggerCalendarAutoSync();
+  }, CALENDAR_AUTO_SYNC_DEBOUNCE_MS);
+}
+
+async function triggerCalendarAutoSync(){
+  if (navigator?.onLine === false){
+    queueCalendarSyncRetry();
+    setCalendarStatus('Offline. Sync queued.');
+    return;
+  }
+  const token = getCalendarSyncToken();
+  const endpoint = getCalendarSyncEndpoint();
+  if (!token || !endpoint){
+    setCalendarStatus('Calendar sync not configured. Using local calendar.');
+    return;
+  }
+  try {
+    const result = await syncCalendarToCloud();
+    if (result?.queued){
+      setCalendarStatus('Offline. Sync queued.');
+    } else {
+      setCalendarStatus('Synced to cloud.');
+    }
+  } catch (err){
+    console.warn('Calendar auto-sync failed', err);
+    setCalendarStatus(`Sync error: ${err?.message || 'Sync failed.'}`);
+  }
 }
 
 async function syncCalendarToCloud(){
