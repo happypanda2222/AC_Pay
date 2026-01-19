@@ -114,9 +114,11 @@ export default {
     const url = new URL(request.url);
     const requestOrigin = request.headers.get('Origin') || '';
     const configuredOrigin = env.PWA_ORIGIN ? env.PWA_ORIGIN.trim() : '';
-    const origin = configuredOrigin
-      ? (requestOrigin === configuredOrigin ? configuredOrigin : '')
-      : requestOrigin;
+    const allowedOrigins = [
+      'https://happypanda2222.github.io',
+      configuredOrigin
+    ].filter(Boolean);
+    const origin = allowedOrigins.includes(requestOrigin) ? requestOrigin : '';
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: withCors({}, origin) });
