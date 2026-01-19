@@ -6433,6 +6433,29 @@ function setCalendarEventCancellation(eventId, status){
 function initCalendar(){
   loadCalendarState();
   renderCalendar();
+  setTimeout(() => {
+    (async () => {
+      const online = navigator?.onLine !== false;
+      const token = getCalendarSyncToken();
+      const endpoint = getCalendarSyncEndpoint();
+      if (!online){
+        setCalendarStatus('Offline. Using local calendar.');
+        return;
+      }
+      if (!token || !endpoint){
+        setCalendarStatus('Calendar sync not configured. Using local calendar.');
+        return;
+      }
+      try {
+        const result = await loadCalendarFromCloud();
+        renderCalendar();
+        setCalendarStatus(result?.statusMessage || 'Pulled from cloud.');
+      } catch (err){
+        console.warn('Calendar startup pull failed', err);
+        setCalendarStatus('Calendar sync failed; using local data.');
+      }
+    })();
+  }, 0);
   const deleteMonthButton = document.getElementById('modern-calendar-delete-month');
   if (deleteMonthButton){
     deleteMonthButton.addEventListener('click', () => {
