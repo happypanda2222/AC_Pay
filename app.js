@@ -106,6 +106,7 @@ const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
 const CALENDAR_STORAGE_KEY = 'acpay.calendar.schedule';
 const CALENDAR_SYNC_ENDPOINT = '/sync/calendar';
+const CALENDAR_SYNC_ENDPOINT_KEY = 'acpay.calendar.sync.endpoint';
 const CALENDAR_SYNC_TOKEN_KEY = 'acpay.calendar.sync.token';
 const CALENDAR_SYNC_PENDING_KEY = 'acpay.calendar.sync.pending';
 const CALENDAR_SYNC_LAST_KEY = 'acpay.calendar.sync.last';
@@ -4705,6 +4706,18 @@ function getCalendarSyncToken(){
   return '';
 }
 
+function getCalendarSyncEndpoint(){
+  try {
+    const stored = localStorage.getItem(CALENDAR_SYNC_ENDPOINT_KEY);
+    if (typeof stored === 'string' && stored.trim()){
+      return stored.trim();
+    }
+  } catch (err){
+    console.warn('Failed to read calendar sync endpoint', err);
+  }
+  return CALENDAR_SYNC_ENDPOINT;
+}
+
 function getCalendarSyncTimestampLabel(){
   try {
     const stored = localStorage.getItem(CALENDAR_SYNC_LAST_KEY);
@@ -4737,6 +4750,7 @@ async function syncCalendarToCloud(){
   if (!token){
     throw new Error('Missing calendar sync token.');
   }
+  const endpoint = getCalendarSyncEndpoint();
   const payload = {
     calendarState: {
       eventsByDate: calendarState.eventsByDate,
@@ -4744,7 +4758,7 @@ async function syncCalendarToCloud(){
     },
     selectedMonth: calendarState.selectedMonth
   };
-  const response = await fetch(CALENDAR_SYNC_ENDPOINT, {
+  const response = await fetch(endpoint, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -4779,7 +4793,8 @@ async function loadCalendarFromCloud(){
   if (!token){
     throw new Error('Missing calendar sync token.');
   }
-  const response = await fetch(CALENDAR_SYNC_ENDPOINT, {
+  const endpoint = getCalendarSyncEndpoint();
+  const response = await fetch(endpoint, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${token}`
@@ -6427,6 +6442,19 @@ function initCalendar(){
       calendarState.selectedMonth = monthSelect.value;
       saveCalendarState();
       renderCalendar();
+    });
+  }
+  const syncEndpointInput = document.getElementById('modern-calendar-sync-endpoint');
+  if (syncEndpointInput){
+    syncEndpointInput.value = getCalendarSyncEndpoint();
+    syncEndpointInput.addEventListener('change', () => {
+      try {
+        localStorage.setItem(CALENDAR_SYNC_ENDPOINT_KEY, syncEndpointInput.value.trim());
+        setCalendarStatus('Sync endpoint saved.');
+      } catch (err){
+        console.warn('Failed to store calendar sync endpoint', err);
+        setCalendarStatus('Unable to save sync endpoint.');
+      }
     });
   }
   const syncTokenInput = document.getElementById('modern-calendar-sync-token');
