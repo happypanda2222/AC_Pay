@@ -4365,6 +4365,7 @@ let calendarDetailSource = 'main';
 let calendarPairingId = null;
 let calendarDayDetailDateKey = null;
 let calendarCreditDetailOpen = false;
+let calendarBlockGrowthDetailOpen = false;
 const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
 let calendarAutoSyncTimer = null;
 
@@ -6142,6 +6143,7 @@ function renderCalendar(){
   refreshCalendarPairingDetail();
   refreshCalendarDayDetail();
   refreshCalendarCreditDetail();
+  refreshCalendarBlockGrowthDetail();
 }
 
 function findCalendarEventById(eventId){
@@ -6346,7 +6348,9 @@ function openCalendarDetail(eventId, source = 'main'){
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
   calendarCreditDetailOpen = false;
+  calendarBlockGrowthDetailOpen = false;
 }
 
 function closeCalendarDetail(){
@@ -6436,7 +6440,9 @@ function openCalendarPairingDetail(pairingId){
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
   calendarCreditDetailOpen = false;
+  calendarBlockGrowthDetailOpen = false;
 }
 
 function closeCalendarPairingDetail(){
@@ -6462,7 +6468,9 @@ function openCalendarDayDetail(dateKey){
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
   calendarCreditDetailOpen = false;
+  calendarBlockGrowthDetailOpen = false;
   detailEl.classList.remove('hidden');
 }
 
@@ -6557,15 +6565,78 @@ function renderCalendarCreditDetail(){
     { label: 'PP credit (CNX PP)', value: formatDurationMinutes(ppCreditMinutes) },
     { label: 'Lost credit (CNX)', value: formatDurationMinutes(lostCreditMinutes) },
     { label: 'Vacation credit', value: formatDurationMinutes(vacationMinutes) },
-    { label: 'Block growth', value: formatDurationMinutes(blockGrowthMinutes) }
+    { label: 'Block growth', value: formatDurationMinutes(blockGrowthMinutes), action: 'block-growth' }
   ];
   infoEl.innerHTML = `<div class="simple">${blocks
-    .map(block => `<div class="block"><div class="label">${escapeHtml(block.label)}</div><div class="value">${escapeHtml(block.value)}</div></div>`)
+    .map((block) => {
+      if (block.action === 'block-growth'){
+        return `<button class="block actionable" type="button" data-open-block-growth-detail="true"><div class="label">${escapeHtml(block.label)}</div><div class="value">${escapeHtml(block.value)}</div></button>`;
+      }
+      return `<div class="block"><div class="label">${escapeHtml(block.label)}</div><div class="value">${escapeHtml(block.value)}</div></div>`;
+    })
     .join('')}</div>`;
+  const blockGrowthButton = infoEl.querySelector('[data-open-block-growth-detail]');
+  if (blockGrowthButton){
+    blockGrowthButton.addEventListener('click', () => {
+      openCalendarBlockGrowthDetail();
+    });
+  }
   if (vacationInput){
     vacationInput.value = vacationMinutes ? formatDurationMinutes(vacationMinutes) : '';
   }
   if (statusEl) statusEl.textContent = '';
+}
+
+function renderCalendarBlockGrowthDetail(){
+  const titleEl = document.getElementById('calendar-block-growth-detail-title');
+  const infoEl = document.getElementById('calendar-block-growth-detail-info');
+  const statusEl = document.getElementById('calendar-block-growth-detail-status');
+  if (!titleEl || !infoEl) return;
+  const monthKey = calendarState.selectedMonth;
+  if (!monthKey){
+    titleEl.textContent = 'Block growth detail';
+    infoEl.innerHTML = '';
+    if (statusEl) statusEl.textContent = 'No month selected.';
+    return;
+  }
+  titleEl.textContent = `${formatCalendarMonthLabel(monthKey)} block growth`;
+  const prefix = `${monthKey}-`;
+  const entries = Object.entries(calendarState.eventsByDate || {})
+    .filter(([dateKey]) => dateKey.startsWith(prefix))
+    .sort(([a], [b]) => a.localeCompare(b));
+  const groups = [];
+  entries.forEach(([dateKey, day]) => {
+    const events = (day?.events || []).filter(event => getCalendarEventBlockGrowth(event) > 0);
+    if (!events.length) return;
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    const pairingNumber = String(day?.pairing?.pairingNumber || '').trim();
+    const pairingParts = [];
+    if (pairingNumber) pairingParts.push(`Pairing ${pairingNumber}`);
+    if (pairingId && pairingId !== pairingNumber) pairingParts.push(`ID ${pairingId}`);
+    const pairingLabel = pairingParts.join(' · ') || 'Pairing';
+    const dateLabel = formatCalendarDateLabel(dateKey);
+    const flightItems = events.map((event) => {
+      const primaryLabel = event.label || event.identifiers?.join(', ') || 'Flight';
+      const identifiers = event.label && event.identifiers?.length
+        ? ` · ${event.identifiers.join(', ')}`
+        : '';
+      const growthLabel = formatDurationMinutes(getCalendarEventBlockGrowth(event));
+      return `<div class="calendar-pairing-flight">${escapeHtml(primaryLabel)}${escapeHtml(identifiers)} · Block growth ${escapeHtml(growthLabel)}</div>`;
+    }).join('');
+    groups.push(
+      `<div class="calendar-pairing-day">` +
+      `<div class="calendar-pairing-day-header">` +
+      `<div class="calendar-pairing-day-title">${escapeHtml(dateLabel)}</div>` +
+      `<div class="calendar-pairing-day-layover">${escapeHtml(pairingLabel)}</div>` +
+      `</div>` +
+      `<div class="calendar-pairing-day-flights">${flightItems}</div>` +
+      `</div>`
+    );
+  });
+  infoEl.innerHTML = groups.join('');
+  if (statusEl){
+    statusEl.textContent = groups.length ? '' : 'No block growth entries for this month.';
+  }
 }
 
 function openCalendarCreditDetail(){
@@ -6573,12 +6644,14 @@ function openCalendarCreditDetail(){
   const detailEl = document.getElementById('modern-calendar-credit-detail');
   if (!mainEl || !detailEl) return;
   calendarCreditDetailOpen = true;
+  calendarBlockGrowthDetailOpen = false;
   renderCalendarCreditDetail();
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
 }
 
 function closeCalendarCreditDetail(){
@@ -6587,11 +6660,43 @@ function closeCalendarCreditDetail(){
   if (mainEl) mainEl.classList.remove('hidden');
   if (detailEl) detailEl.classList.add('hidden');
   calendarCreditDetailOpen = false;
+  calendarBlockGrowthDetailOpen = false;
+  document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
 }
 
 function refreshCalendarCreditDetail(){
   if (!calendarCreditDetailOpen) return;
   renderCalendarCreditDetail();
+}
+
+function openCalendarBlockGrowthDetail(){
+  const creditEl = document.getElementById('modern-calendar-credit-detail');
+  const detailEl = document.getElementById('modern-calendar-block-growth-detail');
+  if (!detailEl) return;
+  calendarBlockGrowthDetailOpen = true;
+  renderCalendarBlockGrowthDetail();
+  document.getElementById('modern-calendar-main')?.classList.add('hidden');
+  document.getElementById('modern-calendar-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+  if (creditEl) creditEl.classList.add('hidden');
+  detailEl.classList.remove('hidden');
+}
+
+function closeCalendarBlockGrowthDetail(){
+  const detailEl = document.getElementById('modern-calendar-block-growth-detail');
+  if (detailEl) detailEl.classList.add('hidden');
+  calendarBlockGrowthDetailOpen = false;
+  if (calendarCreditDetailOpen){
+    document.getElementById('modern-calendar-credit-detail')?.classList.remove('hidden');
+  } else {
+    document.getElementById('modern-calendar-main')?.classList.remove('hidden');
+  }
+}
+
+function refreshCalendarBlockGrowthDetail(){
+  if (!calendarBlockGrowthDetailOpen) return;
+  renderCalendarBlockGrowthDetail();
 }
 
 function setCalendarEventCancellation(eventId, status){
@@ -6796,6 +6901,12 @@ function initCalendar(){
       closeCalendarCreditDetail();
     });
   }
+  const blockGrowthDetailBack = document.getElementById('calendar-block-growth-detail-back');
+  if (blockGrowthDetailBack){
+    blockGrowthDetailBack.addEventListener('click', () => {
+      closeCalendarBlockGrowthDetail();
+    });
+  }
   const creditVacationInput = document.getElementById('calendar-vacation-credit');
   const creditVacationSave = document.getElementById('calendar-vacation-credit-save');
   const handleVacationSave = () => {
@@ -6851,6 +6962,7 @@ function initCalendar(){
       refreshCalendarPairingDetail();
       refreshCalendarDayDetail();
       refreshCalendarCreditDetail();
+      refreshCalendarBlockGrowthDetail();
       if (statusEl) statusEl.textContent = 'Block growth saved.';
     });
   }
