@@ -105,6 +105,10 @@ const FLIGHTRADAR24_PUBLIC_BASE = 'https://api.flightradar24.com';
 const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
 const CALENDAR_STORAGE_KEY = 'acpay.calendar.schedule';
+const CALENDAR_SYNC_ENDPOINT = '/sync/calendar';
+const CALENDAR_SYNC_TOKEN_KEY = 'acpay.calendar.sync.token';
+const CALENDAR_SYNC_PENDING_KEY = 'acpay.calendar.sync.pending';
+const CALENDAR_SYNC_LAST_KEY = 'acpay.calendar.sync.last';
 const CALENDAR_PREFS_KEY = 'acpay.calendar.prefs';
 const CALENDAR_WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 let finAirportCodeMode = 'iata';
@@ -4656,6 +4660,107 @@ function saveCalendarState(){
     localStorage.setItem(CALENDAR_PREFS_KEY, JSON.stringify({ selectedMonth: calendarState.selectedMonth }));
   } catch (err){
     console.warn('Failed to save calendar schedule', err);
+  }
+}
+
+function queueCalendarSyncRetry(){
+  try {
+    localStorage.setItem(CALENDAR_SYNC_PENDING_KEY, String(Date.now()));
+  } catch (err){
+    console.warn('Failed to queue calendar sync retry', err);
+  }
+}
+
+function clearCalendarSyncRetry(){
+  try {
+    localStorage.removeItem(CALENDAR_SYNC_PENDING_KEY);
+  } catch (err){
+    console.warn('Failed to clear calendar sync retry', err);
+  }
+}
+
+function getCalendarSyncToken(){
+  try {
+    return localStorage.getItem(CALENDAR_SYNC_TOKEN_KEY) || '';
+  } catch (err){
+    console.warn('Failed to read calendar sync token', err);
+  }
+  return '';
+}
+
+async function syncCalendarToCloud(){
+  if (navigator?.onLine === false){
+    queueCalendarSyncRetry();
+    return { queued: true };
+  }
+  const token = getCalendarSyncToken();
+  if (!token){
+    throw new Error('Missing calendar sync token.');
+  }
+  const payload = {
+    calendarState: {
+      eventsByDate: calendarState.eventsByDate,
+      months: calendarState.months
+    },
+    selectedMonth: calendarState.selectedMonth
+  };
+  const response = await fetch(CALENDAR_SYNC_ENDPOINT, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store'
+  });
+  if (!response.ok){
+    throw new Error(`Calendar sync failed (${response.status})`);
+  }
+  try {
+    localStorage.setItem(CALENDAR_SYNC_LAST_KEY, new Date().toISOString());
+  } catch (err){
+    console.warn('Failed to store calendar sync timestamp', err);
+  }
+  clearCalendarSyncRetry();
+  return { queued: false };
+}
+
+async function loadCalendarFromCloud(){
+  const token = getCalendarSyncToken();
+  if (!token){
+    throw new Error('Missing calendar sync token.');
+  }
+  const response = await fetch(CALENDAR_SYNC_ENDPOINT, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    cache: 'no-store'
+  });
+  if (!response.ok){
+    throw new Error(`Calendar load failed (${response.status})`);
+  }
+  const data = await response.json();
+  const incomingState = data?.calendarState || data?.state || data || {};
+  calendarState = {
+    eventsByDate: incomingState.eventsByDate || {},
+    months: Array.isArray(incomingState.months) ? incomingState.months : [],
+    selectedMonth: data?.selectedMonth || incomingState.selectedMonth || null
+  };
+  normalizeCalendarState();
+  saveCalendarState();
+  return calendarState;
+}
+
+function scheduleCalendarSyncRetry(){
+  try {
+    if (navigator?.onLine && localStorage.getItem(CALENDAR_SYNC_PENDING_KEY)){
+      syncCalendarToCloud().catch(() => {
+        queueCalendarSyncRetry();
+      });
+    }
+  } catch (err){
+    console.warn('Failed to schedule calendar sync retry', err);
   }
 }
 
@@ -10375,6 +10480,8 @@ function startUtcClock(ids) {
 function init(){
   updateVersionBadgeFromSW();
   purgeLegacyFinSyncSettings();
+  scheduleCalendarSyncRetry();
+  window.addEventListener('online', scheduleCalendarSyncRetry);
   startUtcClock([
     'modern-utc-clock',
     'modern-duty-utc-clock',
