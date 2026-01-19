@@ -4354,6 +4354,9 @@ let calendarState = {
   selectedMonth: null
 };
 let calendarDetailEventId = null;
+let calendarDetailSource = 'main';
+let calendarPairingId = null;
+let calendarDayDetailDateKey = null;
 
 function loadCalendarState(){
   try {
@@ -4379,7 +4382,7 @@ function loadCalendarState(){
 }
 
 function normalizeCalendarState(){
-  Object.values(calendarState.eventsByDate || {}).forEach((day) => {
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day || typeof day !== 'object') return;
     if (!Array.isArray(day.events)) day.events = [];
     day.events = day.events.map((event) => {
@@ -4389,6 +4392,61 @@ function normalizeCalendarState(){
       if (!Number.isFinite(event.blockGrowthMinutes)) event.blockGrowthMinutes = 0;
       return event;
     }).filter(Boolean);
+    if (!day.pairing || typeof day.pairing !== 'object'){
+      day.pairing = inferCalendarDayPairing(day, dateKey);
+    }
+    if (day.pairing){
+      day.pairing.pairingId = String(day.pairing.pairingId || '').trim();
+      day.pairing.pairingNumber = String(day.pairing.pairingNumber || '').trim();
+      if (!Array.isArray(day.pairing.pairingDays)) day.pairing.pairingDays = [];
+    }
+    if (!day.layover || typeof day.layover !== 'object'){
+      day.layover = { hotel: '', durationMinutes: null };
+    }
+    if (day.layover){
+      day.layover.hotel = typeof day.layover.hotel === 'string' ? day.layover.hotel : '';
+      if (!Number.isFinite(day.layover.durationMinutes)) day.layover.durationMinutes = null;
+    }
+    if (day.pairing?.pairingId){
+      day.events.forEach((event) => {
+        if (!event.pairingId) event.pairingId = day.pairing.pairingId;
+      });
+    }
+  });
+  hydrateCalendarPairingDays();
+}
+
+function inferCalendarDayPairing(day, dateKey){
+  const identifiers = day?.events?.[0]?.identifiers || [];
+  const pairingNumberMatch = identifiers
+    .map(id => String(id))
+    .join(' ')
+    .match(/\bPairing\s+([A-Z0-9]{2,6})\b/i);
+  const pairingNumber = pairingNumberMatch ? pairingNumberMatch[1].toUpperCase() : '';
+  const fallbackId = pairingNumber || getCalendarPairingKey(day?.events?.[0] || {});
+  return {
+    pairingId: fallbackId || `PAIR-${dateKey}`,
+    pairingNumber,
+    pairingDays: []
+  };
+}
+
+function hydrateCalendarPairingDays(targetEventsByDate = calendarState.eventsByDate){
+  const pairingMap = new Map();
+  Object.entries(targetEventsByDate || {}).forEach(([dateKey, day]) => {
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    if (!pairingId) return;
+    if (!pairingMap.has(pairingId)) pairingMap.set(pairingId, []);
+    pairingMap.get(pairingId).push(dateKey);
+  });
+  pairingMap.forEach((days, pairingId) => {
+    const sortedDays = days.sort();
+    sortedDays.forEach((dateKey) => {
+      const day = targetEventsByDate?.[dateKey];
+      if (day?.pairing && day.pairing.pairingId === pairingId){
+        day.pairing.pairingDays = sortedDays;
+      }
+    });
   });
 }
 
@@ -4667,53 +4725,58 @@ function getCalendarPairingKey(event){
   return String(event.label || '').trim().toUpperCase();
 }
 
-function getCalendarAdjacentDateKey(dateKey, delta){
-  const [year, month, day] = String(dateKey || '').split('-').map(Number);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return '';
-  const date = new Date(year, month - 1, day + delta);
-  if (!Number.isFinite(date.getTime())) return '';
-  const nextMonth = String(date.getMonth() + 1).padStart(2, '0');
-  const nextDay = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${nextMonth}-${nextDay}`;
+function getCalendarPairingIdForDay(dateKey){
+  const day = calendarState.eventsByDate?.[dateKey];
+  return String(day?.pairing?.pairingId || '').trim();
 }
 
-function findCalendarEventByKey(dateKey, pairingKey){
-  if (!pairingKey) return null;
-  const day = calendarState.eventsByDate?.[dateKey];
-  if (!day?.events?.length) return null;
-  return day.events.find(event => getCalendarPairingKey(event) === pairingKey) || null;
+function getCalendarPairingDays(pairingId){
+  if (!pairingId) return [];
+  const days = [];
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (day?.pairing?.pairingId === pairingId) days.push(dateKey);
+  });
+  return days.sort();
+}
+
+function getCalendarPairingIdForEvent(event, dateKey){
+  if (event?.pairingId) return event.pairingId;
+  const dayPairingId = getCalendarPairingIdForDay(dateKey);
+  if (dayPairingId) return dayPairingId;
+  return getCalendarPairingKey(event);
 }
 
 function isTafbCancelled(event, dateKey){
   if (!event?.cancellation) return false;
   if (event.cancellation !== 'CNX' && event.cancellation !== 'CNX PP') return false;
-  const pairingKey = getCalendarPairingKey(event);
-  if (!pairingKey || !dateKey) return false;
-  const prevKey = getCalendarAdjacentDateKey(dateKey, -1);
-  const nextKey = getCalendarAdjacentDateKey(dateKey, 1);
-  const prevEvent = prevKey ? findCalendarEventByKey(prevKey, pairingKey) : null;
-  const nextEvent = nextKey ? findCalendarEventByKey(nextKey, pairingKey) : null;
-  const hasPrev = !!prevEvent;
-  const hasNext = !!nextEvent;
-  if (!hasPrev && !hasNext) return true;
-  if (hasPrev && hasNext) return false;
-  const alreadyCancelled = [prevEvent, nextEvent].some(adjacent => adjacent?.cancellation);
-  return !alreadyCancelled;
+  const pairingId = getCalendarPairingIdForEvent(event, dateKey);
+  if (!pairingId || !dateKey) return false;
+  const pairingDays = getCalendarPairingDays(pairingId);
+  if (!pairingDays.length){
+    return true;
+  }
+  const firstDay = pairingDays[0];
+  const lastDay = pairingDays[pairingDays.length - 1];
+  if (dateKey !== firstDay && dateKey !== lastDay) return false;
+  const otherCancelled = pairingDays.some((dayKey) => {
+    if (dayKey === dateKey) return false;
+    const dayEvents = calendarState.eventsByDate?.[dayKey]?.events || [];
+    return dayEvents.some(otherEvent => Boolean(otherEvent?.cancellation));
+  });
+  return !otherCancelled;
 }
 
-function getCalendarFlightLabel(event){
+function getCalendarPairingLabel(day){
+  const pairingNumber = String(day?.pairing?.pairingNumber || '').trim();
+  const pairingId = String(day?.pairing?.pairingId || '').trim();
+  const label = pairingNumber || pairingId;
+  return label ? `Pairing ${label}` : 'Pairing';
+}
+
+function getCalendarEventLabel(event){
   const identifiers = Array.isArray(event?.identifiers) ? event.identifiers : [];
-  const normalize = (value) => {
-    const cleaned = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const match = cleaned.match(/[A-Z]{2}\d{1,4}/);
-    return match ? match[0] : '';
-  };
-  for (const id of identifiers){
-    const normalized = normalize(id);
-    if (normalized) return normalized;
-  }
-  const fallback = normalize(event?.label);
-  return fallback || 'Trip';
+  if (identifiers.length) return identifiers[0];
+  return event?.label || 'Flight';
 }
 
 function extractIdentifiersFromLine(line){
@@ -5004,10 +5067,38 @@ function parsePastedScheduleText(text){
   const eventsByDate = {};
   let currentDateKey = null;
   let currentLines = [];
+  let currentPairing = null;
+  let pairingCounter = 0;
+
+  const startPairing = (pairingNumber) => {
+    const pairingId = pairingNumber || `P${String(pairingCounter + 1).padStart(3, '0')}`;
+    pairingCounter += 1;
+    currentPairing = {
+      pairingId,
+      pairingNumber: pairingNumber || ''
+    };
+    return currentPairing;
+  };
+
+  const ensurePairing = (pairingNumber, forceNew = false) => {
+    const normalizedNumber = pairingNumber ? pairingNumber.toUpperCase() : '';
+    if (!currentPairing || forceNew){
+      return startPairing(normalizedNumber);
+    }
+    if (normalizedNumber){
+      if (currentPairing.pairingNumber && currentPairing.pairingNumber !== normalizedNumber){
+        return startPairing(normalizedNumber);
+      }
+      if (!currentPairing.pairingNumber){
+        currentPairing.pairingNumber = normalizedNumber;
+      }
+    }
+    return currentPairing;
+  };
 
   const finalizeDay = () => {
     if (!currentDateKey) return;
-    const dayEvent = buildCalendarEventFromText(currentDateKey, currentLines);
+    const dayEvent = buildCalendarEventFromText(currentDateKey, currentLines, currentPairing);
     if (dayEvent){
       eventsByDate[currentDateKey] = dayEvent;
     }
@@ -5015,15 +5106,28 @@ function parsePastedScheduleText(text){
 
   const lines = raw.split(/\r?\n/);
   lines.forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    if (/^[-=]{3,}\s*$/.test(trimmed)){
+    let workingLine = line.trim();
+    if (!workingLine) return;
+    const pairingMatch = workingLine.match(/\bPairing\s*#?\s*([A-Z0-9]{2,6})\b/i);
+    if (pairingMatch){
+      ensurePairing(pairingMatch[1]);
+      workingLine = workingLine.replace(pairingMatch[0], '').trim();
+      if (!workingLine) return;
+    }
+    if (/^=+\s*$/.test(workingLine)){
+      finalizeDay();
+      currentDateKey = null;
+      currentLines = [];
+      currentPairing = null;
+      return;
+    }
+    if (/^-{3,}\s*$/.test(workingLine)){
       finalizeDay();
       currentDateKey = null;
       currentLines = [];
       return;
     }
-    const dateMatch = trimmed.match(/^(\d{1,2})\s*([A-Za-z]{3})\b/);
+    const dateMatch = workingLine.match(/^(\d{1,2})\s*([A-Za-z]{3})\b/);
     if (dateMatch){
       finalizeDay();
       const day = Number(dateMatch[1]);
@@ -5037,14 +5141,16 @@ function parsePastedScheduleText(text){
       const yearForMonth = resolveCalendarYearForMonth(monthIndex, currentYear, currentYear);
       const dateKey = `${yearForMonth}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       currentDateKey = dateKey;
-      currentLines = [trimmed];
+      ensurePairing();
+      currentLines = [workingLine];
       return;
     }
     if (currentDateKey){
-      currentLines.push(trimmed);
+      currentLines.push(workingLine);
     }
   });
   finalizeDay();
+  hydrateCalendarPairingDays(eventsByDate);
 
   return {
     eventsByDate,
@@ -5052,16 +5158,34 @@ function parsePastedScheduleText(text){
   };
 }
 
-function buildCalendarEventFromText(dateKey, lines){
+function buildCalendarEventFromText(dateKey, lines, pairingContext){
   if (!Array.isArray(lines) || !lines.length) return null;
   let summaryCreditMinutes = null;
   let dutyMinutes = null;
   const events = [];
+  const pairing = pairingContext
+    ? {
+      pairingId: pairingContext.pairingId,
+      pairingNumber: pairingContext.pairingNumber || '',
+      pairingDays: []
+    }
+    : null;
+  const layover = { hotel: '', durationMinutes: null };
 
   lines.forEach((line) => {
     const trimmed = String(line || '').trim();
     if (!trimmed) return;
     const durations = trimmed.match(/\d{1,2}:\d{2}/g) || [];
+    if (/LAYOV/i.test(trimmed)){
+      const layoverMinutes = durations.length ? parseDurationToMinutes(durations[durations.length - 1]) : NaN;
+      if (Number.isFinite(layoverMinutes)) layover.durationMinutes = layoverMinutes;
+      const hotel = trimmed
+        .replace(/\bLAYOV\b/i, ' ')
+        .replace(/\d{1,2}:\d{2}/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (hotel) layover.hotel = hotel;
+    }
     if (/^[\d:\s]+$/.test(trimmed) && durations.length >= 3){
       if (durations.length >= 4){
         const credit = parseDurationToMinutes(durations[2]);
@@ -5100,24 +5224,30 @@ function buildCalendarEventFromText(dateKey, lines){
         creditMinutes: Number.isFinite(minutes) ? minutes : null,
         legs,
         cancellation: cancellationStatus || null,
-        blockGrowthMinutes: 0
+        blockGrowthMinutes: 0,
+        pairingId: pairing?.pairingId || ''
       });
     }
   });
 
-  if (!events.length){
+  if (!events.length && !layover.durationMinutes && !layover.hotel){
     return null;
   }
 
   const hasAnyCredits = events.some(event => Number.isFinite(event.creditMinutes));
-  if (!hasAnyCredits && Number.isFinite(summaryCreditMinutes)){
+  if (!hasAnyCredits && Number.isFinite(summaryCreditMinutes) && events.length){
     events[0].creditMinutes = summaryCreditMinutes;
   }
-  if (Number.isFinite(dutyMinutes)){
+  if (Number.isFinite(dutyMinutes) && events.length){
     events[0].dutyMinutes = dutyMinutes;
   }
+  if (pairing?.pairingId){
+    events.forEach((event) => {
+      event.pairingId = pairing.pairingId;
+    });
+  }
 
-  return { events };
+  return { events, pairing, layover };
 }
 
 function getCalendarMonthCandidates(){
@@ -5232,42 +5362,50 @@ function renderCalendar(){
   }
   for (let day = 1; day <= daysInMonth; day += 1){
     const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const dayEvents = calendarState.eventsByDate?.[dateKey]?.events || [];
+    const dayData = calendarState.eventsByDate?.[dateKey];
+    const dayEvents = dayData?.events || [];
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
     const dayNumber = document.createElement('div');
     dayNumber.className = 'calendar-day-number';
     dayNumber.textContent = String(day);
     dayCell.appendChild(dayNumber);
-    dayEvents.forEach((event) => {
+    if (dayEvents.length || dayData?.pairing?.pairingId){
       const wrapper = document.createElement('div');
       wrapper.className = 'calendar-event-item';
-      wrapper.dataset.eventId = event.id;
+      if (dayData?.pairing?.pairingId) wrapper.dataset.pairingId = dayData.pairing.pairingId;
+      wrapper.dataset.dateKey = dateKey;
       const eventBtn = document.createElement('button');
       eventBtn.type = 'button';
       eventBtn.className = 'calendar-event';
-      if (isCancelledEvent(event)) eventBtn.classList.add('is-cnx');
+      if (dayEvents.some(event => isCancelledEvent(event))) eventBtn.classList.add('is-cnx');
       const title = document.createElement('div');
       title.className = 'calendar-event-title';
-      title.textContent = getCalendarFlightLabel(event);
+      title.textContent = getCalendarPairingLabel(dayData);
       const meta = document.createElement('div');
       meta.className = 'calendar-event-meta';
       const parts = [];
-      if (event.cancellation) parts.push(`Status ${event.cancellation}`);
-      if (event.identifiers?.length) parts.push(event.identifiers.join(', '));
-      if (event.legs?.length){
-        const legsLabel = event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ');
-        if (legsLabel) parts.push(legsLabel);
-      }
+      const cancellations = dayEvents.map(event => event.cancellation).filter(Boolean);
+      if (cancellations.length) parts.push(`Status ${Array.from(new Set(cancellations)).join(', ')}`);
+      const identifiers = dayEvents.flatMap(event => event.identifiers || []).filter(Boolean);
+      if (identifiers.length) parts.push(identifiers.join(', '));
+      const legsLabel = dayEvents
+        .flatMap(event => event.legs || [])
+        .map(leg => `${leg.from}-${leg.to}`)
+        .filter(Boolean)
+        .join(' ');
+      if (legsLabel) parts.push(legsLabel);
       meta.textContent = parts.join(' · ');
       eventBtn.appendChild(title);
       if (meta.textContent) eventBtn.appendChild(meta);
       wrapper.appendChild(eventBtn);
       dayCell.appendChild(wrapper);
-    });
+    }
     gridEl.appendChild(dayCell);
   }
   refreshCalendarDetail();
+  refreshCalendarPairingDetail();
+  refreshCalendarDayDetail();
 }
 
 function findCalendarEventById(eventId){
@@ -5285,7 +5423,7 @@ function renderCalendarDetail(event, dateKey){
   const statusEl = document.getElementById('calendar-detail-status');
   const growthInput = document.getElementById('calendar-block-growth');
   if (!titleEl || !infoEl) return;
-  const label = getCalendarFlightLabel(event);
+  const label = getCalendarEventLabel(event);
   titleEl.textContent = `${label} · ${formatCalendarDateLabel(dateKey)}`;
   const blocks = [];
   const addBlock = (blockLabel, value) => {
@@ -5315,23 +5453,118 @@ function renderCalendarDetail(event, dateKey){
   if (statusEl) statusEl.textContent = '';
 }
 
-function openCalendarDetail(eventId){
+function buildCalendarPairingIndex(){
+  const pairingMap = new Map();
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    if (!pairingId) return;
+    if (!pairingMap.has(pairingId)){
+      pairingMap.set(pairingId, {
+        pairingId,
+        pairingNumber: day?.pairing?.pairingNumber || '',
+        days: []
+      });
+    }
+    const pairing = pairingMap.get(pairingId);
+    pairing.days.push(dateKey);
+  });
+  pairingMap.forEach((pairing) => {
+    pairing.days.sort();
+  });
+  return pairingMap;
+}
+
+function renderCalendarPairingDetail(pairingId){
+  const titleEl = document.getElementById('calendar-pairing-title');
+  const daysEl = document.getElementById('calendar-pairing-days');
+  const statusEl = document.getElementById('calendar-pairing-status');
+  if (!titleEl || !daysEl) return;
+  const pairingMap = buildCalendarPairingIndex();
+  const pairing = pairingMap.get(pairingId);
+  if (!pairing){
+    titleEl.textContent = 'Pairing';
+    daysEl.innerHTML = '';
+    if (statusEl) statusEl.textContent = 'Pairing not found.';
+    return;
+  }
+  const label = pairing.pairingNumber || pairing.pairingId;
+  titleEl.textContent = label ? `Pairing ${label}` : 'Pairing';
+  daysEl.innerHTML = '';
+  pairing.days.forEach((dateKey) => {
+    const day = calendarState.eventsByDate?.[dateKey];
+    if (!day) return;
+    const dayRow = document.createElement('button');
+    dayRow.type = 'button';
+    dayRow.className = 'calendar-pairing-day';
+    dayRow.dataset.dateKey = dateKey;
+    const header = document.createElement('div');
+    header.className = 'calendar-pairing-day-header';
+    const dayLabel = document.createElement('div');
+    dayLabel.className = 'calendar-pairing-day-title';
+    dayLabel.textContent = formatCalendarDateLabel(dateKey);
+    header.appendChild(dayLabel);
+    const layoverParts = [];
+    if (Number.isFinite(day.layover?.durationMinutes)){
+      layoverParts.push(formatDurationMinutes(day.layover.durationMinutes));
+    }
+    if (day.layover?.hotel){
+      layoverParts.push(day.layover.hotel);
+    }
+    if (layoverParts.length){
+      const layover = document.createElement('div');
+      layover.className = 'calendar-pairing-day-layover';
+      layover.textContent = `Layover ${layoverParts.join(' · ')}`;
+      header.appendChild(layover);
+    }
+    dayRow.appendChild(header);
+    const flights = document.createElement('div');
+    flights.className = 'calendar-pairing-day-flights';
+    if (day.events?.length){
+      day.events.forEach((event) => {
+        const flight = document.createElement('div');
+        flight.className = 'calendar-pairing-flight';
+        flight.textContent = event.label || event.identifiers?.join(', ') || 'Flight';
+        flights.appendChild(flight);
+      });
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'calendar-pairing-flight muted-note';
+      empty.textContent = 'No flights listed.';
+      flights.appendChild(empty);
+    }
+    dayRow.appendChild(flights);
+    daysEl.appendChild(dayRow);
+  });
+  if (statusEl) statusEl.textContent = '';
+}
+
+function openCalendarDetail(eventId, source = 'main'){
   const mainEl = document.getElementById('modern-calendar-main');
   const detailEl = document.getElementById('modern-calendar-detail');
   const entry = findCalendarEventById(eventId);
   if (!entry || !mainEl || !detailEl) return;
   calendarDetailEventId = eventId;
+  calendarDetailSource = source;
   renderCalendarDetail(entry.event, entry.dateKey);
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
+  document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
 }
 
 function closeCalendarDetail(){
   const mainEl = document.getElementById('modern-calendar-main');
   const detailEl = document.getElementById('modern-calendar-detail');
-  if (mainEl) mainEl.classList.remove('hidden');
+  if (calendarDetailSource === 'day'){
+    document.getElementById('modern-calendar-day-detail')?.classList.remove('hidden');
+  } else if (calendarDetailSource === 'pairing'){
+    document.getElementById('modern-calendar-pairing-detail')?.classList.remove('hidden');
+  } else if (mainEl){
+    mainEl.classList.remove('hidden');
+  }
   if (detailEl) detailEl.classList.add('hidden');
   calendarDetailEventId = null;
+  calendarDetailSource = 'main';
 }
 
 function refreshCalendarDetail(){
@@ -5342,6 +5575,91 @@ function refreshCalendarDetail(){
     return;
   }
   renderCalendarDetail(entry.event, entry.dateKey);
+}
+
+function renderCalendarDayDetail(dateKey){
+  const titleEl = document.getElementById('calendar-day-detail-title');
+  const infoEl = document.getElementById('calendar-day-detail-info');
+  const statusEl = document.getElementById('calendar-day-detail-status');
+  if (!titleEl || !infoEl) return;
+  const day = calendarState.eventsByDate?.[dateKey];
+  if (!day){
+    titleEl.textContent = 'Day detail';
+    infoEl.innerHTML = '';
+    if (statusEl) statusEl.textContent = 'Day not found.';
+    return;
+  }
+  titleEl.textContent = `${getCalendarPairingLabel(day)} · ${formatCalendarDateLabel(dateKey)}`;
+  const blocks = [];
+  if (Number.isFinite(day.layover?.durationMinutes)){
+    blocks.push(`<div class="block"><div class="label">Layover</div><div class="value">${escapeHtml(formatDurationMinutes(day.layover.durationMinutes))}</div></div>`);
+  }
+  if (day.layover?.hotel){
+    blocks.push(`<div class="block"><div class="label">Hotel</div><div class="value">${escapeHtml(day.layover.hotel)}</div></div>`);
+  }
+  const flightsHtml = (day.events || []).map((event) => {
+    const route = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '';
+    const label = event.label || event.identifiers?.join(', ') || 'Flight';
+    const meta = route ? ` · ${route}` : '';
+    const status = event.cancellation ? ` · ${event.cancellation}` : '';
+    return `<button class="calendar-day-flight" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(status)}</button>`;
+  }).join('');
+  const flightSection = flightsHtml
+    ? `<div class="calendar-day-flight-list">${flightsHtml}</div>`
+    : '<div class="muted-note">No flights listed.</div>';
+  infoEl.innerHTML = `<div class="simple">${blocks.join('')}</div>${flightSection}`;
+  if (statusEl) statusEl.textContent = '';
+}
+
+function openCalendarPairingDetail(pairingId){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-pairing-detail');
+  if (!pairingId || !mainEl || !detailEl) return;
+  calendarPairingId = pairingId;
+  renderCalendarPairingDetail(pairingId);
+  mainEl.classList.add('hidden');
+  detailEl.classList.remove('hidden');
+  document.getElementById('modern-calendar-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+}
+
+function closeCalendarPairingDetail(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-pairing-detail');
+  if (mainEl) mainEl.classList.remove('hidden');
+  if (detailEl) detailEl.classList.add('hidden');
+  calendarPairingId = null;
+}
+
+function refreshCalendarPairingDetail(){
+  if (!calendarPairingId) return;
+  renderCalendarPairingDetail(calendarPairingId);
+}
+
+function openCalendarDayDetail(dateKey){
+  const detailEl = document.getElementById('modern-calendar-day-detail');
+  if (!detailEl || !dateKey) return;
+  calendarDayDetailDateKey = dateKey;
+  renderCalendarDayDetail(dateKey);
+  document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-detail')?.classList.add('hidden');
+  detailEl.classList.remove('hidden');
+}
+
+function closeCalendarDayDetail(){
+  const detailEl = document.getElementById('modern-calendar-day-detail');
+  if (detailEl) detailEl.classList.add('hidden');
+  if (calendarPairingId){
+    document.getElementById('modern-calendar-pairing-detail')?.classList.remove('hidden');
+  } else {
+    document.getElementById('modern-calendar-main')?.classList.remove('hidden');
+  }
+  calendarDayDetailDateKey = null;
+}
+
+function refreshCalendarDayDetail(){
+  if (!calendarDayDetailDateKey) return;
+  renderCalendarDayDetail(calendarDayDetailDateKey);
 }
 
 function setCalendarEventCancellation(eventId, status){
@@ -5358,6 +5676,8 @@ function setCalendarEventCancellation(eventId, status){
     saveCalendarState();
     renderCalendar();
     refreshCalendarDetail();
+    refreshCalendarPairingDetail();
+    refreshCalendarDayDetail();
   }
 }
 
@@ -5391,6 +5711,7 @@ function initCalendar(){
           return;
         }
         calendarState.eventsByDate = eventsByDate;
+        normalizeCalendarState();
         calendarState.months = mergeCalendarMonths(calendarState.months, parsedMonths);
         ensureCalendarSelection();
         saveCalendarState();
@@ -5421,9 +5742,14 @@ function initCalendar(){
       const target = event.target;
       const eventButton = target instanceof Element ? target.closest('.calendar-event') : null;
       if (eventButton){
-        const wrapper = eventButton.closest('[data-event-id]');
-        const eventId = wrapper?.dataset?.eventId;
-        if (eventId) openCalendarDetail(eventId);
+        const wrapper = eventButton.closest('[data-date-key]');
+        const pairingId = wrapper?.dataset?.pairingId;
+        const dateKey = wrapper?.dataset?.dateKey;
+        if (pairingId){
+          openCalendarPairingDetail(pairingId);
+        } else if (dateKey){
+          openCalendarDayDetail(dateKey);
+        }
       }
     });
   }
@@ -5459,7 +5785,39 @@ function initCalendar(){
       saveCalendarState();
       renderCalendar();
       refreshCalendarDetail();
+      refreshCalendarPairingDetail();
+      refreshCalendarDayDetail();
       if (statusEl) statusEl.textContent = 'Block growth saved.';
+    });
+  }
+  const pairingBack = document.getElementById('calendar-pairing-back');
+  if (pairingBack){
+    pairingBack.addEventListener('click', () => {
+      closeCalendarPairingDetail();
+    });
+  }
+  const pairingDays = document.getElementById('calendar-pairing-days');
+  if (pairingDays){
+    pairingDays.addEventListener('click', (event) => {
+      const target = event.target;
+      const dayButton = target instanceof Element ? target.closest('[data-date-key]') : null;
+      const dateKey = dayButton?.dataset?.dateKey;
+      if (dateKey) openCalendarDayDetail(dateKey);
+    });
+  }
+  const dayBack = document.getElementById('calendar-day-detail-back');
+  if (dayBack){
+    dayBack.addEventListener('click', () => {
+      closeCalendarDayDetail();
+    });
+  }
+  const dayDetailInfo = document.getElementById('calendar-day-detail-info');
+  if (dayDetailInfo){
+    dayDetailInfo.addEventListener('click', (event) => {
+      const target = event.target;
+      const flightButton = target instanceof Element ? target.closest('[data-event-id]') : null;
+      const eventId = flightButton?.dataset?.eventId;
+      if (eventId) openCalendarDetail(eventId, 'day');
     });
   }
 }
