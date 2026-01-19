@@ -5405,8 +5405,43 @@ function getCalendarLayoverLocationLabel(day){
   return '';
 }
 
-function getCalendarPairingLabel(day){
-  const layoverLabel = getCalendarLayoverLocationLabel(day);
+function getCalendarPairingDaysForDay(day){
+  if (!day?.pairing?.pairingId) return [];
+  const pairingDays = Array.isArray(day.pairing.pairingDays) && day.pairing.pairingDays.length
+    ? day.pairing.pairingDays
+    : getCalendarPairingDays(day.pairing.pairingId);
+  return pairingDays;
+}
+
+function getCalendarPairingLayoverLabel(day, dateKey){
+  const directLabel = getCalendarLayoverLocationLabel(day);
+  if (directLabel) return directLabel;
+  const pairingDays = getCalendarPairingDaysForDay(day);
+  if (!pairingDays.length || !dateKey) return '';
+  const dayIndex = pairingDays.indexOf(dateKey);
+  if (dayIndex <= 0) return '';
+  for (let i = dayIndex - 1; i >= 0; i -= 1){
+    const priorDay = calendarState.eventsByDate?.[pairingDays[i]];
+    const priorLabel = getCalendarLayoverLocationLabel(priorDay);
+    if (priorLabel) return priorLabel;
+  }
+  return '';
+}
+
+function getCalendarPairingLabel(day, dateKey){
+  const pairingDays = getCalendarPairingDaysForDay(day);
+  if (dateKey && pairingDays.length && dateKey === pairingDays[pairingDays.length - 1]){
+    let endMinutes = Number.isFinite(day?.checkOutMinutes) ? day.checkOutMinutes : null;
+    if (!Number.isFinite(endMinutes) && dateKey){
+      const lastFlightMs = getCalendarDayLastFlightEndMs(day, dateKey);
+      const dayStartMs = getDateKeyStartMs(dateKey);
+      if (Number.isFinite(lastFlightMs) && Number.isFinite(dayStartMs)){
+        endMinutes = Math.round((lastFlightMs - dayStartMs) / 60000);
+      }
+    }
+    return Number.isFinite(endMinutes) ? `End ${formatMinutesToTime(endMinutes)}` : 'End';
+  }
+  const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
   if (layoverLabel) return layoverLabel;
   return '1 Day';
 }
@@ -6140,7 +6175,7 @@ function renderCalendar(){
       if (dayEvents.some(event => isDeadheadEvent(event))) eventBtn.classList.add('is-deadhead');
       const title = document.createElement('div');
       title.className = 'calendar-event-title';
-      title.textContent = getCalendarPairingLabel(dayData);
+      title.textContent = getCalendarPairingLabel(dayData, dateKey);
       const meta = document.createElement('div');
       meta.className = 'calendar-event-meta';
       const parts = [];
@@ -6414,7 +6449,7 @@ function renderCalendarDayDetail(dateKey){
     if (statusEl) statusEl.textContent = 'Day not found.';
     return;
   }
-  titleEl.textContent = `${getCalendarPairingLabel(day)} · ${formatCalendarDateLabel(dateKey)}`;
+  titleEl.textContent = `${getCalendarPairingLabel(day, dateKey)} · ${formatCalendarDateLabel(dateKey)}`;
   const blocks = [];
   const creditExtras = getCalendarDayCreditExtras(day);
   const dayCreditTotal = getCalendarDayCreditTotal(dateKey, day);
