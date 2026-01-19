@@ -4407,6 +4407,11 @@ function normalizeCalendarState(){
       day.layover.hotel = typeof day.layover.hotel === 'string' ? day.layover.hotel : '';
       if (!Number.isFinite(day.layover.durationMinutes)) day.layover.durationMinutes = null;
     }
+    if (!Array.isArray(day.creditExtras)){
+      day.creditExtras = [];
+    } else {
+      day.creditExtras = day.creditExtras.filter(extra => extra && typeof extra === 'object');
+    }
     if (day.pairing?.pairingId){
       day.events.forEach((event) => {
         if (!event.pairingId) event.pairingId = day.pairing.pairingId;
@@ -4714,6 +4719,42 @@ function getCalendarEventCreditTotal(event){
   const base = Number(event?.creditMinutes);
   const baseMinutes = Number.isFinite(base) ? base : 0;
   return baseMinutes + getCalendarEventBlockGrowth(event);
+}
+
+function getCalendarDayCreditExtras(day){
+  const extras = Array.isArray(day?.creditExtras) ? day.creditExtras : [];
+  return extras
+    .map((extra) => ({
+      type: String(extra?.type || '').trim(),
+      minutes: Number(extra?.minutes)
+    }))
+    .filter(extra => extra.type && Number.isFinite(extra.minutes));
+}
+
+function getCalendarDayCreditTotal(dateKey, day){
+  let totalMinutes = 0;
+  const events = day?.events || [];
+  events.forEach((event) => {
+    const creditTotal = getCalendarEventCreditTotal(event);
+    if (!isCreditCancelled(event) && creditTotal){
+      totalMinutes += creditTotal;
+    }
+  });
+  getCalendarDayCreditExtras(day).forEach((extra) => {
+    totalMinutes += extra.minutes;
+  });
+  return totalMinutes;
+}
+
+function getCalendarDayTafbTotal(dateKey, day){
+  let totalMinutes = 0;
+  const events = day?.events || [];
+  events.forEach((event) => {
+    if (!isTafbCancelled(event, dateKey) && Number.isFinite(event.dutyMinutes)){
+      totalMinutes += event.dutyMinutes;
+    }
+  });
+  return totalMinutes;
 }
 
 function getCalendarPairingKey(event){
@@ -5169,6 +5210,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
   let summaryCreditMinutes = null;
   let dutyMinutes = null;
   const events = [];
+  const creditExtras = [];
   const pairing = pairingContext
     ? {
       pairingId: pairingContext.pairingId,
@@ -5206,9 +5248,13 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
       const minutes = parseDurationToMinutes(tafbMatch[1]);
       if (Number.isFinite(minutes)) dutyMinutes = minutes;
     }
-    if (/^DPG\b/i.test(trimmed) && durations.length){
+    const extraMatch = trimmed.match(/^(DPG|THG)\b/i);
+    if (extraMatch && durations.length){
       const minutes = parseDurationToMinutes(durations[durations.length - 1]);
-      if (Number.isFinite(minutes) && !Number.isFinite(summaryCreditMinutes)) summaryCreditMinutes = minutes;
+      if (Number.isFinite(minutes)){
+        creditExtras.push({ type: extraMatch[1].toUpperCase(), minutes });
+        if (!Number.isFinite(summaryCreditMinutes)) summaryCreditMinutes = minutes;
+      }
     }
     const flightMatch = trimmed.match(/\b([A-Z]{2}(?:\/[A-Z]{2})?)\s+(\d{1,4})\b/);
     if (flightMatch){
@@ -5236,7 +5282,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     }
   });
 
-  if (!events.length && !layover.durationMinutes && !layover.hotel){
+  if (!events.length && !layover.durationMinutes && !layover.hotel && !creditExtras.length){
     return null;
   }
 
@@ -5253,7 +5299,12 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     });
   }
 
-  return { events, pairing, layover };
+  return {
+    events,
+    pairing,
+    layover,
+    creditExtras
+  };
 }
 
 function getCalendarMonthCandidates(){
@@ -5297,17 +5348,9 @@ function updateCalendarTotals(year, month){
   let eventCount = 0;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)) return;
-    day?.events?.forEach((event) => {
-      if (!event) return;
-      const creditTotal = getCalendarEventCreditTotal(event);
-      if (!isCreditCancelled(event) && creditTotal){
-        creditMinutes += creditTotal;
-      }
-      if (!isTafbCancelled(event, dateKey) && Number.isFinite(event.dutyMinutes)){
-        dutyMinutes += event.dutyMinutes;
-      }
-      eventCount += 1;
-    });
+    creditMinutes += getCalendarDayCreditTotal(dateKey, day);
+    dutyMinutes += getCalendarDayTafbTotal(dateKey, day);
+    eventCount += day?.events?.length || 0;
   });
   const creditEl = document.getElementById('modern-calendar-total-credit');
   const tafbEl = document.getElementById('modern-calendar-total-tafb');
@@ -5372,6 +5415,10 @@ function renderCalendar(){
     const dayEvents = dayData?.events || [];
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
+    dayCell.dataset.dateKey = dateKey;
+    if (dayData){
+      dayCell.classList.add('has-detail');
+    }
     const dayNumber = document.createElement('div');
     dayNumber.className = 'calendar-day-number';
     dayNumber.textContent = String(day);
@@ -5597,6 +5644,18 @@ function renderCalendarDayDetail(dateKey){
   }
   titleEl.textContent = `${getCalendarPairingLabel(day)} · ${formatCalendarDateLabel(dateKey)}`;
   const blocks = [];
+  const creditExtras = getCalendarDayCreditExtras(day);
+  const dayCreditTotal = getCalendarDayCreditTotal(dateKey, day);
+  const dayTafbTotal = getCalendarDayTafbTotal(dateKey, day);
+  if ((day?.events?.length || creditExtras.length) && Number.isFinite(dayCreditTotal)){
+    blocks.push(`<div class="block"><div class="label">Total credit</div><div class="value">${escapeHtml(formatDurationMinutes(dayCreditTotal))}</div></div>`);
+  }
+  if (dayTafbTotal){
+    blocks.push(`<div class="block"><div class="label">Total TAFB</div><div class="value">${escapeHtml(formatDurationMinutes(dayTafbTotal))}</div></div>`);
+  }
+  creditExtras.forEach((extra) => {
+    blocks.push(`<div class="block"><div class="label">${escapeHtml(extra.type)} credit</div><div class="value">${escapeHtml(formatDurationMinutes(extra.minutes))}</div></div>`);
+  });
   if (Number.isFinite(day.layover?.durationMinutes)){
     blocks.push(`<div class="block"><div class="label">Layover</div><div class="value">${escapeHtml(formatDurationMinutes(day.layover.durationMinutes))}</div></div>`);
   }
@@ -5608,7 +5667,10 @@ function renderCalendarDayDetail(dateKey){
     const label = event.label || event.identifiers?.join(', ') || 'Flight';
     const meta = route ? ` · ${route}` : '';
     const status = event.cancellation ? ` · ${event.cancellation}` : '';
-    return `<button class="calendar-day-flight" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(status)}</button>`;
+    const credit = getCalendarEventCreditTotal(event);
+    const creditText = credit ? ` · Credit ${formatDurationMinutes(credit)}` : '';
+    const tafbText = Number.isFinite(event.dutyMinutes) ? ` · TAFB ${formatDurationMinutes(event.dutyMinutes)}` : '';
+    return `<button class="calendar-day-flight" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(creditText)}${escapeHtml(tafbText)}${escapeHtml(status)}</button>`;
   }).join('');
   const flightSection = flightsHtml
     ? `<div class="calendar-day-flight-list">${flightsHtml}</div>`
@@ -5644,9 +5706,11 @@ function refreshCalendarPairingDetail(){
 
 function openCalendarDayDetail(dateKey){
   const detailEl = document.getElementById('modern-calendar-day-detail');
+  const mainEl = document.getElementById('modern-calendar-main');
   if (!detailEl || !dateKey) return;
   calendarDayDetailDateKey = dateKey;
   renderCalendarDayDetail(dateKey);
+  mainEl?.classList.add('hidden');
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   detailEl.classList.remove('hidden');
@@ -5756,6 +5820,12 @@ function initCalendar(){
         } else if (dateKey){
           openCalendarDayDetail(dateKey);
         }
+        return;
+      }
+      const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
+      const dateKey = dayCell?.dataset?.dateKey;
+      if (dateKey && calendarState.eventsByDate?.[dateKey]){
+        openCalendarDayDetail(dateKey);
       }
     });
   }
