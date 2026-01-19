@@ -600,6 +600,29 @@
       flex-direction:column;
       gap:8px;
     }
+    .calendar-day-detail-list{
+      display:grid;
+      gap:10px;
+    }
+    .calendar-day-detail-item{
+      border:1px solid #2a2f3b;
+      border-radius:12px;
+      padding:10px 12px;
+      background:#0f1218;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .calendar-day-detail-item-title{
+      font-size:13px;
+      font-weight:700;
+      letter-spacing:.2px;
+    }
+    .calendar-day-detail-item-meta{
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.4;
+    }
     .calendar-summary-header{
       display:flex;
       flex-wrap:wrap;
@@ -1301,11 +1324,11 @@
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
                 <div class="metric-card">
-                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines plus any block growth entered for a flight; CNX excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines plus any block growth entered for a flight; CNX excluded.</span></span></div>
+                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits include flight credit totals plus any DPG/THG lines and block growth; CNX excluded. Day detail uses the same logic for per-day totals."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits include flight credit totals plus any DPG/THG lines and block growth; CNX excluded. Day detail uses the same logic for per-day totals.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-credit">--</div>
                 </div>
                 <div class="metric-card">
-                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB comes from the pasted schedule summary line (fourth duration) or TRIP TAFB rows; CNX/CNX PP only excluded when the cancelled flight is the first/last leg of a pairing that has not already been cancelled."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB comes from the pasted schedule summary line (fourth duration) or TRIP TAFB rows; CNX/CNX PP only excluded when the cancelled flight is the first/last leg of a pairing that has not already been cancelled.</span></span></div>
+                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB comes from the pasted schedule summary line (fourth duration) or TRIP TAFB rows; CNX/CNX PP only excluded when the cancelled flight is the first/last leg of a pairing that has not already been cancelled. Day detail matches this per-day logic."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB comes from the pasted schedule summary line (fourth duration) or TRIP TAFB rows; CNX/CNX PP only excluded when the cancelled flight is the first/last leg of a pairing that has not already been cancelled. Day detail matches this per-day logic.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-tafb">--</div>
                 </div>
                 <div class="metric-card">
@@ -1340,6 +1363,15 @@
                   </div>
                 </div>
                 <div class="muted-note" id="calendar-detail-status" aria-live="polite"></div>
+              </div>
+            </div>
+            <div id="modern-calendar-day-detail" class="hidden">
+              <div class="calendar-detail">
+                <div class="calendar-detail-header">
+                  <button id="calendar-day-detail-back" class="btn btn-secondary" type="button">Back</button>
+                  <div class="calendar-detail-title" id="calendar-day-detail-title">Day</div>
+                </div>
+                <div id="calendar-day-detail-content"></div>
               </div>
             </div>
           </div>

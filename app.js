@@ -4354,6 +4354,7 @@ let calendarState = {
   selectedMonth: null
 };
 let calendarDetailEventId = null;
+let calendarDayDetailKey = null;
 
 function loadCalendarState(){
   try {
@@ -4382,6 +4383,17 @@ function normalizeCalendarState(){
   Object.values(calendarState.eventsByDate || {}).forEach((day) => {
     if (!day || typeof day !== 'object') return;
     if (!Array.isArray(day.events)) day.events = [];
+    if (!day.specialCredits || typeof day.specialCredits !== 'object'){
+      day.specialCredits = { dpgMinutes: 0, thgMinutes: 0, dpgIncludedInEventCredit: false };
+    } else {
+      if (!Number.isFinite(day.specialCredits.dpgMinutes)) day.specialCredits.dpgMinutes = 0;
+      if (!Number.isFinite(day.specialCredits.thgMinutes)) day.specialCredits.thgMinutes = 0;
+      if (typeof day.specialCredits.dpgIncludedInEventCredit !== 'boolean'){
+        day.specialCredits.dpgIncludedInEventCredit = false;
+      }
+    }
+    if (!Array.isArray(day.layoverNotes)) day.layoverNotes = [];
+    if (!Array.isArray(day.hotelNotes)) day.hotelNotes = [];
     day.events = day.events.map((event) => {
       if (!event || typeof event !== 'object') return null;
       if (!Array.isArray(event.identifiers)) event.identifiers = [];
@@ -4625,6 +4637,18 @@ function extractDurationFromLine(line, keywords){
   const match = line.match(regex);
   if (!match) return NaN;
   return parseDurationToMinutes(match[1]);
+}
+
+function extractLastDurationMinutes(line){
+  const durations = String(line || '').match(/\d{1,3}:\d{2}/g) || [];
+  if (!durations.length) return NaN;
+  return parseDurationToMinutes(durations[durations.length - 1]);
+}
+
+function addUniqueNote(list, note){
+  const trimmed = String(note || '').trim();
+  if (!trimmed) return;
+  if (!list.includes(trimmed)) list.push(trimmed);
 }
 
 function extractCancellationStatus(line){
@@ -4893,7 +4917,12 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
   const ensureDaySummary = (dateKey) => {
     if (!daySummaries[dateKey]){
       daySummaries[dateKey] = {
-        dutyMinutes: null
+        dutyMinutes: null,
+        dpgMinutes: 0,
+        thgMinutes: 0,
+        dpgIncludedInEventCredit: false,
+        layoverNotes: [],
+        hotelNotes: []
       };
     }
     return daySummaries[dateKey];
@@ -4936,6 +4965,25 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
     const columnData = splitRowIntoColumns(row, columns);
     const dateKey = parseDateFromLine(columnData.date, fallbackYear, currentMonth, currentYear);
     if (!dateKey) return;
+    const daySummary = ensureDaySummary(dateKey);
+    if (/\bDPG\b/i.test(rowText)){
+      const minutes = extractLastDurationMinutes(rowText);
+      if (Number.isFinite(minutes)){
+        daySummary.dpgMinutes += minutes;
+      }
+    }
+    if (/\bTHG\b/i.test(rowText)){
+      const minutes = extractLastDurationMinutes(rowText);
+      if (Number.isFinite(minutes)){
+        daySummary.thgMinutes += minutes;
+      }
+    }
+    if (/\blayover\b/i.test(rowText)){
+      addUniqueNote(daySummary.layoverNotes, rowText);
+    }
+    if (/\bhotel\b/i.test(rowText)){
+      addUniqueNote(daySummary.hotelNotes, rowText);
+    }
     const creditMinutes = extractCreditMinutesFromColumn(columnData.credit);
     if (!isValidFlightRow(columnData, rowText, creditMinutes)) return;
     const dayEvents = ensureDayEvents(dateKey);
@@ -4962,13 +5010,27 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
       if (tafbMatch){
         const minutes = parseDurationToMinutes(tafbMatch[1]);
         if (Number.isFinite(minutes)){
-          ensureDaySummary(dateKey).dutyMinutes = minutes;
+          daySummary.dutyMinutes = minutes;
         }
       }
     }
   });
   Object.entries(daySummaries).forEach(([dateKey, summary]) => {
-    const day = eventsByDate[dateKey];
+    let day = eventsByDate[dateKey];
+    if (!day){
+      const hasExtras = summary.dpgMinutes || summary.thgMinutes || summary.layoverNotes.length || summary.hotelNotes.length;
+      if (!hasExtras) return;
+      day = { events: [] };
+      eventsByDate[dateKey] = day;
+    }
+    if (!day.specialCredits || typeof day.specialCredits !== 'object'){
+      day.specialCredits = { dpgMinutes: 0, thgMinutes: 0, dpgIncludedInEventCredit: false };
+    }
+    day.specialCredits.dpgMinutes = summary.dpgMinutes;
+    day.specialCredits.thgMinutes = summary.thgMinutes;
+    day.specialCredits.dpgIncludedInEventCredit = summary.dpgIncludedInEventCredit === true;
+    day.layoverNotes = summary.layoverNotes;
+    day.hotelNotes = summary.hotelNotes;
     if (!day?.events?.length) return;
     const primary = day.events[0];
     if (primary && Number.isFinite(summary.dutyMinutes) && !Number.isFinite(primary.dutyMinutes)){
@@ -5056,6 +5118,11 @@ function buildCalendarEventFromText(dateKey, lines){
   if (!Array.isArray(lines) || !lines.length) return null;
   let summaryCreditMinutes = null;
   let dutyMinutes = null;
+  let dpgMinutes = 0;
+  let thgMinutes = 0;
+  let dpgIncludedInEventCredit = false;
+  const layoverNotes = [];
+  const hotelNotes = [];
   const events = [];
 
   lines.forEach((line) => {
@@ -5071,6 +5138,12 @@ function buildCalendarEventFromText(dateKey, lines){
         return;
       }
     }
+    if (/\blayover\b/i.test(trimmed)){
+      addUniqueNote(layoverNotes, trimmed);
+    }
+    if (/\bhotel\b/i.test(trimmed)){
+      addUniqueNote(hotelNotes, trimmed);
+    }
     const tafbMatch = trimmed.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
     if (tafbMatch){
       const minutes = parseDurationToMinutes(tafbMatch[1]);
@@ -5078,7 +5151,21 @@ function buildCalendarEventFromText(dateKey, lines){
     }
     if (/^DPG\b/i.test(trimmed) && durations.length){
       const minutes = parseDurationToMinutes(durations[durations.length - 1]);
-      if (Number.isFinite(minutes) && !Number.isFinite(summaryCreditMinutes)) summaryCreditMinutes = minutes;
+      if (Number.isFinite(minutes)){
+        dpgMinutes += minutes;
+        if (!Number.isFinite(summaryCreditMinutes)){
+          summaryCreditMinutes = minutes;
+          dpgIncludedInEventCredit = true;
+        }
+      }
+      return;
+    }
+    if (/^THG\b/i.test(trimmed) && durations.length){
+      const minutes = parseDurationToMinutes(durations[durations.length - 1]);
+      if (Number.isFinite(minutes)){
+        thgMinutes += minutes;
+      }
+      return;
     }
     const flightMatch = trimmed.match(/\b([A-Z]{2}(?:\/[A-Z]{2})?)\s+(\d{1,4})\b/);
     if (flightMatch){
@@ -5106,18 +5193,29 @@ function buildCalendarEventFromText(dateKey, lines){
   });
 
   if (!events.length){
-    return null;
+    const hasExtras = dpgMinutes || thgMinutes || layoverNotes.length || hotelNotes.length || Number.isFinite(dutyMinutes) || Number.isFinite(summaryCreditMinutes);
+    if (!hasExtras) return null;
+    dpgIncludedInEventCredit = false;
   }
 
   const hasAnyCredits = events.some(event => Number.isFinite(event.creditMinutes));
-  if (!hasAnyCredits && Number.isFinite(summaryCreditMinutes)){
+  if (events.length && !hasAnyCredits && Number.isFinite(summaryCreditMinutes)){
     events[0].creditMinutes = summaryCreditMinutes;
   }
-  if (Number.isFinite(dutyMinutes)){
+  if (events.length && Number.isFinite(dutyMinutes)){
     events[0].dutyMinutes = dutyMinutes;
   }
 
-  return { events };
+  return {
+    events,
+    specialCredits: {
+      dpgMinutes,
+      thgMinutes,
+      dpgIncludedInEventCredit
+    },
+    layoverNotes,
+    hotelNotes
+  };
 }
 
 function getCalendarMonthCandidates(){
@@ -5161,6 +5259,11 @@ function updateCalendarTotals(year, month){
   let eventCount = 0;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)) return;
+    const specialCredits = day?.specialCredits || {};
+    const dpgMinutes = Number(specialCredits.dpgMinutes) || 0;
+    const thgMinutes = Number(specialCredits.thgMinutes) || 0;
+    const dpgIncluded = specialCredits.dpgIncludedInEventCredit === true;
+    creditMinutes += (dpgIncluded ? 0 : dpgMinutes) + thgMinutes;
     day?.events?.forEach((event) => {
       if (!event) return;
       const creditTotal = getCalendarEventCreditTotal(event);
@@ -5235,6 +5338,7 @@ function renderCalendar(){
     const dayEvents = calendarState.eventsByDate?.[dateKey]?.events || [];
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
+    dayCell.dataset.dateKey = dateKey;
     const dayNumber = document.createElement('div');
     dayNumber.className = 'calendar-day-number';
     dayNumber.textContent = String(day);
@@ -5268,6 +5372,7 @@ function renderCalendar(){
     gridEl.appendChild(dayCell);
   }
   refreshCalendarDetail();
+  refreshCalendarDayDetail();
 }
 
 function findCalendarEventById(eventId){
@@ -5315,15 +5420,98 @@ function renderCalendarDetail(event, dateKey){
   if (statusEl) statusEl.textContent = '';
 }
 
+function getCalendarDaySpecialCredits(day){
+  const special = day?.specialCredits || {};
+  const dpgMinutes = Number(special.dpgMinutes) || 0;
+  const thgMinutes = Number(special.thgMinutes) || 0;
+  const dpgIncluded = special.dpgIncludedInEventCredit === true;
+  return { dpgMinutes, thgMinutes, dpgIncluded };
+}
+
+function renderCalendarDayDetail(dateKey){
+  const titleEl = document.getElementById('calendar-day-detail-title');
+  const contentEl = document.getElementById('calendar-day-detail-content');
+  if (!titleEl || !contentEl) return;
+  const label = formatCalendarDateLabel(dateKey);
+  titleEl.textContent = label;
+  const day = calendarState.eventsByDate?.[dateKey];
+  if (!day){
+    contentEl.innerHTML = '<div class="muted-note">No schedule loaded for this day.</div>';
+    return;
+  }
+  const events = Array.isArray(day.events) ? day.events : [];
+  const summaryBlocks = [];
+  const addSummaryBlock = (blockLabel, value) => {
+    summaryBlocks.push(`<div class="block"><div class="label">${escapeHtml(blockLabel)}</div><div class="value">${escapeHtml(value)}</div></div>`);
+  };
+  let creditMinutes = 0;
+  let tafbMinutes = 0;
+  events.forEach((event) => {
+    if (!event) return;
+    const creditTotal = getCalendarEventCreditTotal(event);
+    if (!isCreditCancelled(event) && creditTotal){
+      creditMinutes += creditTotal;
+    }
+    if (!isTafbCancelled(event, dateKey) && Number.isFinite(event.dutyMinutes)){
+      tafbMinutes += event.dutyMinutes;
+    }
+  });
+  const { dpgMinutes, thgMinutes, dpgIncluded } = getCalendarDaySpecialCredits(day);
+  const dpgTotal = dpgIncluded ? 0 : dpgMinutes;
+  const totalCredit = creditMinutes + dpgTotal + thgMinutes;
+  addSummaryBlock('Total credit', formatDurationMinutes(totalCredit));
+  addSummaryBlock('Flight credit', formatDurationMinutes(creditMinutes));
+  addSummaryBlock('DPG', formatDurationMinutes(dpgMinutes));
+  addSummaryBlock('THG', formatDurationMinutes(thgMinutes));
+  addSummaryBlock('TAFB', formatDurationMinutes(tafbMinutes));
+  addSummaryBlock('Events', String(events.length));
+  const scheduleItems = events.map((event) => {
+    const title = getCalendarFlightLabel(event);
+    const status = event.cancellation ? ` (${event.cancellation})` : '';
+    const legsLabel = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '';
+    const details = [];
+    if (event.identifiers?.length) details.push(event.identifiers.join(', '));
+    if (legsLabel) details.push(legsLabel);
+    const creditLabel = Number.isFinite(event.creditMinutes) ? formatDurationMinutes(event.creditMinutes) : '—';
+    details.push(`Credit ${creditLabel}`);
+    const growthMinutes = getCalendarEventBlockGrowth(event);
+    if (growthMinutes) details.push(`Growth ${formatDurationMinutes(growthMinutes)}`);
+    details.push(`Total ${formatDurationMinutes(getCalendarEventCreditTotal(event))}`);
+    if (Number.isFinite(event.dutyMinutes)) details.push(`TAFB ${formatDurationMinutes(event.dutyMinutes)}`);
+    return `<div class="calendar-day-detail-item"><div class="calendar-day-detail-item-title">${escapeHtml(`${title}${status}`)}</div><div class="calendar-day-detail-item-meta">${escapeHtml(details.join(' · ') || '—')}</div></div>`;
+  });
+  const layoverNotes = Array.isArray(day.layoverNotes) ? day.layoverNotes : [];
+  const hotelNotes = Array.isArray(day.hotelNotes) ? day.hotelNotes : [];
+  const buildNotes = (labelText, notes) => {
+    if (!notes.length) return '';
+    const items = notes.map(note => `<div class="calendar-day-detail-item"><div class="calendar-day-detail-item-meta">${escapeHtml(note)}</div></div>`).join('');
+    return `<div class="sectionTitle">${escapeHtml(labelText)}</div><div class="calendar-day-detail-list">${items}</div>`;
+  };
+  const scheduleHtml = scheduleItems.length
+    ? `<div class="calendar-day-detail-list">${scheduleItems.join('')}</div>`
+    : '<div class="muted-note">No events on this day.</div>';
+  contentEl.innerHTML = `
+    <div class="sectionTitle">Summary</div>
+    <div class="simple">${summaryBlocks.join('')}</div>
+    <div class="sectionTitle">Schedule</div>
+    ${scheduleHtml}
+    ${buildNotes('Layover info', layoverNotes)}
+    ${buildNotes('Hotel info', hotelNotes)}
+  `;
+}
+
 function openCalendarDetail(eventId){
   const mainEl = document.getElementById('modern-calendar-main');
   const detailEl = document.getElementById('modern-calendar-detail');
+  const dayDetailEl = document.getElementById('modern-calendar-day-detail');
   const entry = findCalendarEventById(eventId);
   if (!entry || !mainEl || !detailEl) return;
   calendarDetailEventId = eventId;
   renderCalendarDetail(entry.event, entry.dateKey);
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
+  if (dayDetailEl) dayDetailEl.classList.add('hidden');
+  calendarDayDetailKey = null;
 }
 
 function closeCalendarDetail(){
@@ -5334,6 +5522,27 @@ function closeCalendarDetail(){
   calendarDetailEventId = null;
 }
 
+function openCalendarDayDetail(dateKey){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-day-detail');
+  const eventDetailEl = document.getElementById('modern-calendar-detail');
+  if (!mainEl || !detailEl) return;
+  calendarDayDetailKey = dateKey;
+  renderCalendarDayDetail(dateKey);
+  mainEl.classList.add('hidden');
+  detailEl.classList.remove('hidden');
+  if (eventDetailEl) eventDetailEl.classList.add('hidden');
+  calendarDetailEventId = null;
+}
+
+function closeCalendarDayDetail(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-day-detail');
+  if (mainEl) mainEl.classList.remove('hidden');
+  if (detailEl) detailEl.classList.add('hidden');
+  calendarDayDetailKey = null;
+}
+
 function refreshCalendarDetail(){
   if (!calendarDetailEventId) return;
   const entry = findCalendarEventById(calendarDetailEventId);
@@ -5342,6 +5551,11 @@ function refreshCalendarDetail(){
     return;
   }
   renderCalendarDetail(entry.event, entry.dateKey);
+}
+
+function refreshCalendarDayDetail(){
+  if (!calendarDayDetailKey) return;
+  renderCalendarDayDetail(calendarDayDetailKey);
 }
 
 function setCalendarEventCancellation(eventId, status){
@@ -5424,13 +5638,23 @@ function initCalendar(){
         const wrapper = eventButton.closest('[data-event-id]');
         const eventId = wrapper?.dataset?.eventId;
         if (eventId) openCalendarDetail(eventId);
+        return;
       }
+      const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
+      const dateKey = dayCell?.dataset?.dateKey;
+      if (dateKey) openCalendarDayDetail(dateKey);
     });
   }
   const detailBack = document.getElementById('calendar-detail-back');
   if (detailBack){
     detailBack.addEventListener('click', () => {
       closeCalendarDetail();
+    });
+  }
+  const dayDetailBack = document.getElementById('calendar-day-detail-back');
+  if (dayDetailBack){
+    dayDetailBack.addEventListener('click', () => {
+      closeCalendarDayDetail();
     });
   }
   const detailCancelButtons = document.querySelectorAll('[data-calendar-cancel]');
