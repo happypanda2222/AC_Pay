@@ -4774,10 +4774,8 @@ async function syncCalendarToCloud(){
     throw new Error('Missing calendar sync endpoint.');
   }
   const payload = {
-    calendarState: {
-      eventsByDate: calendarState.eventsByDate,
-      months: calendarState.months
-    },
+    eventsByDate: calendarState.eventsByDate,
+    months: calendarState.months,
     selectedMonth: calendarState.selectedMonth
   };
   let response;
