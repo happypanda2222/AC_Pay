@@ -701,8 +701,15 @@
     }
     .calendar-sync-actions{
       display:flex;
-      gap:8px;
-      flex-wrap:wrap;
+      align-items:center;
+      gap:10px;
+      flex-wrap:nowrap;
+      margin-top:8px;
+    }
+    .calendar-sync-actions .btn{
+      flex:1 1 0;
+      min-width:0;
+      white-space:nowrap;
     }
     .calendar-sync-settings{
       margin-top:10px;
@@ -735,8 +742,8 @@
       .calendar-day{min-height:96px;padding:6px}
       .calendar-event{font-size:10px;padding:5px 6px}
       .calendar-event-meta{font-size:9px}
-      .calendar-month-actions,
-      .calendar-sync-actions{flex-direction:column;align-items:stretch}
+      .calendar-month-actions{flex-direction:column;align-items:stretch}
+      .calendar-sync-actions{flex-direction:row;align-items:center;gap:6px}
     }
   </style>
 </head>
@@ -1388,10 +1395,6 @@
                 <div class="calendar-month-actions">
                   <button id="modern-calendar-delete-month" class="btn btn-secondary" type="button">Delete month</button>
                 </div>
-                <div class="calendar-sync-actions">
-                  <button id="modern-calendar-sync-now" class="btn" type="button">Sync Now</button>
-                  <button id="modern-calendar-pull" class="btn btn-secondary" type="button">Pull from Cloud</button>
-                </div>
               </div>
             </div>
             <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
@@ -1424,6 +1427,10 @@
                   <div class="metric-value" id="modern-calendar-total-events">--</div>
                 </div>
               </div>
+            </div>
+            <div class="calendar-sync-actions">
+              <button id="modern-calendar-sync-now" class="btn" type="button">Sync Now</button>
+              <button id="modern-calendar-pull" class="btn btn-secondary" type="button">Pull from Cloud</button>
             </div>
             <div id="modern-calendar-main">
               <div class="calendar-grid" id="modern-calendar-grid"></div>
