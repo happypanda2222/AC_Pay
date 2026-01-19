@@ -1363,11 +1363,11 @@
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
                 <div class="metric-card">
-                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits roll up to day totals (shown in day detail) and pairing totals from the pasted schedule summary line (third duration), the last duration on flight lines, plus block growth and DPG/THG extras; CNX excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits roll up to day totals (shown in day detail) and pairing totals from the pasted schedule summary line (third duration), the last duration on flight lines, plus block growth and DPG/THG extras; CNX excluded.</span></span></div>
+                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits roll up to day totals (shown in day detail) and pairing totals from the pasted schedule summary line (third duration), plus block growth and DPG/THG extras; CNX excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits roll up to day totals (shown in day detail) and pairing totals from the pasted schedule summary line (third duration), plus block growth and DPG/THG extras; CNX excluded.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-credit">--</div>
                 </div>
                 <div class="metric-card">
-                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals come from the pasted schedule summary line (fourth duration) or TRIP TAFB rows and roll up to day detail totals; CNX/CNX PP only excluded when the cancelled flight is the first/last leg of a pairing that has not already been cancelled."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals come from the pasted schedule summary line (fourth duration) or TRIP TAFB rows and roll up to day detail totals; CNX/CNX PP only excluded when the cancelled flight is the first/last leg of a pairing that has not already been cancelled.</span></span></div>
+                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight; TRIP TAFB rows are used as fallback."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight; TRIP TAFB rows are used as fallback.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-tafb">--</div>
                 </div>
                 <div class="metric-card">
@@ -1410,6 +1410,7 @@
                   <button id="calendar-pairing-back" class="btn btn-secondary" type="button">Back</button>
                   <div class="calendar-detail-title" id="calendar-pairing-title">Pairing</div>
                 </div>
+                <div class="calendar-detail-grid" id="calendar-pairing-summary"></div>
                 <div id="calendar-pairing-days"></div>
                 <div class="muted-note" id="calendar-pairing-status" aria-live="polite"></div>
               </div>
