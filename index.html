@@ -597,6 +597,11 @@
       grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
       gap:12px;
     }
+    .calendar-block-growth-list{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
     .calendar-detail-cancel{
       display:flex;
       flex-direction:column;
@@ -1477,6 +1482,16 @@
                   </div>
                 </div>
                 <div class="muted-note" id="calendar-credit-detail-status" aria-live="polite"></div>
+              </div>
+            </div>
+            <div id="modern-calendar-block-growth-detail" class="hidden">
+              <div class="calendar-detail">
+                <div class="calendar-detail-header">
+                  <button id="calendar-block-growth-detail-back" class="btn btn-secondary" type="button">Back</button>
+                  <div class="calendar-detail-title" id="calendar-block-growth-detail-title">Block growth detail</div>
+                </div>
+                <div class="calendar-block-growth-list" id="calendar-block-growth-detail-info"></div>
+                <div class="muted-note" id="calendar-block-growth-detail-status" aria-live="polite"></div>
               </div>
             </div>
             <div class="calendar-sync-footer">
