@@ -4389,7 +4389,11 @@ function normalizeCalendarState(){
       if (!event || typeof event !== 'object') return null;
       if (!Array.isArray(event.identifiers)) event.identifiers = [];
       if (!Array.isArray(event.legs)) event.legs = [];
+      if (!Array.isArray(event.segments)) event.segments = [];
       if (!Number.isFinite(event.blockGrowthMinutes)) event.blockGrowthMinutes = 0;
+      if (!Number.isFinite(event.blockMinutes)) event.blockMinutes = null;
+      if (!Number.isFinite(event.departureMinutes)) event.departureMinutes = null;
+      if (!Number.isFinite(event.arrivalMinutes)) event.arrivalMinutes = null;
       return event;
     }).filter(Boolean);
     if (!day.pairing || typeof day.pairing !== 'object'){
@@ -4407,6 +4411,11 @@ function normalizeCalendarState(){
       day.layover.hotel = typeof day.layover.hotel === 'string' ? day.layover.hotel : '';
       if (!Number.isFinite(day.layover.durationMinutes)) day.layover.durationMinutes = null;
     }
+    if (!Number.isFinite(day.dpgMinutes)) day.dpgMinutes = null;
+    if (!Number.isFinite(day.thgMinutes)) day.thgMinutes = null;
+    if (!Number.isFinite(day.tafbMinutes)) day.tafbMinutes = null;
+    if (!Number.isFinite(day.checkInMinutes)) day.checkInMinutes = null;
+    if (!Number.isFinite(day.checkOutMinutes)) day.checkOutMinutes = null;
     if (!Array.isArray(day.creditExtras)){
       day.creditExtras = [];
     } else {
@@ -4418,7 +4427,7 @@ function normalizeCalendarState(){
       });
     }
   });
-  hydrateCalendarPairingDays();
+  updateCalendarPairingMetrics(calendarState.eventsByDate);
 }
 
 function inferCalendarDayPairing(day, dateKey){
@@ -4451,6 +4460,110 @@ function hydrateCalendarPairingDays(targetEventsByDate = calendarState.eventsByD
       if (day?.pairing && day.pairing.pairingId === pairingId){
         day.pairing.pairingDays = sortedDays;
       }
+    });
+  });
+}
+
+function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsByDate){
+  hydrateCalendarPairingDays(targetEventsByDate);
+  const pairingMap = new Map();
+  Object.entries(targetEventsByDate || {}).forEach(([dateKey, day]) => {
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    if (!pairingId) return;
+    if (!pairingMap.has(pairingId)){
+      pairingMap.set(pairingId, {
+        pairingId,
+        days: []
+      });
+    }
+    pairingMap.get(pairingId).days.push(dateKey);
+  });
+  pairingMap.forEach((pairing) => {
+    pairing.days.sort();
+    const dayEntries = pairing.days.map(dateKey => ({
+      dateKey,
+      day: targetEventsByDate?.[dateKey]
+    })).filter(entry => entry.day);
+    const firstCheckIn = dayEntries.find(entry => Number.isFinite(entry.day?.checkInMinutes));
+    const lastCheckOut = [...dayEntries].reverse().find(entry => Number.isFinite(entry.day?.checkOutMinutes));
+    const checkInMs = firstCheckIn
+      ? getDateKeyStartMs(firstCheckIn.dateKey) + (firstCheckIn.day.checkInMinutes * 60000)
+      : null;
+    const checkOutMs = lastCheckOut
+      ? getDateKeyStartMs(lastCheckOut.dateKey) + (lastCheckOut.day.checkOutMinutes * 60000)
+      : null;
+    const flightEntries = [];
+    dayEntries.forEach(({ dateKey, day }) => {
+      (day?.events || []).forEach((event) => {
+        const timing = getCalendarEventTiming(event, dateKey);
+        if (!timing) return;
+        flightEntries.push({
+          event,
+          dateKey,
+          startMs: timing.startMs,
+          endMs: timing.endMs,
+          departureMinutes: timing.departureMinutes,
+          arrivalMinutes: timing.arrivalMinutes
+        });
+      });
+    });
+    flightEntries.sort((a, b) => a.startMs - b.startMs);
+    const firstFlight = flightEntries[0] || null;
+    const lastFlight = flightEntries[flightEntries.length - 1] || null;
+    const firstActive = flightEntries.find(entry => !isCancelledEvent(entry.event)) || null;
+    const lastActive = [...flightEntries].reverse().find(entry => !isCancelledEvent(entry.event)) || null;
+    let pairingCheckInMs = null;
+    let pairingCheckOutMs = null;
+    if (firstFlight){
+      if (isCancelledEvent(firstFlight.event)){
+        if (firstActive && Number.isFinite(firstActive.departureMinutes)){
+          pairingCheckInMs = firstActive.startMs - (75 * 60000);
+        } else if (Number.isFinite(firstFlight.departureMinutes)){
+          pairingCheckInMs = firstFlight.startMs - (75 * 60000);
+        }
+      } else if (Number.isFinite(checkInMs)){
+        pairingCheckInMs = checkInMs;
+      } else if (Number.isFinite(firstFlight.departureMinutes)){
+        pairingCheckInMs = firstFlight.startMs - (75 * 60000);
+      }
+    } else if (Number.isFinite(checkInMs)){
+      pairingCheckInMs = checkInMs;
+    }
+    if (lastFlight){
+      if (isCancelledEvent(lastFlight.event)){
+        if (lastActive && Number.isFinite(lastActive.arrivalMinutes)){
+          pairingCheckOutMs = lastActive.endMs + (15 * 60000);
+        } else if (Number.isFinite(lastFlight.arrivalMinutes)){
+          pairingCheckOutMs = lastFlight.endMs + (15 * 60000);
+        }
+      } else if (Number.isFinite(checkOutMs)){
+        pairingCheckOutMs = checkOutMs;
+      } else if (Number.isFinite(lastFlight.arrivalMinutes)){
+        pairingCheckOutMs = lastFlight.endMs + (15 * 60000);
+      }
+    } else if (Number.isFinite(checkOutMs)){
+      pairingCheckOutMs = checkOutMs;
+    }
+    let tafbMinutes = null;
+    if (Number.isFinite(pairingCheckInMs) && Number.isFinite(pairingCheckOutMs)){
+      const diffMinutes = Math.round((pairingCheckOutMs - pairingCheckInMs) / 60000);
+      tafbMinutes = diffMinutes >= 0 ? diffMinutes : null;
+    }
+    if (!Number.isFinite(tafbMinutes)){
+      const fallback = dayEntries.find(entry => Number.isFinite(entry.day?.tafbMinutes));
+      if (fallback) tafbMinutes = fallback.day.tafbMinutes;
+    }
+    let dpgTotal = 0;
+    let thgTotal = 0;
+    dayEntries.forEach(({ day }) => {
+      if (Number.isFinite(day?.dpgMinutes)) dpgTotal += day.dpgMinutes;
+      if (Number.isFinite(day?.thgMinutes)) thgTotal += day.thgMinutes;
+    });
+    dayEntries.forEach(({ day }) => {
+      if (!day?.pairing) return;
+      day.pairing.tafbMinutes = Number.isFinite(tafbMinutes) ? tafbMinutes : null;
+      day.pairing.dpgMinutes = dpgTotal || null;
+      day.pairing.thgMinutes = thgTotal || null;
     });
   });
 }
@@ -4723,12 +4836,26 @@ function getCalendarEventCreditTotal(event){
 
 function getCalendarDayCreditExtras(day){
   const extras = Array.isArray(day?.creditExtras) ? day.creditExtras : [];
-  return extras
+  const dpgMinutes = Number(day?.dpgMinutes);
+  const thgMinutes = Number(day?.thgMinutes);
+  const normalized = extras
     .map((extra) => ({
       type: String(extra?.type || '').trim(),
       minutes: Number(extra?.minutes)
     }))
-    .filter(extra => extra.type && Number.isFinite(extra.minutes));
+    .filter(extra => extra.type && Number.isFinite(extra.minutes))
+    .filter((extra) => {
+      if (extra.type.toUpperCase() === 'DPG' && Number.isFinite(dpgMinutes)) return false;
+      if (extra.type.toUpperCase() === 'THG' && Number.isFinite(thgMinutes)) return false;
+      return true;
+    });
+  if (Number.isFinite(dpgMinutes)){
+    normalized.push({ type: 'DPG', minutes: dpgMinutes });
+  }
+  if (Number.isFinite(thgMinutes)){
+    normalized.push({ type: 'THG', minutes: thgMinutes });
+  }
+  return normalized;
 }
 
 function getCalendarDayCreditTotal(dateKey, day){
@@ -4747,6 +4874,8 @@ function getCalendarDayCreditTotal(dateKey, day){
 }
 
 function getCalendarDayTafbTotal(dateKey, day){
+  const pairingTafb = getCalendarPairingTafbMinutes(day, dateKey);
+  if (Number.isFinite(pairingTafb)) return pairingTafb;
   let totalMinutes = 0;
   const events = day?.events || [];
   events.forEach((event) => {
@@ -4754,6 +4883,9 @@ function getCalendarDayTafbTotal(dateKey, day){
       totalMinutes += event.dutyMinutes;
     }
   });
+  if (Number.isFinite(day?.tafbMinutes)){
+    totalMinutes += day.tafbMinutes;
+  }
   return totalMinutes;
 }
 
@@ -4805,6 +4937,106 @@ function isTafbCancelled(event, dateKey){
     return dayEvents.some(otherEvent => Boolean(otherEvent?.cancellation));
   });
   return !otherCancelled;
+}
+
+function parseScheduleClock(value){
+  if (!value) return NaN;
+  const trimmed = String(value).trim();
+  if (!trimmed) return NaN;
+  if (trimmed.includes(':')){
+    return parseTimeToMinutes(trimmed);
+  }
+  if (/^\d{3,4}$/.test(trimmed)){
+    const padded = trimmed.padStart(4, '0');
+    const hh = Number(padded.slice(0, 2));
+    const mm = Number(padded.slice(2));
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return NaN;
+    return (hh * 60) + mm;
+  }
+  return NaN;
+}
+
+function extractFirstClockFromLine(line){
+  const match = String(line || '').match(/\b(\d{1,2}:\d{2}|\d{3,4})\b/);
+  if (!match) return NaN;
+  return parseScheduleClock(match[1]);
+}
+
+function parseFlightSegmentsFromLine(line){
+  const segments = [];
+  const regex = /([A-Z]{3})\s+(\d{1,2}:\d{2}|\d{3,4})\s+([A-Z]{3})\s+(\d{1,2}:\d{2}|\d{3,4})/g;
+  let match;
+  while ((match = regex.exec(line)) !== null){
+    const departureMinutes = parseScheduleClock(match[2]);
+    const arrivalMinutes = parseScheduleClock(match[4]);
+    segments.push({
+      from: match[1],
+      to: match[3],
+      departureMinutes: Number.isFinite(departureMinutes) ? departureMinutes : null,
+      arrivalMinutes: Number.isFinite(arrivalMinutes) ? arrivalMinutes : null
+    });
+  }
+  return segments;
+}
+
+function parseBlockMinutesFromLine(line){
+  const endMatch = String(line || '').match(/(\d{1,2}:\d{2})\s*$/);
+  if (endMatch){
+    const minutes = parseDurationToMinutes(endMatch[1]);
+    if (Number.isFinite(minutes)) return minutes;
+  }
+  const durations = String(line || '').match(/\b\d{1,2}:\d{2}\b/g) || [];
+  if (!durations.length) return NaN;
+  return parseDurationToMinutes(durations[durations.length - 1]);
+}
+
+function getDateKeyStartMs(dateKey){
+  if (!dateKey) return NaN;
+  const [year, month, day] = String(dateKey).split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return NaN;
+  return new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
+}
+
+function getCalendarEventTiming(event, dateKey){
+  const dayStartMs = getDateKeyStartMs(dateKey);
+  if (!Number.isFinite(dayStartMs)) return null;
+  const departureMinutes = Number(event?.departureMinutes);
+  const arrivalMinutes = Number(event?.arrivalMinutes);
+  if (!Number.isFinite(departureMinutes) && !Number.isFinite(arrivalMinutes)) return null;
+  const startMinutes = Number.isFinite(departureMinutes) ? departureMinutes : arrivalMinutes;
+  let endMinutes = Number.isFinite(arrivalMinutes) ? arrivalMinutes : departureMinutes;
+  if (Number.isFinite(departureMinutes) && Number.isFinite(arrivalMinutes) && arrivalMinutes < departureMinutes){
+    endMinutes = arrivalMinutes + 1440;
+  }
+  return {
+    startMs: dayStartMs + (startMinutes * 60000),
+    endMs: dayStartMs + (endMinutes * 60000),
+    departureMinutes: Number.isFinite(departureMinutes) ? departureMinutes : null,
+    arrivalMinutes: Number.isFinite(arrivalMinutes) ? arrivalMinutes : null
+  };
+}
+
+function getCalendarPairingTafbMinutes(day, dateKey){
+  const pairing = day?.pairing;
+  if (!pairing || !Number.isFinite(pairing.tafbMinutes)) return null;
+  const pairingDays = Array.isArray(pairing.pairingDays) ? pairing.pairingDays : [];
+  if (!pairingDays.length) return null;
+  const firstDay = pairingDays[0];
+  if (dateKey !== firstDay) return 0;
+  return pairing.tafbMinutes;
+}
+
+function getCalendarDayTafbDisplayMinutes(day, dateKey){
+  const pairing = day?.pairing;
+  if (pairing && Number.isFinite(pairing.tafbMinutes)){
+    const pairingDays = Array.isArray(pairing.pairingDays) ? pairing.pairingDays : [];
+    if (pairingDays.length && dateKey !== pairingDays[0]) return null;
+    return pairing.tafbMinutes;
+  }
+  if (Number.isFinite(day?.tafbMinutes)) return day.tafbMinutes;
+  const events = day?.events || [];
+  const dutyEvent = events.find(event => Number.isFinite(event?.dutyMinutes));
+  return dutyEvent ? dutyEvent.dutyMinutes : null;
 }
 
 function getCalendarPairingLabel(day){
@@ -5122,7 +5354,8 @@ function parsePastedScheduleText(text){
     pairingCounter += 1;
     currentPairing = {
       pairingId,
-      pairingNumber: pairingNumber || ''
+      pairingNumber: pairingNumber || '',
+      pairingDays: []
     };
     return currentPairing;
   };
@@ -5147,6 +5380,9 @@ function parsePastedScheduleText(text){
     if (!currentDateKey) return;
     const dayEvent = buildCalendarEventFromText(currentDateKey, currentLines, currentPairing);
     if (dayEvent){
+      if (currentPairing?.pairingDays){
+        currentPairing.pairingDays.push(currentDateKey);
+      }
       eventsByDate[currentDateKey] = dayEvent;
     }
   };
@@ -5197,7 +5433,7 @@ function parsePastedScheduleText(text){
     }
   });
   finalizeDay();
-  hydrateCalendarPairingDays(eventsByDate);
+  updateCalendarPairingMetrics(eventsByDate);
 
   return {
     eventsByDate,
@@ -5209,13 +5445,18 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
   if (!Array.isArray(lines) || !lines.length) return null;
   let summaryCreditMinutes = null;
   let dutyMinutes = null;
+  let dayTafbMinutes = null;
+  let checkInMinutes = null;
+  let checkOutMinutes = null;
+  let dpgMinutes = null;
+  let thgMinutes = null;
   const events = [];
   const creditExtras = [];
   const pairing = pairingContext
     ? {
       pairingId: pairingContext.pairingId,
       pairingNumber: pairingContext.pairingNumber || '',
-      pairingDays: []
+      pairingDays: pairingContext.pairingDays || []
     }
     : null;
   const layover = { hotel: '', durationMinutes: null };
@@ -5224,6 +5465,14 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     const trimmed = String(line || '').trim();
     if (!trimmed) return;
     const durations = trimmed.match(/\d{1,2}:\d{2}/g) || [];
+    if (/\bC\/I\b/i.test(trimmed)){
+      const minutes = extractFirstClockFromLine(trimmed);
+      if (Number.isFinite(minutes)) checkInMinutes = minutes;
+    }
+    if (/\bC\/O\b/i.test(trimmed)){
+      const minutes = extractFirstClockFromLine(trimmed);
+      if (Number.isFinite(minutes)) checkOutMinutes = minutes;
+    }
     if (/LAYOV/i.test(trimmed)){
       const layoverMinutes = durations.length ? parseDurationToMinutes(durations[durations.length - 1]) : NaN;
       if (Number.isFinite(layoverMinutes)) layover.durationMinutes = layoverMinutes;
@@ -5246,14 +5495,28 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     const tafbMatch = trimmed.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
     if (tafbMatch){
       const minutes = parseDurationToMinutes(tafbMatch[1]);
-      if (Number.isFinite(minutes)) dutyMinutes = minutes;
+      if (Number.isFinite(minutes)){
+        dutyMinutes = minutes;
+        dayTafbMinutes = minutes;
+      }
+      const thgMatch = trimmed.match(/\bTHG\s+(\d{1,3}:\d{2})/i);
+      if (thgMatch){
+        const thgValue = parseDurationToMinutes(thgMatch[1]);
+        if (Number.isFinite(thgValue)){
+          thgMinutes = Number.isFinite(thgMinutes) ? thgMinutes + thgValue : thgValue;
+        }
+      }
     }
     const extraMatch = trimmed.match(/^(DPG|THG)\b/i);
     if (extraMatch && durations.length){
       const minutes = parseDurationToMinutes(durations[durations.length - 1]);
       if (Number.isFinite(minutes)){
-        creditExtras.push({ type: extraMatch[1].toUpperCase(), minutes });
         if (!Number.isFinite(summaryCreditMinutes)) summaryCreditMinutes = minutes;
+        if (extraMatch[1].toUpperCase() === 'DPG'){
+          dpgMinutes = Number.isFinite(dpgMinutes) ? dpgMinutes + minutes : minutes;
+        } else {
+          thgMinutes = Number.isFinite(thgMinutes) ? thgMinutes + minutes : minutes;
+        }
       }
     }
     const flightMatch = trimmed.match(/\b([A-Z]{2}(?:\/[A-Z]{2})?)\s+(\d{1,4})\b/);
@@ -5262,9 +5525,14 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
       const primaryPrefix = rawPrefix.split('/')[0];
       if (!hasAllowedCalendarFlightPrefix(primaryPrefix)) return;
       const identifier = `${rawPrefix} ${flightMatch[2]}`;
+      const segments = parseFlightSegmentsFromLine(trimmed);
       const airports = trimmed.match(/\b[A-Z]{3}\b/g) || [];
-      const legs = airports.length >= 2 ? [{ from: airports[0], to: airports[1] }] : [];
-      const minutes = durations.length ? parseDurationToMinutes(durations[durations.length - 1]) : NaN;
+      const legs = segments.length
+        ? segments.map(segment => ({ from: segment.from, to: segment.to }))
+        : (airports.length >= 2 ? [{ from: airports[0], to: airports[1] }] : []);
+      const blockMinutes = parseBlockMinutesFromLine(trimmed);
+      const departureMinutes = segments.length ? segments[0].departureMinutes : null;
+      const arrivalMinutes = segments.length ? segments[segments.length - 1].arrivalMinutes : null;
       const cancellationStatus = extractCancellationStatus(trimmed);
       const eventId = `${dateKey}-${events.length}-${identifier.replace(/\s+/g, '')}`;
       events.push({
@@ -5273,8 +5541,12 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
         label: identifier,
         identifiers: [identifier],
         dutyMinutes: null,
-        creditMinutes: Number.isFinite(minutes) ? minutes : null,
+        creditMinutes: null,
+        blockMinutes: Number.isFinite(blockMinutes) ? blockMinutes : null,
         legs,
+        segments,
+        departureMinutes: Number.isFinite(departureMinutes) ? departureMinutes : null,
+        arrivalMinutes: Number.isFinite(arrivalMinutes) ? arrivalMinutes : null,
         cancellation: cancellationStatus || null,
         blockGrowthMinutes: 0,
         pairingId: pairing?.pairingId || ''
@@ -5282,7 +5554,15 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     }
   });
 
-  if (!events.length && !layover.durationMinutes && !layover.hotel && !creditExtras.length){
+  if (!events.length
+    && !layover.durationMinutes
+    && !layover.hotel
+    && !creditExtras.length
+    && !Number.isFinite(checkInMinutes)
+    && !Number.isFinite(checkOutMinutes)
+    && !Number.isFinite(dpgMinutes)
+    && !Number.isFinite(thgMinutes)
+    && !Number.isFinite(dayTafbMinutes)){
     return null;
   }
 
@@ -5290,9 +5570,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
   if (!hasAnyCredits && Number.isFinite(summaryCreditMinutes) && events.length){
     events[0].creditMinutes = summaryCreditMinutes;
   }
-  if (Number.isFinite(dutyMinutes) && events.length){
-    events[0].dutyMinutes = dutyMinutes;
-  }
+  if (Number.isFinite(dutyMinutes)) dayTafbMinutes = dutyMinutes;
   if (pairing?.pairingId){
     events.forEach((event) => {
       event.pairingId = pairing.pairingId;
@@ -5303,7 +5581,12 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     events,
     pairing,
     layover,
-    creditExtras
+    creditExtras,
+    dpgMinutes: Number.isFinite(dpgMinutes) ? dpgMinutes : null,
+    thgMinutes: Number.isFinite(thgMinutes) ? thgMinutes : null,
+    tafbMinutes: Number.isFinite(dayTafbMinutes) ? dayTafbMinutes : null,
+    checkInMinutes: Number.isFinite(checkInMinutes) ? checkInMinutes : null,
+    checkOutMinutes: Number.isFinite(checkOutMinutes) ? checkOutMinutes : null
   };
 }
 
@@ -5483,14 +5766,28 @@ function renderCalendarDetail(event, dateKey){
     if (!value) return;
     blocks.push(`<div class="block"><div class="label">${escapeHtml(blockLabel)}</div><div class="value">${escapeHtml(value)}</div></div>`);
   };
+  const segmentsLabel = Array.isArray(event?.segments) && event.segments.length
+    ? event.segments
+      .map((segment) => {
+        const dep = Number.isFinite(segment.departureMinutes) ? formatMinutesToTime(segment.departureMinutes) : '--:--';
+        const arr = Number.isFinite(segment.arrivalMinutes) ? formatMinutesToTime(segment.arrivalMinutes) : '--:--';
+        return escapeHtml(`${segment.from} ${dep} → ${segment.to} ${arr}`);
+      })
+      .join('<br>')
+    : '';
+  const tafbMinutes = getCalendarDayTafbDisplayMinutes(calendarState.eventsByDate?.[dateKey], dateKey);
   addBlock('Date', formatCalendarDateLabel(dateKey));
   addBlock('Identifiers', event.identifiers?.length ? event.identifiers.join(', ') : '—');
   const legsLabel = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '—';
   addBlock('Route', legsLabel);
+  if (segmentsLabel){
+    blocks.push(`<div class="block"><div class="label">${escapeHtml('Segments')}</div><div class="value">${segmentsLabel}</div></div>`);
+  }
+  addBlock('Block time', Number.isFinite(event.blockMinutes) ? formatDurationMinutes(event.blockMinutes) : '—');
   addBlock('Credit', Number.isFinite(event.creditMinutes) ? formatDurationMinutes(event.creditMinutes) : '—');
   addBlock('Block growth', formatDurationMinutes(getCalendarEventBlockGrowth(event)));
   addBlock('Total credit', formatDurationMinutes(getCalendarEventCreditTotal(event)));
-  addBlock('TAFB', Number.isFinite(event.dutyMinutes) ? formatDurationMinutes(event.dutyMinutes) : '—');
+  addBlock('TAFB', Number.isFinite(tafbMinutes) ? formatDurationMinutes(tafbMinutes) : '—');
   addBlock('Status', event.cancellation ? event.cancellation : 'Scheduled');
   infoEl.innerHTML = `<div class="simple">${blocks.join('')}</div>`;
   if (growthInput){
@@ -5527,21 +5824,65 @@ function buildCalendarPairingIndex(){
   return pairingMap;
 }
 
+function getCalendarPairingSummary(pairingId){
+  const pairingDays = getCalendarPairingDays(pairingId);
+  let creditMinutes = 0;
+  let dpgMinutes = 0;
+  let thgMinutes = 0;
+  let tafbMinutes = null;
+  pairingDays.forEach((dateKey) => {
+    const day = calendarState.eventsByDate?.[dateKey];
+    if (!day) return;
+    creditMinutes += getCalendarDayCreditTotal(dateKey, day);
+    if (Number.isFinite(day.dpgMinutes)) dpgMinutes += day.dpgMinutes;
+    if (Number.isFinite(day.thgMinutes)) thgMinutes += day.thgMinutes;
+    if (!Number.isFinite(tafbMinutes)){
+      const pairingTafb = getCalendarPairingTafbMinutes(day, dateKey);
+      if (Number.isFinite(pairingTafb)) tafbMinutes = pairingTafb;
+    }
+  });
+  return {
+    creditMinutes,
+    tafbMinutes: Number.isFinite(tafbMinutes) ? tafbMinutes : null,
+    dpgMinutes: dpgMinutes || null,
+    thgMinutes: thgMinutes || null
+  };
+}
+
 function renderCalendarPairingDetail(pairingId){
   const titleEl = document.getElementById('calendar-pairing-title');
   const daysEl = document.getElementById('calendar-pairing-days');
   const statusEl = document.getElementById('calendar-pairing-status');
+  const summaryEl = document.getElementById('calendar-pairing-summary');
   if (!titleEl || !daysEl) return;
   const pairingMap = buildCalendarPairingIndex();
   const pairing = pairingMap.get(pairingId);
   if (!pairing){
     titleEl.textContent = 'Pairing';
     daysEl.innerHTML = '';
+    if (summaryEl) summaryEl.innerHTML = '';
     if (statusEl) statusEl.textContent = 'Pairing not found.';
     return;
   }
   const label = pairing.pairingNumber || pairing.pairingId;
   titleEl.textContent = label ? `Pairing ${label}` : 'Pairing';
+  if (summaryEl){
+    const summary = getCalendarPairingSummary(pairingId);
+    const blocks = [];
+    if (Number.isFinite(summary.creditMinutes)){
+      blocks.push(`<div class="block"><div class="label">Total credit</div><div class="value">${escapeHtml(formatDurationMinutes(summary.creditMinutes))}</div></div>`);
+    }
+    if (Number.isFinite(summary.tafbMinutes)){
+      blocks.push(`<div class="block"><div class="label">Total TAFB</div><div class="value">${escapeHtml(formatDurationMinutes(summary.tafbMinutes))}</div></div>`);
+    }
+    if (Number.isFinite(summary.dpgMinutes)){
+      blocks.push(`<div class="block"><div class="label">DPG credit</div><div class="value">${escapeHtml(formatDurationMinutes(summary.dpgMinutes))}</div></div>`);
+    }
+    if (Number.isFinite(summary.thgMinutes)){
+      blocks.push(`<div class="block"><div class="label">THG credit</div><div class="value">${escapeHtml(formatDurationMinutes(summary.thgMinutes))}</div></div>`);
+    }
+    summaryEl.innerHTML = blocks.join('');
+  }
   daysEl.innerHTML = '';
   pairing.days.forEach((dateKey) => {
     const day = calendarState.eventsByDate?.[dateKey];
@@ -5669,8 +6010,9 @@ function renderCalendarDayDetail(dateKey){
     const status = event.cancellation ? ` · ${event.cancellation}` : '';
     const credit = getCalendarEventCreditTotal(event);
     const creditText = credit ? ` · Credit ${formatDurationMinutes(credit)}` : '';
+    const blockText = Number.isFinite(event.blockMinutes) ? ` · Block ${formatDurationMinutes(event.blockMinutes)}` : '';
     const tafbText = Number.isFinite(event.dutyMinutes) ? ` · TAFB ${formatDurationMinutes(event.dutyMinutes)}` : '';
-    return `<button class="calendar-day-flight" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(creditText)}${escapeHtml(tafbText)}${escapeHtml(status)}</button>`;
+    return `<button class="calendar-day-flight" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(creditText)}${escapeHtml(blockText)}${escapeHtml(tafbText)}${escapeHtml(status)}</button>`;
   }).join('');
   const flightSection = flightsHtml
     ? `<div class="calendar-day-flight-list">${flightsHtml}</div>`
@@ -5743,6 +6085,7 @@ function setCalendarEventCancellation(eventId, status){
     });
   });
   if (updated){
+    updateCalendarPairingMetrics(calendarState.eventsByDate);
     saveCalendarState();
     renderCalendar();
     refreshCalendarDetail();
