@@ -5384,25 +5384,35 @@ function getCalendarDayTafbDisplayMinutes(day, dateKey){
   return dutyEvent ? dutyEvent.dutyMinutes : null;
 }
 
-function getCalendarLayoverLocationLabel(day){
+function getCalendarLastFlightArrivalCode(day, dateKey){
+  const events = Array.isArray(day?.events) ? day.events : [];
+  let lastEvent = null;
+  let lastEventEndMs = null;
+  events.forEach((event) => {
+    const timing = getCalendarEventTiming(event, dateKey);
+    if (!timing || !Number.isFinite(timing.endMs)) return;
+    if (!Number.isFinite(lastEventEndMs) || timing.endMs > lastEventEndMs){
+      lastEventEndMs = timing.endMs;
+      lastEvent = event;
+    }
+  });
+  if (!lastEvent && events.length){
+    lastEvent = events[events.length - 1];
+  }
+  const legs = Array.isArray(lastEvent?.legs) ? lastEvent.legs : [];
+  for (let i = legs.length - 1; i >= 0; i -= 1){
+    const to = String(legs[i]?.to || '').trim().toUpperCase();
+    if (/^[A-Z]{3}$/.test(to)) return to;
+  }
+  return '';
+}
+
+function getCalendarLayoverLocationLabel(day, dateKey){
   const layover = day?.layover;
   const hasLayover = Boolean(layover)
     && (Number.isFinite(layover.durationMinutes) || (typeof layover.hotel === 'string' && layover.hotel.trim()));
   if (!hasLayover) return '';
-  const hotel = typeof layover?.hotel === 'string' ? layover.hotel.trim() : '';
-  if (hotel){
-    const codeMatch = hotel.toUpperCase().match(/\b[A-Z]{3}\b/);
-    if (codeMatch) return codeMatch[0];
-  }
-  const events = Array.isArray(day?.events) ? day.events : [];
-  for (let i = events.length - 1; i >= 0; i -= 1){
-    const legs = events[i]?.legs || [];
-    for (let j = legs.length - 1; j >= 0; j -= 1){
-      const to = String(legs[j]?.to || '').trim().toUpperCase();
-      if (/^[A-Z]{3}$/.test(to)) return to;
-    }
-  }
-  return '';
+  return getCalendarLastFlightArrivalCode(day, dateKey);
 }
 
 function getCalendarPairingDaysForDay(day){
@@ -5414,15 +5424,16 @@ function getCalendarPairingDaysForDay(day){
 }
 
 function getCalendarPairingLayoverLabel(day, dateKey){
-  const directLabel = getCalendarLayoverLocationLabel(day);
+  const directLabel = getCalendarLayoverLocationLabel(day, dateKey);
   if (directLabel) return directLabel;
   const pairingDays = getCalendarPairingDaysForDay(day);
   if (!pairingDays.length || !dateKey) return '';
   const dayIndex = pairingDays.indexOf(dateKey);
   if (dayIndex <= 0) return '';
   for (let i = dayIndex - 1; i >= 0; i -= 1){
-    const priorDay = calendarState.eventsByDate?.[pairingDays[i]];
-    const priorLabel = getCalendarLayoverLocationLabel(priorDay);
+    const priorDateKey = pairingDays[i];
+    const priorDay = calendarState.eventsByDate?.[priorDateKey];
+    const priorLabel = getCalendarLayoverLocationLabel(priorDay, priorDateKey);
     if (priorLabel) return priorLabel;
   }
   return '';
@@ -6361,7 +6372,7 @@ function renderCalendarPairingDetail(pairingId){
     if (Number.isFinite(day.layover?.durationMinutes)){
       layoverParts.push(formatDurationMinutes(day.layover.durationMinutes));
     }
-    const layoverLabel = getCalendarLayoverLocationLabel(day);
+    const layoverLabel = getCalendarLayoverLocationLabel(day, dateKey);
     if (layoverLabel){
       layoverParts.push(layoverLabel);
     }
