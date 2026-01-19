@@ -5066,18 +5066,25 @@ function extractIdentifiersFromLine(line){
   if (pairingMatch){
     identifiers.push(`Pairing ${pairingMatch[1]}`);
   }
-  const flightMatches = line.match(/\b[A-Z]{2}\d{1,4}\b/g) || [];
+  const flightMatches = line.match(/\b(?:DH\/)?[A-Z]{2}\d{1,4}\b/g) || [];
   flightMatches.forEach((match) => {
-    const prefix = match.slice(0, 2);
-    if (!hasAllowedCalendarFlightPrefix(prefix)) return;
-    if (!identifiers.includes(match)) identifiers.push(match);
+    const compactMatch = match.toUpperCase().replace(/\s+/g, '');
+    const deadhead = compactMatch.startsWith(`${DEADHEAD_PREFIX}/`);
+    const normalized = deadhead ? compactMatch.slice(3) : compactMatch;
+    const prefix = normalized.slice(0, 2);
+    const number = normalized.slice(2);
+    if (!hasAllowedCalendarFlightPrefix(deadhead ? `${DEADHEAD_PREFIX}/${prefix}` : prefix)) return;
+    const identifier = buildCalendarIdentifier(prefix, number, deadhead);
+    if (identifier && !identifiers.includes(identifier)) identifiers.push(identifier);
   });
-  const spacedFlightMatches = [...line.matchAll(/\b([A-Z]{2})\s+(\d{1,4})\b/g)];
+  const spacedFlightMatches = [...line.matchAll(/\b(?:DH\/)?([A-Z]{2})\s+(\d{1,4})\b/g)];
   spacedFlightMatches.forEach((match) => {
+    const raw = match[0].toUpperCase();
+    const deadhead = raw.startsWith(`${DEADHEAD_PREFIX}/`);
     const code = match[1];
     const number = match[2];
-    if (!hasAllowedCalendarFlightPrefix(code)) return;
-    const combined = `${code}${number}`;
+    if (!hasAllowedCalendarFlightPrefix(deadhead ? `${DEADHEAD_PREFIX}/${code}` : code)) return;
+    const combined = buildCalendarIdentifier(code, number, deadhead);
     const hours = Number(number.slice(0, 2));
     const minutes = Number(number.slice(2));
     const looksLikeTime = Number.isFinite(hours) && Number.isFinite(minutes) && hours <= 23 && minutes <= 59;
@@ -5193,10 +5200,41 @@ const AIRPORT_CODE_EXCLUSIONS = new Set([
   'GMT', 'LCL', 'LAY', 'PAIR', 'PAIRING', 'STA', 'STD', 'TAFB', 'TIME', 'TRIP',
   'UTC', 'CNX', 'POS'
 ]);
+const DEADHEAD_PREFIX = 'DH';
 const CALENDAR_FLIGHT_PREFIXES = new Set(['RV', 'AC', 'QK']);
 
 function hasAllowedCalendarFlightPrefix(prefix){
-  return CALENDAR_FLIGHT_PREFIXES.has(String(prefix || '').toUpperCase());
+  const { prefix: normalizedPrefix } = parseCalendarFlightPrefix(prefix);
+  return CALENDAR_FLIGHT_PREFIXES.has(normalizedPrefix);
+}
+
+function parseCalendarFlightPrefix(rawPrefix){
+  const normalized = String(rawPrefix || '').toUpperCase();
+  if (normalized.startsWith(`${DEADHEAD_PREFIX}/`)){
+    return { prefix: normalized.slice(3), deadhead: true };
+  }
+  return { prefix: normalized, deadhead: false };
+}
+
+function buildCalendarIdentifier(prefix, number, deadhead = false){
+  const normalizedPrefix = String(prefix || '').toUpperCase();
+  const normalizedNumber = String(number || '');
+  if (!normalizedPrefix || !normalizedNumber) return '';
+  if (deadhead){
+    return `${DEADHEAD_PREFIX}/${normalizedPrefix} ${normalizedNumber}`;
+  }
+  return `${normalizedPrefix}${normalizedNumber}`;
+}
+
+function isDeadheadIdentifier(identifier){
+  const compact = String(identifier || '').toUpperCase().replace(/\s+/g, '');
+  return compact.startsWith(`${DEADHEAD_PREFIX}/`);
+}
+
+function isDeadheadEvent(event){
+  if (event?.deadhead) return true;
+  const identifiers = Array.isArray(event?.identifiers) ? event.identifiers : [];
+  return identifiers.some(isDeadheadIdentifier);
 }
 
 function extractAirportCodesFromLine(line){
@@ -5206,7 +5244,10 @@ function extractAirportCodesFromLine(line){
 
 function hasFlightNumberToken(line){
   const identifiers = extractIdentifiersFromLine(String(line || ''));
-  return identifiers.some(id => /^[A-Z]{2}\d{1,4}$/.test(id));
+  return identifiers.some((id) => {
+    const compact = String(id || '').replace(/\s+/g, '');
+    return /^(?:DH\/)?[A-Z]{2}\d{1,4}$/.test(compact);
+  });
 }
 
 function isAuxiliaryRowText(rowText){
@@ -5293,6 +5334,7 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
       date: dateKey,
       label,
       identifiers,
+      deadhead: identifiers.some(isDeadheadIdentifier),
       dutyMinutes: null,
       creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
       legs,
@@ -5522,9 +5564,9 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     const flightMatch = trimmed.match(/\b([A-Z]{2}(?:\/[A-Z]{2})?)\s+(\d{1,4})\b/);
     if (flightMatch){
       const rawPrefix = flightMatch[1];
-      const primaryPrefix = rawPrefix.split('/')[0];
-      if (!hasAllowedCalendarFlightPrefix(primaryPrefix)) return;
-      const identifier = `${rawPrefix} ${flightMatch[2]}`;
+      if (!hasAllowedCalendarFlightPrefix(rawPrefix)) return;
+      const prefixInfo = parseCalendarFlightPrefix(rawPrefix);
+      const identifier = buildCalendarIdentifier(prefixInfo.prefix, flightMatch[2], prefixInfo.deadhead);
       const segments = parseFlightSegmentsFromLine(trimmed);
       const airports = trimmed.match(/\b[A-Z]{3}\b/g) || [];
       const legs = segments.length
@@ -5540,6 +5582,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
         date: dateKey,
         label: identifier,
         identifiers: [identifier],
+        deadhead: prefixInfo.deadhead,
         dutyMinutes: null,
         creditMinutes: null,
         blockMinutes: Number.isFinite(blockMinutes) ? blockMinutes : null,
@@ -5715,6 +5758,7 @@ function renderCalendar(){
       eventBtn.type = 'button';
       eventBtn.className = 'calendar-event';
       if (dayEvents.some(event => isCancelledEvent(event))) eventBtn.classList.add('is-cnx');
+      if (dayEvents.some(event => isDeadheadEvent(event))) eventBtn.classList.add('is-deadhead');
       const title = document.createElement('div');
       title.className = 'calendar-event-title';
       title.textContent = getCalendarPairingLabel(dayData);
@@ -5917,6 +5961,7 @@ function renderCalendarPairingDetail(pairingId){
       day.events.forEach((event) => {
         const flight = document.createElement('div');
         flight.className = 'calendar-pairing-flight';
+        if (isDeadheadEvent(event)) flight.classList.add('is-deadhead');
         flight.textContent = event.label || event.identifiers?.join(', ') || 'Flight';
         flights.appendChild(flight);
       });
@@ -6012,7 +6057,8 @@ function renderCalendarDayDetail(dateKey){
     const creditText = credit ? ` · Credit ${formatDurationMinutes(credit)}` : '';
     const blockText = Number.isFinite(event.blockMinutes) ? ` · Block ${formatDurationMinutes(event.blockMinutes)}` : '';
     const tafbText = Number.isFinite(event.dutyMinutes) ? ` · TAFB ${formatDurationMinutes(event.dutyMinutes)}` : '';
-    return `<button class="calendar-day-flight" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(creditText)}${escapeHtml(blockText)}${escapeHtml(tafbText)}${escapeHtml(status)}</button>`;
+    const deadheadClass = isDeadheadEvent(event) ? ' is-deadhead' : '';
+    return `<button class="calendar-day-flight${deadheadClass}" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(creditText)}${escapeHtml(blockText)}${escapeHtml(tafbText)}${escapeHtml(status)}</button>`;
   }).join('');
   const flightSection = flightsHtml
     ? `<div class="calendar-day-flight-list">${flightsHtml}</div>`
