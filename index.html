@@ -37,6 +37,8 @@
     .tabs{display:flex;gap:8px;margin:0 0 10px 0;flex-wrap:wrap}
     .tabbtn{flex:1 1 140px;background:#0f1218;border:1px solid #2a2f3b;color:#c9d2de;padding:12px 10px;border-radius:10px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
     .tabbtn.active{background:var(--acc);color:white;border-color:transparent}
+    .tabs.subtabs .tabbtn{background:#151c2b;border-color:#2d3a52;color:#d4deee}
+    .tabs.subtabs .tabbtn.active{background:#2c3e5b;color:#ffffff;border-color:transparent}
     .info-icon{
       display:inline-flex;
       align-items:center;
@@ -222,6 +224,12 @@
       color:white;
       border-color:transparent;
       box-shadow:0 6px 18px rgba(255,59,48,.35);
+    }
+    body.easter-red .tabs.subtabs .tabbtn.active{
+      background:#c9342d;
+      color:white;
+      border-color:transparent;
+      box-shadow:0 6px 18px rgba(201,52,45,.35);
     }
     body.easter-red #modern-esop,
     body.easter-red #modern-mon-esop,
@@ -697,6 +705,11 @@
       grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
       gap:10px;
     }
+    .calendar-post-actions{
+      display:grid;
+      gap:10px;
+      margin-top:12px;
+    }
     .calendar-month-controls{
       display:flex;
       flex-direction:column;
@@ -740,6 +753,14 @@
     .calendar-parse{
       align-self:end;
     }
+    .calendar-delete-actions{
+      display:flex;
+      justify-content:flex-end;
+      margin-top:8px;
+    }
+    .calendar-delete-actions .btn{
+      width:100%;
+    }
     @media(max-width:600px){
       .calendar-grid{grid-template-columns:repeat(7,minmax(64px,1fr));gap:6px}
       .calendar-day{min-height:96px;padding:6px}
@@ -747,6 +768,7 @@
       .calendar-event-meta{font-size:9px}
       .calendar-month-actions{flex-direction:column;align-items:stretch}
       .calendar-sync-actions{flex-direction:row;align-items:center;gap:6px}
+      .calendar-parse{justify-self:stretch}
     }
     @media(max-width:430px){
       .calendar-grid{grid-template-columns:repeat(7,minmax(44px,1fr));gap:4px}
@@ -777,7 +799,7 @@
         </div>
 
         <div id="modern-pay">
-          <div class="tabs" id="modern-pay-tabs">
+          <div class="tabs subtabs" id="modern-pay-tabs">
             <button class="tabbtn active" data-tab="modern-annual" id="tabbtn-modern-annual">Annual</button>
             <button class="tabbtn" data-tab="modern-monthly" id="tabbtn-modern-monthly">Monthly</button>
             <button class="tabbtn" data-tab="modern-vo" id="tabbtn-modern-vo">VO</button>
@@ -1136,7 +1158,7 @@
         </div>
 
         <div id="modern-duty-rest" class="modern-tab hidden">
-          <div class="tabs" id="modern-duty-rest-tabs">
+          <div class="tabs subtabs" id="modern-duty-rest-tabs">
             <button class="tabbtn active" data-tab="modern-duty" id="tabbtn-modern-duty">Duty</button>
             <button class="tabbtn" data-tab="modern-rest" id="tabbtn-modern-rest">Rest</button>
             <button class="tabbtn" data-tab="modern-time-converter" id="tabbtn-modern-time-converter">Time Converter</button>
@@ -1393,19 +1415,9 @@
           <div class="modern-panel">
             <h3>Calendar</h3>
             <div class="calendar-toolbar">
-              <div class="calendar-paste">
-                <label for="modern-calendar-text">Paste schedule</label>
-                <textarea id="modern-calendar-text" rows="6" placeholder="Paste schedule text"></textarea>
-              </div>
-              <div class="calendar-parse">
-                <button id="modern-calendar-parse" class="btn-primary" type="button">Parse schedule</button>
-              </div>
               <div class="calendar-month-controls">
                 <label>Month</label>
                 <select id="modern-calendar-month"></select>
-                <div class="calendar-month-actions">
-                  <button id="modern-calendar-delete-month" class="btn btn-secondary" type="button">Delete month</button>
-                </div>
               </div>
             </div>
             <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
@@ -1426,12 +1438,24 @@
                 </div>
               </div>
             </div>
+            <div id="modern-calendar-main">
+              <div class="calendar-grid" id="modern-calendar-grid"></div>
+            </div>
+            <div class="calendar-post-actions">
+              <div class="calendar-paste">
+                <label for="modern-calendar-text">Paste schedule</label>
+                <textarea id="modern-calendar-text" rows="6" placeholder="Paste schedule text"></textarea>
+              </div>
+              <div class="calendar-parse">
+                <button id="modern-calendar-parse" class="btn-primary" type="button">Parse schedule</button>
+              </div>
+            </div>
             <div class="calendar-sync-actions">
               <button id="modern-calendar-sync-now" class="btn" type="button">Sync Now</button>
               <button id="modern-calendar-pull" class="btn btn-secondary" type="button">Pull from Cloud</button>
             </div>
-            <div id="modern-calendar-main">
-              <div class="calendar-grid" id="modern-calendar-grid"></div>
+            <div class="calendar-delete-actions">
+              <button id="modern-calendar-delete-month" class="btn btn-secondary" type="button">Delete month</button>
             </div>
             <div id="modern-calendar-detail" class="hidden">
               <div class="calendar-detail">
@@ -1531,7 +1555,7 @@
         </div>
 
         <div id="modern-fin" class="modern-tab hidden">
-          <div class="tabs" id="modern-fin-tabs">
+          <div class="tabs subtabs" id="modern-fin-tabs">
             <button class="tabbtn active" data-tab="modern-fin-qrh" id="tabbtn-modern-fin-qrh">Fin QRH</button>
             <button class="tabbtn" data-tab="modern-flight-number" id="tabbtn-modern-flight-number">Flight #</button>
           </div>
