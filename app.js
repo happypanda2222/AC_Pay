@@ -4688,6 +4688,29 @@ function getCalendarSyncToken(){
   return '';
 }
 
+function getCalendarSyncTimestampLabel(){
+  try {
+    const stored = localStorage.getItem(CALENDAR_SYNC_LAST_KEY);
+    if (!stored) return null;
+    const date = new Date(stored);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleString();
+  } catch (err){
+    console.warn('Failed to read calendar sync timestamp', err);
+  }
+  return null;
+}
+
+function setCalendarStatus(message = ''){
+  const statusEl = document.getElementById('modern-calendar-status');
+  if (!statusEl) return;
+  const parts = [];
+  if (message) parts.push(message);
+  const lastSync = getCalendarSyncTimestampLabel();
+  parts.push(`Last sync: ${lastSync || 'not yet'}`);
+  statusEl.textContent = parts.join(' · ');
+}
+
 async function syncCalendarToCloud(){
   if (navigator?.onLine === false){
     queueCalendarSyncRetry();
@@ -5872,7 +5895,6 @@ function renderCalendar(){
   const monthSelect = document.getElementById('modern-calendar-month');
   const headerEl = document.getElementById('modern-calendar-summary-header');
   const gridEl = document.getElementById('modern-calendar-grid');
-  const statusEl = document.getElementById('modern-calendar-status');
   if (!monthSelect || !gridEl || !headerEl) return;
   calendarState.months = mergeCalendarMonths(calendarState.months, buildCalendarMonths(calendarState.eventsByDate));
   ensureCalendarSelection();
@@ -5890,7 +5912,7 @@ function renderCalendar(){
   if (!Number.isFinite(year) || !Number.isFinite(month)){
     gridEl.innerHTML = '';
     updateCalendarTotals(0, 0);
-    if (statusEl) statusEl.textContent = 'No schedule loaded.';
+    setCalendarStatus('No schedule loaded.');
     return;
   }
   const events = [];
@@ -5900,9 +5922,7 @@ function renderCalendar(){
     }
   });
   updateCalendarTotals(year, month);
-  if (statusEl){
-    statusEl.textContent = events.length ? '' : 'No schedule loaded.';
-  }
+  setCalendarStatus(events.length ? '' : 'No schedule loaded.');
   const firstOfMonth = new Date(year, month - 1, 1);
   const daysInMonth = new Date(year, month, 0).getDate();
   gridEl.innerHTML = '';
@@ -6332,23 +6352,19 @@ function initCalendar(){
       const label = formatCalendarMonthLabel(calendarState.selectedMonth);
       if (!window.confirm(`Delete ${label} from the calendar?`)) return;
       deleteCalendarMonth(calendarState.selectedMonth);
-      const statusEl = document.getElementById('modern-calendar-status');
-      if (statusEl){
-        statusEl.textContent = `Deleted ${label}.`;
-      }
+      setCalendarStatus(`Deleted ${label}.`);
     });
   }
   const pasteInput = document.getElementById('modern-calendar-text');
   const parseButton = document.getElementById('modern-calendar-parse');
   if (parseButton && pasteInput){
     parseButton.addEventListener('click', () => {
-      const statusEl = document.getElementById('modern-calendar-status');
-      if (statusEl) statusEl.textContent = 'Parsing schedule…';
+      setCalendarStatus('Parsing schedule…');
       try {
         const { eventsByDate, statusMessage } = parsePastedScheduleText(pasteInput.value);
         const parsedMonths = buildCalendarMonths(eventsByDate);
         if (!parsedMonths.length){
-          if (statusEl) statusEl.textContent = statusMessage || 'No calendar events found in pasted schedule.';
+          setCalendarStatus(statusMessage || 'No calendar events found in pasted schedule.');
           return;
         }
         calendarState.eventsByDate = eventsByDate;
@@ -6357,15 +6373,11 @@ function initCalendar(){
         ensureCalendarSelection();
         saveCalendarState();
         renderCalendar();
-        if (statusEl){
-          const label = parsedMonths.length === 1 ? 'month' : 'months';
-          statusEl.textContent = `Loaded schedule for ${parsedMonths.length} ${label}.`;
-        }
+        const label = parsedMonths.length === 1 ? 'month' : 'months';
+        setCalendarStatus(`Loaded schedule for ${parsedMonths.length} ${label}.`);
       } catch (err){
         console.error('Schedule text parse failed', err);
-        if (statusEl){
-          statusEl.textContent = err?.message || 'Schedule parse failed.';
-        }
+        setCalendarStatus(err?.message || 'Schedule parse failed.');
       }
     });
   }
@@ -6375,6 +6387,54 @@ function initCalendar(){
       calendarState.selectedMonth = monthSelect.value;
       saveCalendarState();
       renderCalendar();
+    });
+  }
+  const syncTokenInput = document.getElementById('modern-calendar-sync-token');
+  if (syncTokenInput){
+    syncTokenInput.value = getCalendarSyncToken();
+    syncTokenInput.addEventListener('change', () => {
+      try {
+        localStorage.setItem(CALENDAR_SYNC_TOKEN_KEY, syncTokenInput.value.trim());
+        setCalendarStatus('Sync token saved.');
+      } catch (err){
+        console.warn('Failed to store calendar sync token', err);
+        setCalendarStatus('Unable to save sync token.');
+      }
+    });
+  }
+  const syncNowButton = document.getElementById('modern-calendar-sync-now');
+  if (syncNowButton){
+    syncNowButton.addEventListener('click', async () => {
+      syncNowButton.disabled = true;
+      setCalendarStatus('Syncing to cloud…');
+      try {
+        const result = await syncCalendarToCloud();
+        if (result?.queued){
+          setCalendarStatus('Offline. Sync queued.');
+        } else {
+          setCalendarStatus('Synced to cloud.');
+        }
+      } catch (err){
+        setCalendarStatus(`Sync error: ${err?.message || 'Sync failed.'}`);
+      } finally {
+        syncNowButton.disabled = false;
+      }
+    });
+  }
+  const pullButton = document.getElementById('modern-calendar-pull');
+  if (pullButton){
+    pullButton.addEventListener('click', async () => {
+      pullButton.disabled = true;
+      setCalendarStatus('Pulling from cloud…');
+      try {
+        await loadCalendarFromCloud();
+        renderCalendar();
+        setCalendarStatus('Pulled from cloud.');
+      } catch (err){
+        setCalendarStatus(`Sync error: ${err?.message || 'Pull failed.'}`);
+      } finally {
+        pullButton.disabled = false;
+      }
     });
   }
   const grid = document.getElementById('modern-calendar-grid');
