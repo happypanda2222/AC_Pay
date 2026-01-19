@@ -6637,6 +6637,7 @@ let currentModernSubTab = 'modern-annual';
 let currentLegacyDutyTab = 'duty';
 let currentModernDutyTab = 'modern-duty';
 let currentModernFinTab = 'modern-fin-qrh';
+let currentModernCalendarPage = 'main';
 
 function setLegacyPrimaryTab(which){
   const payBtn = document.getElementById('tabbtn-pay');
@@ -6723,6 +6724,7 @@ function setModernPrimaryTab(which){
   const metarHistoryPane = document.getElementById('modern-metar-history');
   const dutyPane = document.getElementById('modern-duty-rest');
   const calendarPane = document.getElementById('modern-calendar');
+  const calendarSyncPane = document.getElementById('modern-calendar-sync-settings');
   const finPane = document.getElementById('modern-fin');
   const finHiddenPane = document.getElementById('modern-fin-hidden');
   const showPay = which === 'modern-pay';
@@ -6742,9 +6744,14 @@ function setModernPrimaryTab(which){
   weatherPane?.classList.toggle('hidden', !showWeather);
   metarHistoryPane?.classList.toggle('hidden', !showMetarHistory);
   dutyPane?.classList.toggle('hidden', !showDuty);
-  calendarPane?.classList.toggle('hidden', !showCalendar);
   finPane?.classList.toggle('hidden', !showFin || showingHiddenFin);
   finHiddenPane?.classList.toggle('hidden', !showFin || !showingHiddenFin);
+  if (showCalendar){
+    setModernCalendarPage(currentModernCalendarPage);
+  } else {
+    calendarPane?.classList.add('hidden');
+    calendarSyncPane?.classList.add('hidden');
+  }
   if (!showMetarHistory){
     const metarPage = document.getElementById('metar-history-page');
     if (metarPage){
@@ -6755,6 +6762,16 @@ function setModernPrimaryTab(which){
   if (showPay) setModernSubTab(currentModernSubTab);
   if (showDuty) setModernDutyTab(currentModernDutyTab);
   if (showFin && !showingHiddenFin) setModernFinTab(currentModernFinTab);
+}
+
+function setModernCalendarPage(which){
+  currentModernCalendarPage = which;
+  const calendarPane = document.getElementById('modern-calendar');
+  const calendarSyncPane = document.getElementById('modern-calendar-sync-settings');
+  const showMain = which === 'main';
+  const showSync = which === 'sync';
+  calendarPane?.classList.toggle('hidden', !showMain);
+  calendarSyncPane?.classList.toggle('hidden', !showSync);
 }
 
 function setModernSubTab(which){
@@ -10658,6 +10675,8 @@ function init(){
   addTapListener(document.getElementById('tabbtn-modern-duty-rest'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-duty-rest'); });
   addTapListener(document.getElementById('tabbtn-modern-calendar'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-calendar'); });
   addTapListener(document.getElementById('tabbtn-modern-fin'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-fin'); });
+  addTapListener(document.getElementById('modern-calendar-sync-settings-btn'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-calendar'); setModernCalendarPage('sync'); });
+  addTapListener(document.getElementById('modern-calendar-sync-back'), (e)=>{ hapticTap(e.currentTarget); setModernCalendarPage('main'); });
   addTapListener(document.getElementById('tabbtn-modern-annual'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-annual'); });
   addTapListener(document.getElementById('tabbtn-modern-monthly'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-monthly'); });
   addTapListener(document.getElementById('tabbtn-modern-vo'), (e)=>{ hapticTap(e.currentTarget); setModernSubTab('modern-vo'); });
