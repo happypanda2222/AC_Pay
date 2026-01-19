@@ -4464,7 +4464,84 @@ function hydrateCalendarPairingDays(targetEventsByDate = calendarState.eventsByD
   });
 }
 
+function getCalendarDayLastFlightEndMs(day, dateKey){
+  let lastFlightMs = null;
+  (day?.events || []).forEach((event) => {
+    const timing = getCalendarEventTiming(event, dateKey);
+    if (!timing) return;
+    if (!Number.isFinite(lastFlightMs) || timing.endMs > lastFlightMs){
+      lastFlightMs = timing.endMs;
+    }
+  });
+  return Number.isFinite(lastFlightMs) ? lastFlightMs : null;
+}
+
+function getCalendarLayoverStartMs(day, dateKey){
+  if (!day || !dateKey) return null;
+  if (Number.isFinite(day.checkOutMinutes)){
+    const dayStartMs = getDateKeyStartMs(dateKey);
+    if (Number.isFinite(dayStartMs)){
+      return dayStartMs + (day.checkOutMinutes * 60000);
+    }
+  }
+  const lastFlightMs = getCalendarDayLastFlightEndMs(day, dateKey);
+  if (Number.isFinite(lastFlightMs)) return lastFlightMs;
+  return null;
+}
+
+function getDateKeyFromMs(ms){
+  if (!Number.isFinite(ms)) return null;
+  const date = new Date(ms);
+  if (!Number.isFinite(date.getTime())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsByDate){
+  const placeholders = [];
+  Object.entries(targetEventsByDate || {}).forEach(([dateKey, day]) => {
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    const layoverMinutes = day?.layover?.durationMinutes;
+    if (!pairingId || !Number.isFinite(layoverMinutes) || layoverMinutes < 1440) return;
+    const startMs = getCalendarLayoverStartMs(day, dateKey);
+    if (!Number.isFinite(startMs)) return;
+    const endMs = startMs + (layoverMinutes * 60000);
+    const startDateKey = getDateKeyFromMs(startMs);
+    if (!startDateKey) return;
+    let dayStartMs = getDateKeyStartMs(startDateKey);
+    if (!Number.isFinite(dayStartMs)) return;
+    for (; dayStartMs < endMs; dayStartMs += 86400000){
+      const dayEndMs = dayStartMs + 86400000;
+      if (startMs <= dayStartMs && endMs >= dayEndMs){
+        const coveredDateKey = getDateKeyFromMs(dayStartMs);
+        if (coveredDateKey && !targetEventsByDate[coveredDateKey]){
+          placeholders.push({ dateKey: coveredDateKey, sourceDay: day });
+        }
+      }
+    }
+  });
+  placeholders.forEach(({ dateKey, sourceDay }) => {
+    const pairingId = String(sourceDay?.pairing?.pairingId || '').trim();
+    const pairingNumber = String(sourceDay?.pairing?.pairingNumber || '').trim();
+    const layover = sourceDay?.layover || {};
+    targetEventsByDate[dateKey] = {
+      events: [],
+      pairing: pairingId
+        ? {
+          pairingId,
+          pairingNumber,
+          pairingDays: []
+        }
+        : null,
+      layover: {
+        hotel: typeof layover.hotel === 'string' ? layover.hotel : '',
+        durationMinutes: Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null
+      }
+    };
+  });
+}
+
 function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsByDate){
+  ensureLayoverPlaceholderDays(targetEventsByDate);
   hydrateCalendarPairingDays(targetEventsByDate);
   const pairingMap = new Map();
   Object.entries(targetEventsByDate || {}).forEach(([dateKey, day]) => {
