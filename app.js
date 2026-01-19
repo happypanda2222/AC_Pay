@@ -5385,11 +5385,24 @@ function getCalendarDayTafbDisplayMinutes(day, dateKey){
 }
 
 function getCalendarLayoverLocationLabel(day){
-  const hotel = typeof day?.layover?.hotel === 'string' ? day.layover.hotel.trim() : '';
-  if (!hotel) return '';
-  const codeMatch = hotel.toUpperCase().match(/\b[A-Z]{3}\b/);
-  if (codeMatch) return codeMatch[0];
-  return hotel;
+  const layover = day?.layover;
+  const hasLayover = Boolean(layover)
+    && (Number.isFinite(layover.durationMinutes) || (typeof layover.hotel === 'string' && layover.hotel.trim()));
+  if (!hasLayover) return '';
+  const hotel = typeof layover?.hotel === 'string' ? layover.hotel.trim() : '';
+  if (hotel){
+    const codeMatch = hotel.toUpperCase().match(/\b[A-Z]{3}\b/);
+    if (codeMatch) return codeMatch[0];
+  }
+  const events = Array.isArray(day?.events) ? day.events : [];
+  for (let i = events.length - 1; i >= 0; i -= 1){
+    const legs = events[i]?.legs || [];
+    for (let j = legs.length - 1; j >= 0; j -= 1){
+      const to = String(legs[j]?.to || '').trim().toUpperCase();
+      if (/^[A-Z]{3}$/.test(to)) return to;
+    }
+  }
+  return '';
 }
 
 function getCalendarPairingLabel(day){
@@ -6026,13 +6039,22 @@ function updateCalendarTotals(year, month){
   let creditMinutes = 0;
   let dutyMinutes = 0;
   let eventCount = 0;
+  const countedPairings = new Set();
   const monthKey = Number.isFinite(year) && Number.isFinite(month) && year > 0 && month > 0
     ? `${year}-${String(month).padStart(2, '0')}`
     : null;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)) return;
     creditMinutes += getCalendarDayCreditTotal(dateKey, day);
-    dutyMinutes += getCalendarDayTafbTotal(dateKey, day);
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    if (pairingId && Number.isFinite(day?.pairing?.tafbMinutes)){
+      if (!countedPairings.has(pairingId)){
+        dutyMinutes += day.pairing.tafbMinutes;
+        countedPairings.add(pairingId);
+      }
+    } else {
+      dutyMinutes += getCalendarDayTafbTotal(dateKey, day);
+    }
     eventCount += day?.events?.length || 0;
   });
   if (monthKey){
@@ -6304,8 +6326,9 @@ function renderCalendarPairingDetail(pairingId){
     if (Number.isFinite(day.layover?.durationMinutes)){
       layoverParts.push(formatDurationMinutes(day.layover.durationMinutes));
     }
-    if (day.layover?.hotel){
-      layoverParts.push(day.layover.hotel);
+    const layoverLabel = getCalendarLayoverLocationLabel(day);
+    if (layoverLabel){
+      layoverParts.push(layoverLabel);
     }
     if (layoverParts.length){
       const layover = document.createElement('div');
