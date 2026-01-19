@@ -711,22 +711,17 @@
       min-width:0;
       white-space:nowrap;
     }
-    .calendar-sync-settings{
-      margin-top:10px;
-      border:1px solid #2a2f3b;
-      border-radius:12px;
-      padding:8px 10px;
-      background:#0f1218;
+    .calendar-sync-footer{
+      margin-top:16px;
+      display:flex;
+      justify-content:flex-end;
     }
-    .calendar-sync-settings summary{
-      cursor:pointer;
-      font-size:13px;
-      color:var(--muted);
-      font-weight:600;
-      list-style:none;
+    .calendar-sync-footer .btn{
+      width:100%;
     }
-    .calendar-sync-settings summary::-webkit-details-marker{display:none;}
-    .calendar-sync-settings .stacked-fields{margin-top:8px;}
+    .calendar-sync-settings-panel{
+      max-width:520px;
+    }
     .calendar-paste{
       grid-column:1/-1;
     }
@@ -1398,19 +1393,6 @@
               </div>
             </div>
             <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
-            <details class="calendar-sync-settings">
-              <summary>Sync settings</summary>
-              <div class="stacked-fields">
-                <div>
-                  <label for="modern-calendar-sync-endpoint">Sync endpoint</label>
-                  <input id="modern-calendar-sync-endpoint" type="url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false">
-                </div>
-                <div>
-                  <label for="modern-calendar-sync-token">Sync token</label>
-                  <input id="modern-calendar-sync-token" type="text" inputmode="text" autocomplete="off" autocapitalize="none" spellcheck="false">
-                </div>
-              </div>
-            </details>
             <div class="calendar-summary-header">
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
@@ -1480,6 +1462,28 @@
                 <div class="muted-note" id="calendar-day-detail-status" aria-live="polite"></div>
               </div>
             </div>
+            <div class="calendar-sync-footer">
+              <button id="modern-calendar-sync-settings-btn" class="btn btn-secondary" type="button">Sync settings</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="modern-calendar-sync-settings" class="modern-tab hidden">
+          <div class="modern-panel calendar-sync-settings-panel">
+            <div class="calendar-detail-header">
+              <button id="modern-calendar-sync-back" class="btn btn-secondary" type="button">Back</button>
+              <div class="calendar-detail-title">Sync settings</div>
+            </div>
+            <div class="stacked-fields">
+              <div>
+                <label for="modern-calendar-sync-endpoint">Sync endpoint</label>
+                <input id="modern-calendar-sync-endpoint" type="url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false">
+              </div>
+              <div>
+                <label for="modern-calendar-sync-token">Sync token</label>
+                <input id="modern-calendar-sync-token" type="text" inputmode="text" autocomplete="off" autocapitalize="none" spellcheck="false">
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1542,7 +1546,6 @@
             </div>
           </div>
         </div>
-      </div>
 
       <div id="modern-fin-hidden" class="modern-tab hidden">
         <div class="modern-panel fin-hidden-shell">
