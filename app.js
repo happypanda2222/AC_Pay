@@ -4775,7 +4775,13 @@ function getCalendarPairingLabel(day){
 
 function getCalendarEventLabel(event){
   const identifiers = Array.isArray(event?.identifiers) ? event.identifiers : [];
-  if (identifiers.length) return identifiers[0];
+  const flightIdentifier = identifiers.find((identifier) => {
+    if (!/^[A-Z]{2}\d{1,4}$/.test(identifier)) return false;
+    return hasAllowedCalendarFlightPrefix(identifier.slice(0, 2));
+  });
+  if (flightIdentifier) return flightIdentifier;
+  const nonPairingIdentifier = identifiers.find(identifier => !/^Pairing\s+/i.test(identifier));
+  if (nonPairingIdentifier) return nonPairingIdentifier;
   return event?.label || 'Flight';
 }
 
