@@ -4355,12 +4355,22 @@ function refreshFinResults(){
 let calendarState = {
   eventsByDate: {},
   months: [],
-  selectedMonth: null
+  selectedMonth: null,
+  updatedAt: 0
 };
 let calendarDetailEventId = null;
 let calendarDetailSource = 'main';
 let calendarPairingId = null;
 let calendarDayDetailDateKey = null;
+
+function normalizeCalendarUpdatedAt(value){
+  if (Number.isFinite(value)) return value;
+  if (typeof value === 'string'){
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
 
 function loadCalendarState(){
   try {
@@ -4369,7 +4379,8 @@ function loadCalendarState(){
     calendarState = {
       eventsByDate: stored.eventsByDate || {},
       months: Array.isArray(stored.months) ? stored.months : [],
-      selectedMonth: stored.selectedMonth || null
+      selectedMonth: stored.selectedMonth || null,
+      updatedAt: normalizeCalendarUpdatedAt(stored.updatedAt)
     };
   } catch (err){
     console.warn('Failed to load calendar schedule', err);
@@ -4649,11 +4660,17 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
   });
 }
 
-function saveCalendarState(){
+function saveCalendarState({ bumpUpdatedAt = true } = {}){
+  if (bumpUpdatedAt){
+    calendarState.updatedAt = Date.now();
+  } else if (!Number.isFinite(calendarState.updatedAt)){
+    calendarState.updatedAt = 0;
+  }
   const payload = {
     eventsByDate: calendarState.eventsByDate,
     months: calendarState.months,
-    selectedMonth: calendarState.selectedMonth
+    selectedMonth: calendarState.selectedMonth,
+    updatedAt: calendarState.updatedAt
   };
   try {
     localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(payload));
@@ -4740,6 +4757,15 @@ async function syncCalendarToCloud(){
     throw new Error(`Calendar sync failed (${response.status})`);
   }
   try {
+    const result = await response.json();
+    if (result?.updatedAt){
+      calendarState.updatedAt = normalizeCalendarUpdatedAt(result.updatedAt);
+      saveCalendarState({ bumpUpdatedAt: false });
+    }
+  } catch (err){
+    console.warn('Failed to read calendar sync response', err);
+  }
+  try {
     localStorage.setItem(CALENDAR_SYNC_LAST_KEY, new Date().toISOString());
   } catch (err){
     console.warn('Failed to store calendar sync timestamp', err);
@@ -4765,14 +4791,28 @@ async function loadCalendarFromCloud(){
   }
   const data = await response.json();
   const incomingState = data?.calendarState || data?.state || data || {};
+  const remoteUpdatedAt = normalizeCalendarUpdatedAt(data?.updatedAt ?? incomingState.updatedAt);
+  const localUpdatedAt = normalizeCalendarUpdatedAt(calendarState.updatedAt);
+  let statusMessage = 'Pulled from cloud.';
+  if (remoteUpdatedAt > localUpdatedAt){
+    const confirmOverwrite = window.confirm('Cloud schedule is newer than local. Overwrite local schedule?');
+    if (!confirmOverwrite){
+      return { state: calendarState, statusMessage: 'Kept local schedule (cloud newer).' };
+    }
+    statusMessage = 'Overwrote local schedule with newer cloud copy.';
+  } else if (localUpdatedAt > remoteUpdatedAt){
+    await syncCalendarToCloud();
+    return { state: calendarState, statusMessage: 'Local schedule newer; pushed to cloud.' };
+  }
   calendarState = {
     eventsByDate: incomingState.eventsByDate || {},
     months: Array.isArray(incomingState.months) ? incomingState.months : [],
-    selectedMonth: data?.selectedMonth || incomingState.selectedMonth || null
+    selectedMonth: data?.selectedMonth || incomingState.selectedMonth || null,
+    updatedAt: remoteUpdatedAt
   };
   normalizeCalendarState();
-  saveCalendarState();
-  return calendarState;
+  saveCalendarState({ bumpUpdatedAt: false });
+  return { state: calendarState, statusMessage };
 }
 
 function scheduleCalendarSyncRetry(){
@@ -6427,9 +6467,9 @@ function initCalendar(){
       pullButton.disabled = true;
       setCalendarStatus('Pulling from cloud…');
       try {
-        await loadCalendarFromCloud();
+        const result = await loadCalendarFromCloud();
         renderCalendar();
-        setCalendarStatus('Pulled from cloud.');
+        setCalendarStatus(result?.statusMessage || 'Pulled from cloud.');
       } catch (err){
         setCalendarStatus(`Sync error: ${err?.message || 'Pull failed.'}`);
       } finally {
