@@ -5382,11 +5382,18 @@ function getCalendarDayTafbDisplayMinutes(day, dateKey){
   return dutyEvent ? dutyEvent.dutyMinutes : null;
 }
 
+function getCalendarLayoverLocationLabel(day){
+  const hotel = typeof day?.layover?.hotel === 'string' ? day.layover.hotel.trim() : '';
+  if (!hotel) return '';
+  const codeMatch = hotel.toUpperCase().match(/\b[A-Z]{3}\b/);
+  if (codeMatch) return codeMatch[0];
+  return hotel;
+}
+
 function getCalendarPairingLabel(day){
-  const pairingNumber = String(day?.pairing?.pairingNumber || '').trim();
-  const pairingId = String(day?.pairing?.pairingId || '').trim();
-  const label = pairingNumber || pairingId;
-  return label ? `Pairing ${label}` : 'Pairing';
+  const layoverLabel = getCalendarLayoverLocationLabel(day);
+  if (layoverLabel) return layoverLabel;
+  return '1 Day';
 }
 
 function getCalendarEventLabel(event){
