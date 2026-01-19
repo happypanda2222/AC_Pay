@@ -600,6 +600,65 @@
       flex-direction:column;
       gap:8px;
     }
+    .calendar-pairing-day{
+      width:100%;
+      text-align:left;
+      border-radius:12px;
+      border:1px solid #1f2633;
+      background:#0f1218;
+      color:var(--txt);
+      padding:10px 12px;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      cursor:pointer;
+    }
+    .calendar-pairing-day + .calendar-pairing-day{
+      margin-top:10px;
+    }
+    .calendar-pairing-day-header{
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+    .calendar-pairing-day-title{
+      font-size:14px;
+      font-weight:700;
+    }
+    .calendar-pairing-day-layover{
+      font-size:12px;
+      color:var(--muted);
+    }
+    .calendar-pairing-day-flights{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      font-size:12px;
+      color:var(--muted);
+    }
+    .calendar-pairing-flight{
+      padding:6px 8px;
+      border-radius:10px;
+      border:1px solid #1f2633;
+      background:#0b0f1a;
+    }
+    .calendar-day-flight-list{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      margin-top:12px;
+    }
+    .calendar-day-flight{
+      width:100%;
+      text-align:left;
+      border-radius:10px;
+      border:1px solid #1f2633;
+      background:#0f1218;
+      color:var(--txt);
+      padding:8px 10px;
+      font-size:12px;
+      cursor:pointer;
+    }
     .calendar-summary-header{
       display:flex;
       flex-wrap:wrap;
@@ -1301,7 +1360,7 @@
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
                 <div class="metric-card">
-                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines plus any block growth entered for a flight; CNX excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits come from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines plus any block growth entered for a flight; CNX excluded.</span></span></div>
+                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credits roll up to pairing totals (including DPG/THG once added) from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines plus any block growth entered for a flight; CNX excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credits roll up to pairing totals (including DPG/THG once added) from the pasted schedule summary line (third duration) or the last duration on DPG/flight lines plus any block growth entered for a flight; CNX excluded.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-credit">--</div>
                 </div>
                 <div class="metric-card">
@@ -1340,6 +1399,26 @@
                   </div>
                 </div>
                 <div class="muted-note" id="calendar-detail-status" aria-live="polite"></div>
+              </div>
+            </div>
+            <div id="modern-calendar-pairing-detail" class="hidden">
+              <div class="calendar-detail">
+                <div class="calendar-detail-header">
+                  <button id="calendar-pairing-back" class="btn btn-secondary" type="button">Back</button>
+                  <div class="calendar-detail-title" id="calendar-pairing-title">Pairing</div>
+                </div>
+                <div id="calendar-pairing-days"></div>
+                <div class="muted-note" id="calendar-pairing-status" aria-live="polite"></div>
+              </div>
+            </div>
+            <div id="modern-calendar-day-detail" class="hidden">
+              <div class="calendar-detail">
+                <div class="calendar-detail-header">
+                  <button id="calendar-day-detail-back" class="btn btn-secondary" type="button">Back</button>
+                  <div class="calendar-detail-title" id="calendar-day-detail-title">Day detail</div>
+                </div>
+                <div class="calendar-detail-grid" id="calendar-day-detail-info"></div>
+                <div class="muted-note" id="calendar-day-detail-status" aria-live="polite"></div>
               </div>
             </div>
           </div>
