@@ -4723,6 +4723,9 @@ function normalizeCalendarSyncEndpoint(value){
   if (!trimmed) return '';
   if (trimmed.startsWith('/')) return trimmed;
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const firstSegment = trimmed.split('/')[0] || '';
+  const hostLike = /[.:]/.test(firstSegment) || firstSegment.toLowerCase() === 'localhost';
+  if (!hostLike) return trimmed;
   return `https://${trimmed}`;
 }
 
