@@ -4402,6 +4402,7 @@ function loadCalendarState(){
 function normalizeCalendarState(){
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day || typeof day !== 'object') return;
+    if (typeof day.sourceMonthKey !== 'string') day.sourceMonthKey = null;
     if (!Array.isArray(day.events)) day.events = [];
     day.events = day.events.map((event) => {
       if (!event || typeof event !== 'object') return null;
@@ -4543,6 +4544,7 @@ function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsB
     const layover = sourceDay?.layover || {};
     targetEventsByDate[dateKey] = {
       events: [],
+      sourceMonthKey: typeof sourceDay?.sourceMonthKey === 'string' ? sourceDay.sourceMonthKey : null,
       pairing: pairingId
         ? {
           pairingId,
@@ -4923,6 +4925,14 @@ function buildCalendarMonths(eventsByDate){
     }
   });
   return Array.from(months).sort();
+}
+
+function setCalendarSourceMonthKey(eventsByDate, sourceMonthKey){
+  if (!sourceMonthKey) return;
+  Object.values(eventsByDate || {}).forEach((day) => {
+    if (!day || typeof day !== 'object') return;
+    day.sourceMonthKey = sourceMonthKey;
+  });
 }
 
 function mergeCalendarMonths(...monthLists){
@@ -6518,7 +6528,14 @@ function initCalendar(){
           setCalendarStatus(statusMessage || 'No calendar events found in pasted schedule.');
           return;
         }
-        calendarState.eventsByDate = eventsByDate;
+        const sourceMonthKey = normalizeCalendarMonthKey(parsedMonths[0]);
+        setCalendarSourceMonthKey(eventsByDate, sourceMonthKey);
+        const retainedEvents = {};
+        Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+          if (day?.sourceMonthKey === sourceMonthKey) return;
+          retainedEvents[dateKey] = day;
+        });
+        calendarState.eventsByDate = { ...retainedEvents, ...eventsByDate };
         normalizeCalendarState();
         calendarState.months = mergeCalendarMonths(calendarState.months, parsedMonths);
         ensureCalendarSelection();
