@@ -5609,6 +5609,19 @@ function isCreditCancelled(event){
   return event?.cancellation === 'CNX';
 }
 
+function getCalendarCancellationClass(event){
+  if (event?.cancellation === 'CNX PP') return 'is-cnx-pp';
+  if (event?.cancellation === 'CNX') return 'is-cnx';
+  return '';
+}
+
+function getCalendarCancellationClassForEvents(events){
+  if (!Array.isArray(events) || !events.length) return '';
+  if (events.some(event => event?.cancellation === 'CNX PP')) return 'is-cnx-pp';
+  if (events.some(event => event?.cancellation === 'CNX')) return 'is-cnx';
+  return '';
+}
+
 function getCalendarEventBlockGrowth(event){
   const growth = Number(event?.blockGrowthMinutes);
   return Number.isFinite(growth) ? growth : 0;
@@ -7046,7 +7059,8 @@ function renderCalendar(){
       eventBtn.type = 'button';
       eventBtn.className = 'calendar-event';
       if (isSingleDayPairing) eventBtn.classList.add('is-single-day');
-      if (dayEvents.some(event => isCancelledEvent(event))) eventBtn.classList.add('is-cnx');
+      const cancellationClass = getCalendarCancellationClassForEvents(dayEvents);
+      if (cancellationClass) eventBtn.classList.add(cancellationClass);
       if (dayEvents.some(event => isDeadheadEvent(event))) eventBtn.classList.add('is-deadhead');
       const title = document.createElement('div');
       title.className = 'calendar-event-title';
@@ -7133,7 +7147,8 @@ function renderCalendarDetail(event, dateKey){
   addBlock('Block growth', formatDurationMinutes(getCalendarEventBlockGrowth(event)));
   addBlock('Total credit', formatDurationMinutes(getCalendarEventCreditTotal(event)));
   addBlock('TAFB', Number.isFinite(tafbMinutes) ? formatDurationMinutes(tafbMinutes) : '—');
-  addBlock('Status', event.cancellation ? event.cancellation : 'Scheduled');
+  const statusValue = event.cancellation ? event.cancellation : 'Scheduled';
+  blocks.push(`<div class="block"><div class="label">${labelWithInfo('Status', INFO_COPY.calendar.cancellation)}</div><div class="value">${escapeHtml(statusValue)}</div></div>`);
   infoEl.innerHTML = `<div class="simple">${blocks.join('')}</div>`;
   if (growthInput){
     const growthMinutes = getCalendarEventBlockGrowth(event);
@@ -7292,6 +7307,8 @@ function renderCalendarPairingDetail(pairingId){
         const flight = document.createElement('div');
         flight.className = 'calendar-pairing-flight';
         if (isDeadheadEvent(event)) flight.classList.add('is-deadhead');
+        const cancellationClass = getCalendarCancellationClass(event);
+        if (cancellationClass) flight.classList.add(cancellationClass);
         const route = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '';
         const label = event.label || event.identifiers?.join(', ') || 'Flight';
         flight.textContent = route ? `${label} · ${route}` : label;
@@ -7400,7 +7417,9 @@ function renderCalendarDayDetail(dateKey){
     const blockText = Number.isFinite(event.blockMinutes) ? ` · Block ${formatDurationMinutes(event.blockMinutes)}` : '';
     const tafbText = Number.isFinite(event.dutyMinutes) ? ` · TAFB ${formatDurationMinutes(event.dutyMinutes)}` : '';
     const deadheadClass = isDeadheadEvent(event) ? ' is-deadhead' : '';
-    return `<button class="calendar-day-flight${deadheadClass}" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(creditText)}${escapeHtml(blockText)}${escapeHtml(tafbText)}${escapeHtml(status)}</button>`;
+    const cancellationClass = getCalendarCancellationClass(event);
+    const cancellationClassName = cancellationClass ? ` ${cancellationClass}` : '';
+    return `<button class="calendar-day-flight${deadheadClass}${cancellationClassName}" type="button" data-event-id="${escapeHtml(event.id)}">${escapeHtml(label)}${escapeHtml(meta)}${escapeHtml(creditText)}${escapeHtml(blockText)}${escapeHtml(tafbText)}${escapeHtml(status)}</button>`;
   }).join('');
   const flightSection = flightsHtml
     ? `<div class="calendar-day-flight-list">${flightsHtml}</div>`
@@ -11353,7 +11372,8 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Total credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit.'
+    pairingCredit: 'Total credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit.',
+    cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.'
   },
   vo: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
