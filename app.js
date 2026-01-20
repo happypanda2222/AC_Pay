@@ -7633,8 +7633,11 @@ function getCalendarTafbTotalMinutes(monthKey){
   const countedPairings = new Set();
   let dutyMinutes = 0;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-    if (!dateKey.startsWith(prefix)) return;
-    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
+    if (range){
+      if (!isCalendarDateKeyInRange(dateKey, range)) return;
+    } else if (!dateKey.startsWith(prefix)){
+      return;
+    }
     const pairingId = String(day?.pairing?.pairingId || '').trim();
     if (pairingId && Number.isFinite(day?.pairing?.tafbMinutes)){
       if (!countedPairings.has(pairingId)){
@@ -11582,7 +11585,7 @@ const INFO_COPY = {
     pairingCredit: 'Pairing credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules and add vacation credit once.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
     creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals include vacation credit and use TRIP credit overrides when available; otherwise they sum daily credits.',
-    tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr.'
+    tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month.'
   },
   vo: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
