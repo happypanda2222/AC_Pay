@@ -6526,6 +6526,31 @@ function normalizeCalendarDateKey(value){
   return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
 }
 
+function buildCalendarDateKeyFromDate(date){
+  const yearValue = date.getFullYear();
+  const monthValue = String(date.getMonth() + 1).padStart(2, '0');
+  const dayValue = String(date.getDate()).padStart(2, '0');
+  return `${yearValue}-${monthValue}-${dayValue}`;
+}
+
+function getCalendarMonthDateBounds(monthKey, bufferDays = 0){
+  if (!monthKey) return null;
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)){
+    return null;
+  }
+  const firstOfMonth = new Date(year, month - 1, 1);
+  const lastOfMonth = new Date(year, month, 0);
+  if (bufferDays){
+    firstOfMonth.setDate(firstOfMonth.getDate() - bufferDays);
+    lastOfMonth.setDate(lastOfMonth.getDate() + bufferDays);
+  }
+  return {
+    startKey: buildCalendarDateKeyFromDate(firstOfMonth),
+    endKey: buildCalendarDateKeyFromDate(lastOfMonth)
+  };
+}
+
 function getCalendarBlockMonthRange(){
   const startKey = normalizeCalendarDateKey(calendarState.blockMonthStartKey);
   const endKey = normalizeCalendarDateKey(calendarState.blockMonthEndKey);
@@ -6539,8 +6564,9 @@ function getCalendarBlockMonthRange(){
 function getCalendarBlockMonthRangeForMonth(monthKey){
   const range = getCalendarBlockMonthRange();
   if (!range || !monthKey) return null;
-  const prefix = `${monthKey}-`;
-  if (!range.startKey.startsWith(prefix) || !range.endKey.startsWith(prefix)){
+  const bounds = getCalendarMonthDateBounds(monthKey, 3);
+  if (!bounds) return null;
+  if (!isCalendarDateKeyInRange(range.startKey, bounds) || !isCalendarDateKeyInRange(range.endKey, bounds)){
     return null;
   }
   return range;
@@ -6553,8 +6579,9 @@ function getCalendarBlockMonthHighlightRange(monthKey){
   const range = startKey <= endKey
     ? { startKey, endKey }
     : { startKey: endKey, endKey: startKey };
-  const prefix = `${monthKey}-`;
-  if (!range.startKey.startsWith(prefix) || !range.endKey.startsWith(prefix)){
+  const bounds = getCalendarMonthDateBounds(monthKey, 3);
+  if (!bounds) return null;
+  if (!isCalendarDateKeyInRange(range.startKey, bounds) || !isCalendarDateKeyInRange(range.endKey, bounds)){
     return null;
   }
   return range;
@@ -6642,18 +6669,11 @@ function renderCalendar(){
   updateCalendarTotals(year, month);
   setCalendarStatus(events.length ? '' : 'No schedule loaded.');
   const firstOfMonth = new Date(year, month - 1, 1);
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const lastOfMonth = new Date(year, month - 1, daysInMonth);
+  const lastOfMonth = new Date(year, month, 0);
   const rangeStart = new Date(firstOfMonth);
   rangeStart.setDate(rangeStart.getDate() - 3);
   const rangeEnd = new Date(lastOfMonth);
   rangeEnd.setDate(rangeEnd.getDate() + 3);
-  const buildDateKey = (date) => {
-    const yearValue = date.getFullYear();
-    const monthValue = String(date.getMonth() + 1).padStart(2, '0');
-    const dayValue = String(date.getDate()).padStart(2, '0');
-    return `${yearValue}-${monthValue}-${dayValue}`;
-  };
   gridEl.innerHTML = '';
   CALENDAR_WEEKDAYS.forEach((weekday) => {
     const label = document.createElement('div');
@@ -6662,7 +6682,7 @@ function renderCalendar(){
     gridEl.appendChild(label);
   });
   for (let current = new Date(rangeStart); current <= rangeEnd; current.setDate(current.getDate() + 1)){
-    const dateKey = buildDateKey(current);
+    const dateKey = buildCalendarDateKeyFromDate(current);
     const dayData = calendarState.eventsByDate?.[dateKey];
     const dayEvents = dayData?.events || [];
     const dayCell = document.createElement('div');
