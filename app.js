@@ -6436,6 +6436,17 @@ function renderCalendar(){
   setCalendarStatus(events.length ? '' : 'No schedule loaded.');
   const firstOfMonth = new Date(year, month - 1, 1);
   const daysInMonth = new Date(year, month, 0).getDate();
+  const lastOfMonth = new Date(year, month - 1, daysInMonth);
+  const rangeStart = new Date(firstOfMonth);
+  rangeStart.setDate(rangeStart.getDate() - 3);
+  const rangeEnd = new Date(lastOfMonth);
+  rangeEnd.setDate(rangeEnd.getDate() + 3);
+  const buildDateKey = (date) => {
+    const yearValue = date.getFullYear();
+    const monthValue = String(date.getMonth() + 1).padStart(2, '0');
+    const dayValue = String(date.getDate()).padStart(2, '0');
+    return `${yearValue}-${monthValue}-${dayValue}`;
+  };
   gridEl.innerHTML = '';
   CALENDAR_WEEKDAYS.forEach((weekday) => {
     const label = document.createElement('div');
@@ -6443,18 +6454,16 @@ function renderCalendar(){
     label.textContent = weekday;
     gridEl.appendChild(label);
   });
-  for (let i = 0; i < firstOfMonth.getDay(); i += 1){
-    const empty = document.createElement('div');
-    empty.className = 'calendar-day is-empty';
-    gridEl.appendChild(empty);
-  }
-  for (let day = 1; day <= daysInMonth; day += 1){
-    const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  for (let current = new Date(rangeStart); current <= rangeEnd; current.setDate(current.getDate() + 1)){
+    const dateKey = buildDateKey(current);
     const dayData = calendarState.eventsByDate?.[dateKey];
     const dayEvents = dayData?.events || [];
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
     dayCell.dataset.dateKey = dateKey;
+    if (current.getMonth() + 1 !== month){
+      dayCell.classList.add('is-outside-month');
+    }
     if (blockMonthRange && isCalendarDateKeyInRange(dateKey, blockMonthRange)){
       dayCell.classList.add('is-block-range');
       if (dateKey === blockMonthRange.startKey) dayCell.classList.add('is-block-start');
@@ -6465,7 +6474,7 @@ function renderCalendar(){
     }
     const dayNumber = document.createElement('div');
     dayNumber.className = 'calendar-day-number';
-    dayNumber.textContent = String(day);
+    dayNumber.textContent = String(current.getDate());
     dayCell.appendChild(dayNumber);
     if (dayEvents.length || dayData?.pairing?.pairingId){
       const wrapper = document.createElement('div');
