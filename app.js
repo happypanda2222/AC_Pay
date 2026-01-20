@@ -5515,7 +5515,35 @@ function getCalendarPairingLabelParts(day, dateKey){
   const pairingDays = getCalendarPairingDaysForDay(day);
   const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
   const isSingleDay = pairingDays.length === 1;
-  if (isSingleDay && !layoverLabel) return { primary: '1 Day', secondary: '' };
+  if (isSingleDay && dateKey){
+    const firstDay = pairingDays[0];
+    if (dateKey === firstDay){
+      let checkInMinutes = Number.isFinite(day?.checkInMinutes) ? day.checkInMinutes : null;
+      if (!Number.isFinite(checkInMinutes)){
+        const firstFlightMs = getCalendarDayFirstFlightStartMs(day, dateKey);
+        const dayStartMs = getDateKeyStartMs(dateKey);
+        if (Number.isFinite(firstFlightMs) && Number.isFinite(dayStartMs)){
+          const adjustedMinutes = Math.round((firstFlightMs - dayStartMs) / 60000) - 75;
+          if (adjustedMinutes >= 0) checkInMinutes = adjustedMinutes;
+        }
+      }
+      let endMinutes = Number.isFinite(day?.checkOutMinutes) ? day.checkOutMinutes : null;
+      if (!Number.isFinite(endMinutes)){
+        const lastFlightMs = getCalendarDayLastFlightEndMs(day, dateKey);
+        const dayStartMs = getDateKeyStartMs(dateKey);
+        if (Number.isFinite(lastFlightMs) && Number.isFinite(dayStartMs)){
+          endMinutes = Math.round((lastFlightMs - dayStartMs) / 60000);
+        }
+      }
+      const checkInLabel = Number.isFinite(checkInMinutes)
+        ? formatMinutesToTime(checkInMinutes)
+        : 'Check in';
+      const checkOutLabel = Number.isFinite(endMinutes)
+        ? formatMinutesToTime(endMinutes)
+        : 'Check out';
+      return { primary: checkInLabel, secondary: checkOutLabel };
+    }
+  }
   if (dateKey && pairingDays.length){
     const firstDay = pairingDays[0];
     const lastDay = pairingDays[pairingDays.length - 1];
@@ -6345,9 +6373,12 @@ function renderCalendar(){
       wrapper.className = 'calendar-event-item';
       if (dayData?.pairing?.pairingId) wrapper.dataset.pairingId = dayData.pairing.pairingId;
       wrapper.dataset.dateKey = dateKey;
+      const pairingDays = getCalendarPairingDaysForDay(dayData);
+      const isSingleDayPairing = pairingDays.length === 1;
       const eventBtn = document.createElement('button');
       eventBtn.type = 'button';
       eventBtn.className = 'calendar-event';
+      if (isSingleDayPairing) eventBtn.classList.add('is-single-day');
       if (dayEvents.some(event => isCancelledEvent(event))) eventBtn.classList.add('is-cnx');
       if (dayEvents.some(event => isDeadheadEvent(event))) eventBtn.classList.add('is-deadhead');
       const title = document.createElement('div');
