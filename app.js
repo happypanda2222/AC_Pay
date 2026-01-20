@@ -4359,6 +4359,7 @@ let calendarState = {
   months: [],
   selectedMonth: null,
   blockMonthsByMonthKey: {},
+  blockMonthRecurring: {},
   updatedAt: 0
 };
 let calendarDetailEventId = null;
@@ -4390,6 +4391,7 @@ function loadCalendarState(){
       months: Array.isArray(stored.months) ? stored.months : [],
       selectedMonth: stored.selectedMonth || null,
       blockMonthsByMonthKey: stored.blockMonthsByMonthKey || {},
+      blockMonthRecurring: stored.blockMonthRecurring || {},
       updatedAt: normalizeCalendarUpdatedAt(stored.updatedAt)
     };
   } catch (err){
@@ -4402,6 +4404,9 @@ function loadCalendarState(){
     }
     if (prefs?.blockMonthsByMonthKey && typeof prefs.blockMonthsByMonthKey === 'object'){
       calendarState.blockMonthsByMonthKey = prefs.blockMonthsByMonthKey;
+    }
+    if (prefs?.blockMonthRecurring && typeof prefs.blockMonthRecurring === 'object'){
+      calendarState.blockMonthRecurring = prefs.blockMonthRecurring;
     }
     const startKey = normalizeCalendarDateKey(prefs?.blockMonthStartKey);
     const endKey = normalizeCalendarDateKey(prefs?.blockMonthEndKey);
@@ -4423,6 +4428,9 @@ function loadCalendarState(){
 function normalizeCalendarState(){
   calendarState.blockMonthsByMonthKey = normalizeCalendarBlockMonthsByMonthKey(
     calendarState.blockMonthsByMonthKey
+  );
+  calendarState.blockMonthRecurring = normalizeCalendarBlockMonthRecurring(
+    calendarState.blockMonthRecurring
   );
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day || typeof day !== 'object') return;
@@ -4489,6 +4497,39 @@ function normalizeCalendarBlockMonthsByMonthKey(value){
     };
   });
   return next;
+}
+
+function normalizeCalendarBlockMonthRecurring(value){
+  const next = {};
+  Object.entries(value || {}).forEach(([monthKey, entry]) => {
+    const normalizedMonth = normalizeCalendarMonthNumber(monthKey);
+    if (!normalizedMonth || !entry || typeof entry !== 'object') return;
+    const startDay = normalizeCalendarDayNumber(entry.startDay);
+    const endDay = normalizeCalendarDayNumber(entry.endDay);
+    if (!startDay) return;
+    next[normalizedMonth] = {
+      startDay,
+      endDay: endDay || null
+    };
+  });
+  return next;
+}
+
+function normalizeCalendarMonthNumber(value){
+  const trimmed = String(value || '').trim();
+  const monthFromKey = trimmed.match(/^\d{4}-(\d{2})$/);
+  if (monthFromKey) return monthFromKey[1];
+  const num = Number(trimmed);
+  if (!Number.isFinite(num) || num < 1 || num > 12) return null;
+  return String(num).padStart(2, '0');
+}
+
+function normalizeCalendarDayNumber(value){
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const day = Math.trunc(num);
+  if (day < 1 || day > 31) return null;
+  return day;
 }
 
 function dedupeCalendarPairingIds(targetEventsByDate = calendarState.eventsByDate){
@@ -4959,13 +5000,15 @@ function saveCalendarState({ bumpUpdatedAt = true } = {}){
     months: calendarState.months,
     selectedMonth: calendarState.selectedMonth,
     blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
+    blockMonthRecurring: calendarState.blockMonthRecurring,
     updatedAt: calendarState.updatedAt
   };
   try {
     localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(payload));
     localStorage.setItem(CALENDAR_PREFS_KEY, JSON.stringify({
       selectedMonth: calendarState.selectedMonth,
-      blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey
+      blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
+      blockMonthRecurring: calendarState.blockMonthRecurring
     }));
   } catch (err){
     console.warn('Failed to save calendar schedule', err);
@@ -6647,15 +6690,39 @@ function getCalendarMonthDateBounds(monthKey, bufferDays = 0){
   };
 }
 
-function getCalendarBlockMonthEntry(monthKey){
+function getCalendarBlockMonthEntry(monthKey, { includeRecurring = true } = {}){
   const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
   if (!normalizedMonthKey) return null;
   const entry = calendarState.blockMonthsByMonthKey?.[normalizedMonthKey];
+  if (entry && typeof entry === 'object'){
+    const startKey = normalizeCalendarDateKey(entry.startKey);
+    const endKey = normalizeCalendarDateKey(entry.endKey);
+    if (!startKey) return null;
+    return { startKey, endKey };
+  }
+  if (!includeRecurring) return null;
+  return getCalendarBlockMonthEntryFromRecurring(normalizedMonthKey);
+}
+
+function getCalendarBlockMonthEntryFromRecurring(monthKey){
+  const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
+  if (!normalizedMonthKey) return null;
+  const monthIndex = normalizeCalendarMonthNumber(normalizedMonthKey);
+  if (!monthIndex) return null;
+  const entry = calendarState.blockMonthRecurring?.[monthIndex];
   if (!entry || typeof entry !== 'object') return null;
-  const startKey = normalizeCalendarDateKey(entry.startKey);
-  const endKey = normalizeCalendarDateKey(entry.endKey);
-  if (!startKey) return null;
-  return { startKey, endKey };
+  const startDay = normalizeCalendarDayNumber(entry.startDay);
+  const endDay = normalizeCalendarDayNumber(entry.endDay);
+  if (!startDay) return null;
+  const [year, month] = normalizedMonthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const safeStartDay = Math.min(startDay, daysInMonth);
+  const safeEndDay = endDay ? Math.min(endDay, daysInMonth) : null;
+  return {
+    startKey: `${year}-${String(month).padStart(2, '0')}-${String(safeStartDay).padStart(2, '0')}`,
+    endKey: safeEndDay ? `${year}-${String(month).padStart(2, '0')}-${String(safeEndDay).padStart(2, '0')}` : null
+  };
 }
 
 function setCalendarBlockMonthEntry(monthKey, { startKey, endKey } = {}){
@@ -6676,6 +6743,32 @@ function setCalendarBlockMonthEntry(monthKey, { startKey, endKey } = {}){
   };
 }
 
+function setCalendarBlockMonthRecurringEntry(monthKey, { startKey, endKey } = {}){
+  const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
+  if (!normalizedMonthKey) return;
+  const monthIndex = normalizeCalendarMonthNumber(normalizedMonthKey);
+  if (!monthIndex) return;
+  const normalizedStartKey = normalizeCalendarDateKey(startKey);
+  const normalizedEndKey = normalizeCalendarDateKey(endKey);
+  if (!calendarState.blockMonthRecurring || typeof calendarState.blockMonthRecurring !== 'object'){
+    calendarState.blockMonthRecurring = {};
+  }
+  if (!normalizedStartKey){
+    delete calendarState.blockMonthRecurring[monthIndex];
+    return;
+  }
+  const startDay = normalizeCalendarDayNumber(normalizedStartKey.split('-')[2]);
+  const endDay = normalizedEndKey ? normalizeCalendarDayNumber(normalizedEndKey.split('-')[2]) : null;
+  if (!startDay){
+    delete calendarState.blockMonthRecurring[monthIndex];
+    return;
+  }
+  calendarState.blockMonthRecurring[monthIndex] = {
+    startDay,
+    endDay: endDay || null
+  };
+}
+
 function getCalendarBlockMonthRangeForMonth(monthKey){
   const entry = getCalendarBlockMonthEntry(monthKey);
   if (!entry || !monthKey || !entry.endKey) return null;
@@ -6690,8 +6783,8 @@ function getCalendarBlockMonthRangeForMonth(monthKey){
   return range;
 }
 
-function getCalendarBlockMonthHighlightRange(monthKey){
-  const entry = getCalendarBlockMonthEntry(monthKey);
+function getCalendarBlockMonthHighlightRange(monthKey, { includeRecurring = true } = {}){
+  const entry = getCalendarBlockMonthEntry(monthKey, { includeRecurring });
   if (!entry || !monthKey) return null;
   const startKey = entry.startKey;
   const endKey = entry.endKey || startKey;
@@ -6787,7 +6880,9 @@ function renderCalendar(){
     return;
   }
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
-  const blockMonthRange = getCalendarBlockMonthHighlightRange(monthKey);
+  const blockMonthRange = getCalendarBlockMonthHighlightRange(monthKey, {
+    includeRecurring: !calendarBlockMonthSelecting
+  });
   const events = [];
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)){
@@ -7817,6 +7912,7 @@ function initCalendar(){
           renderCalendar();
           return;
         }
+        setCalendarBlockMonthRecurringEntry(monthKey, range);
         calendarBlockMonthSelecting = false;
         calendarBlockMonthDraft = null;
         saveCalendarState();
