@@ -4433,6 +4433,7 @@ function normalizeCalendarState(){
       day.pairing.pairingId = String(day.pairing.pairingId || '').trim();
       day.pairing.pairingNumber = String(day.pairing.pairingNumber || '').trim();
       if (!Array.isArray(day.pairing.pairingDays)) day.pairing.pairingDays = [];
+      if (!Number.isFinite(day.pairing.tripCreditMinutes)) day.pairing.tripCreditMinutes = null;
     }
     if (!day.layover || typeof day.layover !== 'object'){
       day.layover = { hotel: '', durationMinutes: null };
@@ -4679,6 +4680,8 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
     );
     const tripTafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.pairing?.tripTafbMinutes));
     const tripTafbMinutes = tripTafbOverride?.day?.pairing?.tripTafbMinutes;
+    const tripCreditOverride = dayEntries.find(entry => Number.isFinite(entry.day?.pairing?.tripCreditMinutes));
+    const tripCreditMinutes = tripCreditOverride?.day?.pairing?.tripCreditMinutes;
     const tafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.tafbMinutes));
     const overrideAllowed = !boundaryCancelled;
     let tafbMinutes = Number.isFinite(tripTafbMinutes)
@@ -4700,6 +4703,9 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
       if (!day?.pairing) return;
       if (Number.isFinite(tripTafbMinutes)){
         day.pairing.tripTafbMinutes = tripTafbMinutes;
+      }
+      if (Number.isFinite(tripCreditMinutes)){
+        day.pairing.tripCreditMinutes = tripCreditMinutes;
       }
       day.pairing.tafbMinutes = Number.isFinite(tafbMinutes) ? tafbMinutes : null;
       day.pairing.dpgMinutes = dpgTotal || null;
@@ -6053,6 +6059,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
   let dutyMinutes = null;
   let dayTafbMinutes = null;
   let tripTafbMinutes = null;
+  let tripCreditMinutes = null;
   let checkInMinutes = null;
   let checkOutMinutes = null;
   let dpgMinutes = null;
@@ -6097,6 +6104,16 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
         if (Number.isFinite(credit)) summaryCreditMinutes = credit;
         if (Number.isFinite(duty)) dutyMinutes = duty;
         return;
+      }
+    }
+    const tripCreditMatch = trimmed.match(/\bTRIP\b\s+(\d{1,3}:\d{2})\b/i);
+    if (tripCreditMatch){
+      const minutes = parseDurationToMinutes(tripCreditMatch[1]);
+      if (Number.isFinite(minutes)){
+        tripCreditMinutes = minutes;
+        if (pairingContext){
+          pairingContext.tripCreditMinutes = minutes;
+        }
       }
     }
     const tafbMatch = trimmed.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
@@ -6182,6 +6199,9 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     pairing.tripTafbMinutes = Number.isFinite(pairingContext?.tripTafbMinutes)
       ? pairingContext.tripTafbMinutes
       : (Number.isFinite(tripTafbMinutes) ? tripTafbMinutes : null);
+    pairing.tripCreditMinutes = Number.isFinite(pairingContext?.tripCreditMinutes)
+      ? pairingContext.tripCreditMinutes
+      : (Number.isFinite(tripCreditMinutes) ? tripCreditMinutes : null);
   }
   if (pairing?.pairingId){
     events.forEach((event) => {
@@ -6535,11 +6555,20 @@ function getCalendarPairingSummary(pairingId){
   let dpgMinutes = 0;
   let thgMinutes = 0;
   let tafbMinutes = null;
+  let tripCreditMinutes = null;
+  let rangeExcludesDay = false;
   const range = getCalendarBlockMonthRangeForMonth(calendarState.selectedMonth);
   pairingDays.forEach((dateKey) => {
-    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
+    if (range && !isCalendarDateKeyInRange(dateKey, range)){
+      rangeExcludesDay = true;
+      return;
+    }
     const day = calendarState.eventsByDate?.[dateKey];
     if (!day) return;
+    if (!Number.isFinite(tripCreditMinutes)){
+      const pairingTripCredit = day?.pairing?.tripCreditMinutes;
+      if (Number.isFinite(pairingTripCredit)) tripCreditMinutes = pairingTripCredit;
+    }
     creditMinutes += getCalendarDayCreditTotal(dateKey, day);
     if (Number.isFinite(day.dpgMinutes)) dpgMinutes += day.dpgMinutes;
     if (Number.isFinite(day.thgMinutes)) thgMinutes += day.thgMinutes;
@@ -6551,6 +6580,9 @@ function getCalendarPairingSummary(pairingId){
       if (Number.isFinite(pairingTafb)) tafbMinutes = pairingTafb;
     }
   });
+  if (Number.isFinite(tripCreditMinutes) && !rangeExcludesDay){
+    creditMinutes = tripCreditMinutes;
+  }
   return {
     creditMinutes,
     tafbMinutes: Number.isFinite(tafbMinutes) ? tafbMinutes : null,
@@ -6584,12 +6616,6 @@ function renderCalendarPairingDetail(pairingId){
     }
     if (Number.isFinite(summary.tafbMinutes)){
       blocks.push(`<div class="block"><div class="label">Total TAFB</div><div class="value">${escapeHtml(formatDurationMinutes(summary.tafbMinutes))}</div></div>`);
-    }
-    if (Number.isFinite(summary.dpgMinutes)){
-      blocks.push(`<div class="block"><div class="label">DPG credit</div><div class="value">${escapeHtml(formatDurationMinutes(summary.dpgMinutes))}</div></div>`);
-    }
-    if (Number.isFinite(summary.thgMinutes)){
-      blocks.push(`<div class="block"><div class="label">THG credit</div><div class="value">${escapeHtml(formatDurationMinutes(summary.thgMinutes))}</div></div>`);
     }
     summaryEl.innerHTML = blocks.join('');
   }
