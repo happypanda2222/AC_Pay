@@ -6558,6 +6558,9 @@ function getCalendarPairingSummary(pairingId){
   let tripCreditMinutes = null;
   let rangeExcludesDay = false;
   const range = getCalendarBlockMonthRangeForMonth(calendarState.selectedMonth);
+  const firstDayInRange = range
+    ? pairingDays.find(dateKey => isCalendarDateKeyInRange(dateKey, range))
+    : pairingDays[0];
   pairingDays.forEach((dateKey) => {
     if (range && !isCalendarDateKeyInRange(dateKey, range)){
       rangeExcludesDay = true;
@@ -6572,7 +6575,7 @@ function getCalendarPairingSummary(pairingId){
     creditMinutes += getCalendarDayCreditTotal(dateKey, day);
     if (Number.isFinite(day.dpgMinutes)) dpgMinutes += day.dpgMinutes;
     if (Number.isFinite(day.thgMinutes)) thgMinutes += day.thgMinutes;
-    if (!Number.isFinite(tafbMinutes)){
+    if (!Number.isFinite(tafbMinutes) && dateKey === firstDayInRange){
       const pairingTripTafb = day?.pairing?.tripTafbMinutes;
       const pairingTafb = Number.isFinite(pairingTripTafb)
         ? pairingTripTafb
