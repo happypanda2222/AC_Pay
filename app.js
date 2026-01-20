@@ -7571,6 +7571,29 @@ function getCurrentPayRate(){
   return { rate, step, year };
 }
 
+function getCalendarCreditRate(today = new Date()){
+  const seat = 'FO';
+  const ac = '320';
+  const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const cutoff = new Date(today.getFullYear(), SWITCH.m - 1, SWITCH.d);
+  const year = todayDate <= cutoff ? today.getFullYear() - 1 : today.getFullYear();
+  const hireDate = DOH;
+  let firstProgression = new Date(hireDate.getFullYear(), PROGRESSION.m - 1, PROGRESSION.d);
+  if (hireDate > firstProgression){
+    firstProgression = new Date(hireDate.getFullYear() + 1, PROGRESSION.m - 1, PROGRESSION.d);
+  }
+  let step = 1;
+  let stepYear = firstProgression.getFullYear() + 1;
+  while (todayDate >= new Date(stepYear, PROGRESSION.m - 1, PROGRESSION.d)){
+    step += 1;
+    stepYear += 1;
+  }
+  step = clampStep(step);
+  const rate = rateFor(seat, ac, year, step, true);
+  if (!Number.isFinite(rate)) return null;
+  return { rate, step, year };
+}
+
 function getCalendarTafbTotalMinutes(monthKey){
   if (!monthKey) return 0;
   const prefix = `${monthKey}-`;
@@ -7659,7 +7682,7 @@ function renderCalendarCreditDetail(){
   });
   const vacationMinutes = getCalendarVacationCreditMinutes(monthKey);
   const totalWithVacation = totalCreditMinutes + vacationMinutes;
-  const currentRate = getCurrentPayRate();
+  const currentRate = getCalendarCreditRate();
   const creditValue = currentRate ? (totalWithVacation / 60) * currentRate.rate : null;
   const blocks = [
     { label: 'Total credit', value: formatDurationMinutes(totalWithVacation) },
@@ -11525,7 +11548,7 @@ const INFO_COPY = {
   calendar: {
     pairingCredit: 'Total credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed total credit (including CNX/CNX PP rules, block growth, extras, and vacation credit) by the current hourly rate from the pay tabs (tie-step/XLR included).',
+    creditValue: 'Credit value multiplies the displayed total credit (including CNX/CNX PP rules, block growth, extras, and vacation credit) by the calendar credit hourly rate (FO 320 with XLR on), using the Sept 30 pay-year cutoff and Nov 5 step progression based on the Aug 7, 2024 hire date.',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr.'
   },
   vo: {
