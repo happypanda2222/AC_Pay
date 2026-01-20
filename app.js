@@ -4664,8 +4664,15 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
     } else if (Number.isFinite(checkOutMs)){
       pairingCheckOutMs = checkOutMs;
     }
+    const boundaryCancelled = Boolean(
+      (firstFlight && isCancelledEvent(firstFlight.event)) ||
+      (lastFlight && isCancelledEvent(lastFlight.event))
+    );
     const tafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.tafbMinutes));
-    let tafbMinutes = Number.isFinite(tafbOverride?.day?.tafbMinutes) ? tafbOverride.day.tafbMinutes : null;
+    const overrideAllowed = !boundaryCancelled;
+    let tafbMinutes = overrideAllowed && Number.isFinite(tafbOverride?.day?.tafbMinutes)
+      ? tafbOverride.day.tafbMinutes
+      : null;
     if (!Number.isFinite(tafbMinutes) && Number.isFinite(pairingCheckInMs) && Number.isFinite(pairingCheckOutMs)){
       const diffMinutes = Math.round((pairingCheckOutMs - pairingCheckInMs) / 60000);
       tafbMinutes = diffMinutes >= 0 ? diffMinutes : null;
@@ -10308,7 +10315,7 @@ const INFO_COPY = {
     esop: 'Employee ESOP deduction for the month at the selected percentage of gross (capped to the monthly portion of $30,000).',
     esopMatch: 'Employer ESOP match for the month (30% of your contribution) reduced by estimated tax on the match.',
     union: 'Estimated monthly union dues based on seat, aircraft, year and hours.',
-    tafb: 'Per diem hours paid at $5.427/hr added after tax.',
+    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB is calculated from check-in/out based on the first/last active flights when boundary flights are canceled; manual overrides apply only when the boundaries are intact.',
     marginalFed: 'Marginal federal tax rate based on annualized taxable income (gross minus pension).',
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
