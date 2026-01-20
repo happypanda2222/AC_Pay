@@ -7352,6 +7352,8 @@ function initCalendar(){
       } catch (err){
         console.error('Schedule text parse failed', err);
         setCalendarStatus(err?.message || 'Schedule parse failed.');
+      } finally {
+        pasteInput.value = '';
       }
     });
   }
