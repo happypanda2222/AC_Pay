@@ -4515,6 +4515,38 @@ function normalizeCalendarBlockMonthRecurring(value){
   return next;
 }
 
+function mergeCalendarBlockMonthsByMonthKey(existing, incoming){
+  const merged = { ...(existing || {}) };
+  Object.entries(incoming || {}).forEach(([monthKey, entry]) => {
+    const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
+    if (!normalizedMonthKey || !entry || typeof entry !== 'object') return;
+    const startKey = normalizeCalendarDateKey(entry.startKey);
+    const endKey = normalizeCalendarDateKey(entry.endKey);
+    if (!startKey) return;
+    merged[normalizedMonthKey] = {
+      startKey,
+      endKey: endKey || null
+    };
+  });
+  return merged;
+}
+
+function mergeCalendarBlockMonthRecurring(existing, incoming){
+  const merged = { ...(existing || {}) };
+  Object.entries(incoming || {}).forEach(([monthKey, entry]) => {
+    const normalizedMonth = normalizeCalendarMonthNumber(monthKey);
+    if (!normalizedMonth || !entry || typeof entry !== 'object') return;
+    const startDay = normalizeCalendarDayNumber(entry.startDay);
+    const endDay = normalizeCalendarDayNumber(entry.endDay);
+    if (!startDay) return;
+    merged[normalizedMonth] = {
+      startDay,
+      endDay: endDay || null
+    };
+  });
+  return merged;
+}
+
 function normalizeCalendarMonthNumber(value){
   const trimmed = String(value || '').trim();
   const monthFromKey = trimmed.match(/^\d{4}-(\d{2})$/);
@@ -5148,7 +5180,9 @@ async function syncCalendarToCloud(){
   const payload = {
     eventsByDate: calendarState.eventsByDate,
     months: calendarState.months,
-    selectedMonth: calendarState.selectedMonth
+    selectedMonth: calendarState.selectedMonth,
+    blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
+    blockMonthRecurring: calendarState.blockMonthRecurring
   };
   let response;
   try {
@@ -5224,10 +5258,29 @@ async function loadCalendarFromCloud(){
     await syncCalendarToCloud();
     return { state: calendarState, statusMessage: 'Local schedule newer; pushed to cloud.' };
   }
+  const incomingBlockMonths = normalizeCalendarBlockMonthsByMonthKey(
+    incomingState.blockMonthsByMonthKey || {}
+  );
+  const incomingBlockRecurring = normalizeCalendarBlockMonthRecurring(
+    incomingState.blockMonthRecurring || {}
+  );
   calendarState = {
-    eventsByDate: incomingState.eventsByDate || {},
-    months: Array.isArray(incomingState.months) ? incomingState.months : [],
-    selectedMonth: data?.selectedMonth || incomingState.selectedMonth || null,
+    eventsByDate: incomingState.eventsByDate && typeof incomingState.eventsByDate === 'object'
+      ? incomingState.eventsByDate
+      : (calendarState.eventsByDate || {}),
+    months: Array.isArray(incomingState.months) ? incomingState.months : (calendarState.months || []),
+    selectedMonth: data?.selectedMonth
+      || incomingState.selectedMonth
+      || calendarState.selectedMonth
+      || null,
+    blockMonthsByMonthKey: mergeCalendarBlockMonthsByMonthKey(
+      calendarState.blockMonthsByMonthKey,
+      incomingBlockMonths
+    ),
+    blockMonthRecurring: mergeCalendarBlockMonthRecurring(
+      calendarState.blockMonthRecurring,
+      incomingBlockRecurring
+    ),
     updatedAt: remoteUpdatedAt
   };
   normalizeCalendarState();
