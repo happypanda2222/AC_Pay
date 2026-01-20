@@ -4554,7 +4554,7 @@ function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsB
     if (!Number.isFinite(dayStartMs)) return;
     for (; dayStartMs < endMs; dayStartMs += 86400000){
       const dayEndMs = dayStartMs + 86400000;
-      if (startMs <= dayStartMs && endMs >= dayEndMs){
+      if (startMs < dayEndMs && endMs > dayStartMs){
         const coveredDateKey = getDateKeyFromMs(dayStartMs);
         if (!coveredDateKey) continue;
         const existingDay = targetEventsByDate[coveredDateKey];
