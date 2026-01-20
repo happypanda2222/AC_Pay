@@ -6141,10 +6141,16 @@ function parsePastedScheduleText(text){
     }
   });
   finalizeDay();
+  const parsedDateKeys = Object.entries(eventsByDate)
+    .filter(([, day]) => Array.isArray(day?.events) && day.events.length > 0)
+    .map(([dateKey]) => dateKey);
+  const parsedMonths = Array.from(new Set(parsedDateKeys.map(dateKey => dateKey.slice(0, 7)))).sort();
   updateCalendarPairingMetrics(eventsByDate);
 
   return {
     eventsByDate,
+    parsedDateKeys,
+    parsedMonths,
     statusMessage: Object.keys(eventsByDate).length ? '' : 'No calendar events found in pasted schedule.'
   };
 }
@@ -7385,8 +7391,7 @@ function initCalendar(){
       pasteInput.value = '';
       setCalendarStatus('Parsing schedule…');
       try {
-        const { eventsByDate, statusMessage } = parsePastedScheduleText(pastedText);
-        const parsedMonths = buildCalendarMonths(eventsByDate);
+        const { eventsByDate, statusMessage, parsedMonths } = parsePastedScheduleText(pastedText);
         if (!parsedMonths.length){
           setCalendarStatus(statusMessage || 'No calendar events found in pasted schedule.');
           return;
