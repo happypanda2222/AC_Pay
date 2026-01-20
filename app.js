@@ -4358,6 +4358,8 @@ let calendarState = {
   eventsByDate: {},
   months: [],
   selectedMonth: null,
+  blockMonthStartKey: null,
+  blockMonthEndKey: null,
   updatedAt: 0
 };
 let calendarDetailEventId = null;
@@ -4366,6 +4368,8 @@ let calendarPairingId = null;
 let calendarDayDetailDateKey = null;
 let calendarCreditDetailOpen = false;
 let calendarBlockGrowthDetailOpen = false;
+let calendarBlockMonthSelecting = false;
+let calendarBlockMonthDraft = null;
 const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
 let calendarAutoSyncTimer = null;
 
@@ -4396,6 +4400,10 @@ function loadCalendarState(){
     if (prefs?.selectedMonth){
       calendarState.selectedMonth = prefs.selectedMonth;
     }
+    const startKey = normalizeCalendarDateKey(prefs?.blockMonthStartKey);
+    const endKey = normalizeCalendarDateKey(prefs?.blockMonthEndKey);
+    if (startKey) calendarState.blockMonthStartKey = startKey;
+    if (endKey) calendarState.blockMonthEndKey = endKey;
   } catch (err){
     console.warn('Failed to load calendar prefs', err);
   }
@@ -4706,7 +4714,11 @@ function saveCalendarState({ bumpUpdatedAt = true } = {}){
   };
   try {
     localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(payload));
-    localStorage.setItem(CALENDAR_PREFS_KEY, JSON.stringify({ selectedMonth: calendarState.selectedMonth }));
+    localStorage.setItem(CALENDAR_PREFS_KEY, JSON.stringify({
+      selectedMonth: calendarState.selectedMonth,
+      blockMonthStartKey: calendarState.blockMonthStartKey,
+      blockMonthEndKey: calendarState.blockMonthEndKey
+    }));
   } catch (err){
     console.warn('Failed to save calendar schedule', err);
   }
@@ -6132,6 +6144,10 @@ function deleteCalendarMonth(monthKey){
   if (calendarState.selectedMonth === normalized){
     calendarState.selectedMonth = null;
   }
+  if (calendarState.blockMonthStartKey?.startsWith(prefix) || calendarState.blockMonthEndKey?.startsWith(prefix)){
+    calendarState.blockMonthStartKey = null;
+    calendarState.blockMonthEndKey = null;
+  }
   ensureCalendarSelection();
   saveCalendarState();
   renderCalendar();
@@ -6144,6 +6160,50 @@ function ensureCalendarSelection(){
   }
 }
 
+function normalizeCalendarDateKey(value){
+  const trimmed = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
+}
+
+function getCalendarBlockMonthRange(){
+  const startKey = normalizeCalendarDateKey(calendarState.blockMonthStartKey);
+  const endKey = normalizeCalendarDateKey(calendarState.blockMonthEndKey);
+  if (!startKey || !endKey) return null;
+  if (startKey <= endKey){
+    return { startKey, endKey };
+  }
+  return { startKey: endKey, endKey: startKey };
+}
+
+function getCalendarBlockMonthRangeForMonth(monthKey){
+  const range = getCalendarBlockMonthRange();
+  if (!range || !monthKey) return null;
+  const prefix = `${monthKey}-`;
+  if (!range.startKey.startsWith(prefix) || !range.endKey.startsWith(prefix)){
+    return null;
+  }
+  return range;
+}
+
+function getCalendarBlockMonthHighlightRange(monthKey){
+  const startKey = normalizeCalendarDateKey(calendarState.blockMonthStartKey);
+  if (!startKey || !monthKey) return null;
+  const endKey = normalizeCalendarDateKey(calendarState.blockMonthEndKey) || startKey;
+  const range = startKey <= endKey
+    ? { startKey, endKey }
+    : { startKey: endKey, endKey: startKey };
+  const prefix = `${monthKey}-`;
+  if (!range.startKey.startsWith(prefix) || !range.endKey.startsWith(prefix)){
+    return null;
+  }
+  return range;
+}
+
+function isCalendarDateKeyInRange(dateKey, range){
+  if (!range || !dateKey) return false;
+  return dateKey >= range.startKey && dateKey <= range.endKey;
+}
+
 function updateCalendarTotals(year, month){
   let creditMinutes = 0;
   let dutyMinutes = 0;
@@ -6152,8 +6212,11 @@ function updateCalendarTotals(year, month){
   const monthKey = Number.isFinite(year) && Number.isFinite(month) && year > 0 && month > 0
     ? `${year}-${String(month).padStart(2, '0')}`
     : null;
+  const range = monthKey ? getCalendarBlockMonthRangeForMonth(monthKey) : null;
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-    if (!dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)) return;
+    if (!dateKey.startsWith(monthPrefix)) return;
+    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
     creditMinutes += getCalendarDayCreditTotal(dateKey, day);
     const pairingId = String(day?.pairing?.pairingId || '').trim();
     if (pairingId && Number.isFinite(day?.pairing?.tafbMinutes)){
@@ -6181,6 +6244,7 @@ function renderCalendar(){
   const monthSelect = document.getElementById('modern-calendar-month');
   const headerEl = document.getElementById('modern-calendar-summary-header');
   const gridEl = document.getElementById('modern-calendar-grid');
+  const blockMonthButton = document.getElementById('modern-calendar-block-month');
   if (!monthSelect || !gridEl || !headerEl) return;
   calendarState.months = mergeCalendarMonths(calendarState.months, buildCalendarMonths(calendarState.eventsByDate));
   ensureCalendarSelection();
@@ -6194,6 +6258,11 @@ function renderCalendar(){
   });
   monthSelect.value = calendarState.selectedMonth || monthOptions[0] || '';
   headerEl.textContent = formatCalendarMonthLabel(calendarState.selectedMonth);
+  if (blockMonthButton){
+    blockMonthButton.classList.toggle('btn-primary', calendarBlockMonthSelecting);
+    blockMonthButton.classList.toggle('btn-secondary', !calendarBlockMonthSelecting);
+    blockMonthButton.setAttribute('aria-pressed', String(calendarBlockMonthSelecting));
+  }
   const [year, month] = (calendarState.selectedMonth || '').split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month)){
     gridEl.innerHTML = '';
@@ -6201,6 +6270,8 @@ function renderCalendar(){
     setCalendarStatus('No schedule loaded.');
     return;
   }
+  const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+  const blockMonthRange = getCalendarBlockMonthHighlightRange(monthKey);
   const events = [];
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (dateKey.startsWith(`${year}-${String(month).padStart(2, '0')}`)){
@@ -6230,6 +6301,11 @@ function renderCalendar(){
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
     dayCell.dataset.dateKey = dateKey;
+    if (blockMonthRange && isCalendarDateKeyInRange(dateKey, blockMonthRange)){
+      dayCell.classList.add('is-block-range');
+      if (dateKey === blockMonthRange.startKey) dayCell.classList.add('is-block-start');
+      if (dateKey === blockMonthRange.endKey) dayCell.classList.add('is-block-end');
+    }
     if (dayData){
       dayCell.classList.add('has-detail');
     }
@@ -6374,7 +6450,9 @@ function getCalendarPairingSummary(pairingId){
   let dpgMinutes = 0;
   let thgMinutes = 0;
   let tafbMinutes = null;
+  const range = getCalendarBlockMonthRangeForMonth(calendarState.selectedMonth);
   pairingDays.forEach((dateKey) => {
+    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
     const day = calendarState.eventsByDate?.[dateKey];
     if (!day) return;
     creditMinutes += getCalendarDayCreditTotal(dateKey, day);
@@ -6684,12 +6762,14 @@ function renderCalendarCreditDetail(){
   }
   titleEl.textContent = `${formatCalendarMonthLabel(monthKey)} credit`;
   const prefix = `${monthKey}-`;
+  const range = getCalendarBlockMonthRangeForMonth(monthKey);
   let totalCreditMinutes = 0;
   let ppCreditMinutes = 0;
   let lostCreditMinutes = 0;
   let blockGrowthMinutes = 0;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!dateKey.startsWith(prefix)) return;
+    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
     totalCreditMinutes += getCalendarDayCreditTotal(dateKey, day);
     (day?.events || []).forEach((event) => {
       const creditTotal = getCalendarEventCreditTotal(event);
@@ -6744,8 +6824,10 @@ function renderCalendarBlockGrowthDetail(){
   }
   titleEl.textContent = `${formatCalendarMonthLabel(monthKey)} block growth`;
   const prefix = `${monthKey}-`;
+  const range = getCalendarBlockMonthRangeForMonth(monthKey);
   const entries = Object.entries(calendarState.eventsByDate || {})
     .filter(([dateKey]) => dateKey.startsWith(prefix))
+    .filter(([dateKey]) => (range ? isCalendarDateKeyInRange(dateKey, range) : true))
     .sort(([a], [b]) => a.localeCompare(b));
   const groups = [];
   entries.forEach(([dateKey, day]) => {
@@ -6899,6 +6981,29 @@ function initCalendar(){
       setCalendarStatus(`Deleted ${label}.`);
     });
   }
+  const blockMonthButton = document.getElementById('modern-calendar-block-month');
+  if (blockMonthButton){
+    blockMonthButton.addEventListener('click', () => {
+      if (calendarBlockMonthSelecting){
+        calendarBlockMonthSelecting = false;
+        if (calendarBlockMonthDraft){
+          calendarState.blockMonthStartKey = calendarBlockMonthDraft.startKey;
+          calendarState.blockMonthEndKey = calendarBlockMonthDraft.endKey;
+        }
+        calendarBlockMonthDraft = null;
+        renderCalendar();
+        return;
+      }
+      calendarBlockMonthSelecting = true;
+      calendarBlockMonthDraft = {
+        startKey: calendarState.blockMonthStartKey,
+        endKey: calendarState.blockMonthEndKey
+      };
+      calendarState.blockMonthStartKey = null;
+      calendarState.blockMonthEndKey = null;
+      renderCalendar();
+    });
+  }
   const pasteInput = document.getElementById('modern-calendar-text');
   const parseButton = document.getElementById('modern-calendar-parse');
   if (parseButton && pasteInput){
@@ -7007,6 +7112,32 @@ function initCalendar(){
   if (grid){
     grid.addEventListener('click', (event) => {
       const target = event.target;
+      if (calendarBlockMonthSelecting){
+        const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
+        const dateKey = dayCell?.dataset?.dateKey;
+        if (dateKey){
+          if (!calendarState.blockMonthStartKey){
+            calendarState.blockMonthStartKey = dateKey;
+            renderCalendar();
+            return;
+          }
+          if (!calendarState.blockMonthEndKey){
+            calendarState.blockMonthEndKey = dateKey;
+            const range = getCalendarBlockMonthRangeForMonth(calendarState.selectedMonth);
+            if (!range){
+              calendarState.blockMonthStartKey = dateKey;
+              calendarState.blockMonthEndKey = null;
+              renderCalendar();
+              return;
+            }
+            calendarBlockMonthSelecting = false;
+            calendarBlockMonthDraft = null;
+            saveCalendarState();
+            renderCalendar();
+          }
+        }
+        return;
+      }
       const eventButton = target instanceof Element ? target.closest('.calendar-event') : null;
       if (eventButton){
         const wrapper = eventButton.closest('[data-date-key]');

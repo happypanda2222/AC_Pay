@@ -481,6 +481,15 @@
       flex-direction:column;
       gap:8px;
     }
+    .calendar-day.is-block-range{
+      border-color:#38bdf8;
+      background:rgba(14, 116, 144, 0.22);
+    }
+    .calendar-day.is-block-start,
+    .calendar-day.is-block-end{
+      border-color:#facc15;
+      background:rgba(250, 204, 21, 0.18);
+    }
     .calendar-day.has-detail{
       cursor:pointer;
     }
@@ -761,10 +770,13 @@
     }
     .calendar-delete-actions{
       display:flex;
-      justify-content:flex-end;
+      gap:8px;
+      flex-wrap:wrap;
       margin-top:8px;
     }
     .calendar-delete-actions .btn{
+      flex:1 1 0;
+      min-width:0;
       width:100%;
     }
     @media(max-width:600px){
@@ -1431,11 +1443,11 @@
               <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
               <div class="metric-grid calendar-summary-grid">
                 <button class="metric-card actionable" id="modern-calendar-credit-card" type="button">
-                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals use per-flight credit minutes when present (last H:MM on each flight line), keep CNX PP credit, remove CNX (non-PP) credit per canceled flight, and add block growth, DPG/THG extras, and vacation credit. Day summary credit is only used when no per-flight credits are available."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals use per-flight credit minutes when present (last H:MM on each flight line), keep CNX PP credit, remove CNX (non-PP) credit per canceled flight, and add block growth, DPG/THG extras, and vacation credit. Day summary credit is only used when no per-flight credits are available.</span></span></div>
+                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals use per-flight credit minutes when present (last H:MM on each flight line), keep CNX PP credit, remove CNX (non-PP) credit per canceled flight, and add block growth, DPG/THG extras, and vacation credit. Day summary credit is only used when no per-flight credits are available. If a block-month range is set, totals only include days in that range."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals use per-flight credit minutes when present (last H:MM on each flight line), keep CNX PP credit, remove CNX (non-PP) credit per canceled flight, and add block growth, DPG/THG extras, and vacation credit. Day summary credit is only used when no per-flight credits are available. If a block-month range is set, totals only include days in that range.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-credit">--</div>
                 </button>
                 <div class="metric-card">
-                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight.</span></span></div>
+                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. If a block-month range is set, totals only include days in that range."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. If a block-month range is set, totals only include days in that range.</span></span></div>
                   <div class="metric-value" id="modern-calendar-total-tafb">--</div>
                 </div>
                 <div class="metric-card">
@@ -1461,6 +1473,7 @@
               <button id="modern-calendar-pull" class="btn btn-secondary" type="button">Pull from Cloud</button>
             </div>
             <div class="calendar-delete-actions">
+              <button id="modern-calendar-block-month" class="btn btn-secondary" type="button">Config Block Month</button>
               <button id="modern-calendar-delete-month" class="btn btn-secondary" type="button">Delete month</button>
             </div>
             <div id="modern-calendar-detail" class="hidden">
