@@ -4358,8 +4358,7 @@ let calendarState = {
   eventsByDate: {},
   months: [],
   selectedMonth: null,
-  blockMonthStartKey: null,
-  blockMonthEndKey: null,
+  blockMonthsByMonthKey: {},
   updatedAt: 0
 };
 let calendarDetailEventId = null;
@@ -4390,6 +4389,7 @@ function loadCalendarState(){
       eventsByDate: stored.eventsByDate || {},
       months: Array.isArray(stored.months) ? stored.months : [],
       selectedMonth: stored.selectedMonth || null,
+      blockMonthsByMonthKey: stored.blockMonthsByMonthKey || {},
       updatedAt: normalizeCalendarUpdatedAt(stored.updatedAt)
     };
   } catch (err){
@@ -4400,10 +4400,20 @@ function loadCalendarState(){
     if (prefs?.selectedMonth){
       calendarState.selectedMonth = prefs.selectedMonth;
     }
+    if (prefs?.blockMonthsByMonthKey && typeof prefs.blockMonthsByMonthKey === 'object'){
+      calendarState.blockMonthsByMonthKey = prefs.blockMonthsByMonthKey;
+    }
     const startKey = normalizeCalendarDateKey(prefs?.blockMonthStartKey);
     const endKey = normalizeCalendarDateKey(prefs?.blockMonthEndKey);
-    if (startKey) calendarState.blockMonthStartKey = startKey;
-    if (endKey) calendarState.blockMonthEndKey = endKey;
+    const legacyMonthKey = normalizeCalendarMonthKey(prefs?.selectedMonth)
+      || normalizeCalendarMonthKey(startKey?.slice(0, 7))
+      || normalizeCalendarMonthKey(endKey?.slice(0, 7));
+    if (legacyMonthKey && startKey && !calendarState.blockMonthsByMonthKey?.[legacyMonthKey]){
+      calendarState.blockMonthsByMonthKey = {
+        ...(calendarState.blockMonthsByMonthKey || {}),
+        [legacyMonthKey]: { startKey, endKey }
+      };
+    }
   } catch (err){
     console.warn('Failed to load calendar prefs', err);
   }
@@ -4411,6 +4421,9 @@ function loadCalendarState(){
 }
 
 function normalizeCalendarState(){
+  calendarState.blockMonthsByMonthKey = normalizeCalendarBlockMonthsByMonthKey(
+    calendarState.blockMonthsByMonthKey
+  );
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day || typeof day !== 'object') return;
     if (typeof day.sourceMonthKey !== 'string') day.sourceMonthKey = null;
@@ -4460,6 +4473,22 @@ function normalizeCalendarState(){
   });
   dedupeCalendarPairingIds(calendarState.eventsByDate);
   updateCalendarPairingMetrics(calendarState.eventsByDate);
+}
+
+function normalizeCalendarBlockMonthsByMonthKey(value){
+  const next = {};
+  Object.entries(value || {}).forEach(([monthKey, entry]) => {
+    const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
+    if (!normalizedMonthKey || !entry || typeof entry !== 'object') return;
+    const startKey = normalizeCalendarDateKey(entry.startKey);
+    const endKey = normalizeCalendarDateKey(entry.endKey);
+    if (!startKey) return;
+    next[normalizedMonthKey] = {
+      startKey,
+      endKey: endKey || null
+    };
+  });
+  return next;
 }
 
 function dedupeCalendarPairingIds(targetEventsByDate = calendarState.eventsByDate){
@@ -4929,14 +4958,14 @@ function saveCalendarState({ bumpUpdatedAt = true } = {}){
     eventsByDate: calendarState.eventsByDate,
     months: calendarState.months,
     selectedMonth: calendarState.selectedMonth,
+    blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
     updatedAt: calendarState.updatedAt
   };
   try {
     localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(payload));
     localStorage.setItem(CALENDAR_PREFS_KEY, JSON.stringify({
       selectedMonth: calendarState.selectedMonth,
-      blockMonthStartKey: calendarState.blockMonthStartKey,
-      blockMonthEndKey: calendarState.blockMonthEndKey
+      blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey
     }));
   } catch (err){
     console.warn('Failed to save calendar schedule', err);
@@ -6573,9 +6602,8 @@ function deleteCalendarMonth(monthKey){
   if (calendarState.selectedMonth === normalized){
     calendarState.selectedMonth = null;
   }
-  if (calendarState.blockMonthStartKey?.startsWith(prefix) || calendarState.blockMonthEndKey?.startsWith(prefix)){
-    calendarState.blockMonthStartKey = null;
-    calendarState.blockMonthEndKey = null;
+  if (calendarState.blockMonthsByMonthKey?.[normalized]){
+    delete calendarState.blockMonthsByMonthKey[normalized];
   }
   ensureCalendarSelection();
   saveCalendarState();
@@ -6619,19 +6647,41 @@ function getCalendarMonthDateBounds(monthKey, bufferDays = 0){
   };
 }
 
-function getCalendarBlockMonthRange(){
-  const startKey = normalizeCalendarDateKey(calendarState.blockMonthStartKey);
-  const endKey = normalizeCalendarDateKey(calendarState.blockMonthEndKey);
-  if (!startKey || !endKey) return null;
-  if (startKey <= endKey){
-    return { startKey, endKey };
+function getCalendarBlockMonthEntry(monthKey){
+  const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
+  if (!normalizedMonthKey) return null;
+  const entry = calendarState.blockMonthsByMonthKey?.[normalizedMonthKey];
+  if (!entry || typeof entry !== 'object') return null;
+  const startKey = normalizeCalendarDateKey(entry.startKey);
+  const endKey = normalizeCalendarDateKey(entry.endKey);
+  if (!startKey) return null;
+  return { startKey, endKey };
+}
+
+function setCalendarBlockMonthEntry(monthKey, { startKey, endKey } = {}){
+  const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
+  if (!normalizedMonthKey) return;
+  const normalizedStartKey = normalizeCalendarDateKey(startKey);
+  const normalizedEndKey = normalizeCalendarDateKey(endKey);
+  if (!calendarState.blockMonthsByMonthKey || typeof calendarState.blockMonthsByMonthKey !== 'object'){
+    calendarState.blockMonthsByMonthKey = {};
   }
-  return { startKey: endKey, endKey: startKey };
+  if (!normalizedStartKey){
+    delete calendarState.blockMonthsByMonthKey[normalizedMonthKey];
+    return;
+  }
+  calendarState.blockMonthsByMonthKey[normalizedMonthKey] = {
+    startKey: normalizedStartKey,
+    endKey: normalizedEndKey || null
+  };
 }
 
 function getCalendarBlockMonthRangeForMonth(monthKey){
-  const range = getCalendarBlockMonthRange();
-  if (!range || !monthKey) return null;
+  const entry = getCalendarBlockMonthEntry(monthKey);
+  if (!entry || !monthKey || !entry.endKey) return null;
+  const startKey = entry.startKey;
+  const endKey = entry.endKey;
+  const range = startKey <= endKey ? { startKey, endKey } : { startKey: endKey, endKey: startKey };
   const bounds = getCalendarMonthDateBounds(monthKey, 3);
   if (!bounds) return null;
   if (!isCalendarDateKeyInRange(range.startKey, bounds) || !isCalendarDateKeyInRange(range.endKey, bounds)){
@@ -6641,9 +6691,10 @@ function getCalendarBlockMonthRangeForMonth(monthKey){
 }
 
 function getCalendarBlockMonthHighlightRange(monthKey){
-  const startKey = normalizeCalendarDateKey(calendarState.blockMonthStartKey);
-  if (!startKey || !monthKey) return null;
-  const endKey = normalizeCalendarDateKey(calendarState.blockMonthEndKey) || startKey;
+  const entry = getCalendarBlockMonthEntry(monthKey);
+  if (!entry || !monthKey) return null;
+  const startKey = entry.startKey;
+  const endKey = entry.endKey || startKey;
   const range = startKey <= endKey
     ? { startKey, endKey }
     : { startKey: endKey, endKey: startKey };
@@ -7616,23 +7667,23 @@ function initCalendar(){
   const blockMonthButton = document.getElementById('modern-calendar-block-month');
   if (blockMonthButton){
     blockMonthButton.addEventListener('click', () => {
+      const monthKey = normalizeCalendarMonthKey(calendarState.selectedMonth);
       if (calendarBlockMonthSelecting){
         calendarBlockMonthSelecting = false;
-        if (calendarBlockMonthDraft){
-          calendarState.blockMonthStartKey = calendarBlockMonthDraft.startKey;
-          calendarState.blockMonthEndKey = calendarBlockMonthDraft.endKey;
+        if (calendarBlockMonthDraft?.monthKey){
+          setCalendarBlockMonthEntry(calendarBlockMonthDraft.monthKey, calendarBlockMonthDraft);
         }
         calendarBlockMonthDraft = null;
         renderCalendar();
         return;
       }
+      if (!monthKey) return;
+      const existing = getCalendarBlockMonthEntry(monthKey);
       calendarBlockMonthSelecting = true;
-      calendarBlockMonthDraft = {
-        startKey: calendarState.blockMonthStartKey,
-        endKey: calendarState.blockMonthEndKey
-      };
-      calendarState.blockMonthStartKey = null;
-      calendarState.blockMonthEndKey = null;
+      calendarBlockMonthDraft = existing
+        ? { monthKey, startKey: existing.startKey, endKey: existing.endKey }
+        : { monthKey, startKey: null, endKey: null };
+      setCalendarBlockMonthEntry(monthKey, { startKey: null, endKey: null });
       renderCalendar();
     });
   }
@@ -7750,17 +7801,19 @@ function initCalendar(){
   if (grid){
     const handleBlockMonthSelection = (dateKey) => {
       if (!dateKey) return;
-      if (!calendarState.blockMonthStartKey){
-        calendarState.blockMonthStartKey = dateKey;
+      const monthKey = normalizeCalendarMonthKey(calendarState.selectedMonth);
+      if (!monthKey) return;
+      const entry = getCalendarBlockMonthEntry(monthKey);
+      if (!entry){
+        setCalendarBlockMonthEntry(monthKey, { startKey: dateKey, endKey: null });
         renderCalendar();
         return;
       }
-      if (!calendarState.blockMonthEndKey){
-        calendarState.blockMonthEndKey = dateKey;
-        const range = getCalendarBlockMonthRangeForMonth(calendarState.selectedMonth);
+      if (!entry.endKey){
+        setCalendarBlockMonthEntry(monthKey, { startKey: entry.startKey, endKey: dateKey });
+        const range = getCalendarBlockMonthRangeForMonth(monthKey);
         if (!range){
-          calendarState.blockMonthStartKey = dateKey;
-          calendarState.blockMonthEndKey = null;
+          setCalendarBlockMonthEntry(monthKey, { startKey: dateKey, endKey: null });
           renderCalendar();
           return;
         }
