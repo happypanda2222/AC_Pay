@@ -4539,6 +4539,60 @@ function getDateKeyFromMs(ms){
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+function ensureOvernightCheckoutPlaceholderDays(targetEventsByDate = calendarState.eventsByDate){
+  const pairingMap = new Map();
+  Object.entries(targetEventsByDate || {}).forEach(([dateKey, day]) => {
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    if (!pairingId) return;
+    if (!pairingMap.has(pairingId)) pairingMap.set(pairingId, []);
+    pairingMap.get(pairingId).push(dateKey);
+  });
+  pairingMap.forEach((dateKeys) => {
+    const sortedDays = dateKeys.sort();
+    const lastDateKey = sortedDays[sortedDays.length - 1];
+    const lastDay = targetEventsByDate?.[lastDateKey];
+    if (!lastDay) return;
+    const dayStartMs = getDateKeyStartMs(lastDateKey);
+    if (!Number.isFinite(dayStartMs)) return;
+    const nextDateKey = getDateKeyFromMs(dayStartMs + 86400000);
+    if (!nextDateKey || targetEventsByDate?.[nextDateKey]) return;
+    let lastTiming = null;
+    (lastDay?.events || []).forEach((event) => {
+      const timing = getCalendarEventTiming(event, lastDateKey);
+      if (!timing) return;
+      if (!lastTiming || timing.endMs > lastTiming.endMs){
+        lastTiming = timing;
+      }
+    });
+    if (!lastTiming) return;
+    const arrivalDateKey = getDateKeyFromMs(lastTiming.endMs);
+    if (arrivalDateKey !== nextDateKey) return;
+    let checkOutMinutes = Number.isFinite(lastDay?.checkOutMinutes) ? lastDay.checkOutMinutes : null;
+    if (Number.isFinite(checkOutMinutes)){
+      if (checkOutMinutes >= 1440) checkOutMinutes -= 1440;
+    } else {
+      const nextDayStartMs = getDateKeyStartMs(nextDateKey);
+      if (Number.isFinite(nextDayStartMs)){
+        const arrivalMinutes = Math.round((lastTiming.endMs - nextDayStartMs) / 60000);
+        if (arrivalMinutes >= 0) checkOutMinutes = arrivalMinutes + 15;
+      }
+    }
+    const pairingId = String(lastDay?.pairing?.pairingId || '').trim();
+    const pairingNumber = String(lastDay?.pairing?.pairingNumber || '').trim();
+    targetEventsByDate[nextDateKey] = {
+      events: [],
+      pairing: {
+        pairingId: pairingId || `PAIR-${nextDateKey}`,
+        pairingNumber,
+        pairingDays: []
+      },
+      checkOutMinutes: Number.isFinite(checkOutMinutes) ? checkOutMinutes : null,
+      checkoutPlaceholderFromDateKey: lastDateKey,
+      sourceMonthKey: typeof lastDay?.sourceMonthKey === 'string' ? lastDay.sourceMonthKey : undefined
+    };
+  });
+}
+
 function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsByDate){
   const placeholders = [];
   Object.entries(targetEventsByDate || {}).forEach(([dateKey, day]) => {
@@ -4612,6 +4666,7 @@ function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsB
 }
 
 function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsByDate){
+  ensureOvernightCheckoutPlaceholderDays(targetEventsByDate);
   ensureLayoverPlaceholderDays(targetEventsByDate);
   hydrateCalendarPairingDays(targetEventsByDate);
   const pairingMap = new Map();
