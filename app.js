@@ -4547,31 +4547,39 @@ function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsB
       const dayEndMs = dayStartMs + 86400000;
       if (startMs <= dayStartMs && endMs >= dayEndMs){
         const coveredDateKey = getDateKeyFromMs(dayStartMs);
-        if (coveredDateKey && !targetEventsByDate[coveredDateKey]){
-          placeholders.push({ dateKey: coveredDateKey, sourceDay: day });
+        if (!coveredDateKey) continue;
+        const existingDay = targetEventsByDate[coveredDateKey];
+        if (existingDay && Array.isArray(existingDay.events) && existingDay.events.length){
+          continue;
         }
+        placeholders.push({ dateKey: coveredDateKey, sourceDay: day });
       }
     }
   });
   placeholders.forEach(({ dateKey, sourceDay }) => {
+    const existingDay = targetEventsByDate[dateKey];
     const pairingId = String(sourceDay?.pairing?.pairingId || '').trim();
     const pairingNumber = String(sourceDay?.pairing?.pairingNumber || '').trim();
     const layover = sourceDay?.layover || {};
-    targetEventsByDate[dateKey] = {
-      events: [],
-      sourceMonthKey: typeof sourceDay?.sourceMonthKey === 'string' ? sourceDay.sourceMonthKey : null,
-      pairing: pairingId
-        ? {
-          pairingId,
-          pairingNumber,
-          pairingDays: []
-        }
-        : null,
-      layover: {
+    const nextDay = existingDay && typeof existingDay === 'object' ? existingDay : {};
+    if (!Array.isArray(nextDay.events)) nextDay.events = [];
+    if (!nextDay.sourceMonthKey && typeof sourceDay?.sourceMonthKey === 'string'){
+      nextDay.sourceMonthKey = sourceDay.sourceMonthKey;
+    }
+    if (!nextDay.pairing && pairingId){
+      nextDay.pairing = {
+        pairingId,
+        pairingNumber,
+        pairingDays: []
+      };
+    }
+    if (!nextDay.layover){
+      nextDay.layover = {
         hotel: typeof layover.hotel === 'string' ? layover.hotel : '',
         durationMinutes: Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null
-      }
-    };
+      };
+    }
+    targetEventsByDate[dateKey] = nextDay;
   });
 }
 
