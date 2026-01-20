@@ -4950,53 +4950,51 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
         return checkOutStartMs + (checkOutMinutes * 60000);
       })()
       : null;
+    const boundaryCancelled = Boolean(
+      (firstFlight && isCancelledEvent(firstFlight.event)) ||
+      (lastFlight && isCancelledEvent(lastFlight.event))
+    );
     let pairingCheckInMs = null;
     let pairingCheckOutMs = null;
-    if (firstFlight){
-      if (isCancelledEvent(firstFlight.event)){
-        if (firstActive && Number.isFinite(firstActive.departureMinutes)){
-          pairingCheckInMs = firstActive.startMs - (75 * 60000);
+    if (boundaryCancelled){
+      if (firstActive && lastActive){
+        pairingCheckInMs = firstActive.startMs - (75 * 60000);
+        pairingCheckOutMs = lastActive.endMs + (15 * 60000);
+      }
+    } else {
+      if (firstFlight){
+        if (Number.isFinite(checkInMs)){
+          pairingCheckInMs = checkInMs;
         } else if (Number.isFinite(firstFlight.departureMinutes)){
           pairingCheckInMs = firstFlight.startMs - (75 * 60000);
         }
       } else if (Number.isFinite(checkInMs)){
         pairingCheckInMs = checkInMs;
-      } else if (Number.isFinite(firstFlight.departureMinutes)){
-        pairingCheckInMs = firstFlight.startMs - (75 * 60000);
       }
-    } else if (Number.isFinite(checkInMs)){
-      pairingCheckInMs = checkInMs;
-    }
-    if (lastFlight){
-      if (isCancelledEvent(lastFlight.event)){
-        if (lastActive && Number.isFinite(lastActive.arrivalMinutes)){
-          pairingCheckOutMs = lastActive.endMs + (15 * 60000);
+      if (lastFlight){
+        if (Number.isFinite(checkOutMs)){
+          pairingCheckOutMs = checkOutMs;
         } else if (Number.isFinite(lastFlight.arrivalMinutes)){
           pairingCheckOutMs = lastFlight.endMs + (15 * 60000);
         }
       } else if (Number.isFinite(checkOutMs)){
         pairingCheckOutMs = checkOutMs;
-      } else if (Number.isFinite(lastFlight.arrivalMinutes)){
-        pairingCheckOutMs = lastFlight.endMs + (15 * 60000);
       }
-    } else if (Number.isFinite(checkOutMs)){
-      pairingCheckOutMs = checkOutMs;
     }
-    const boundaryCancelled = Boolean(
-      (firstFlight && isCancelledEvent(firstFlight.event)) ||
-      (lastFlight && isCancelledEvent(lastFlight.event))
-    );
     const tripTafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.pairing?.tripTafbMinutes));
     const tripTafbMinutes = tripTafbOverride?.day?.pairing?.tripTafbMinutes;
     const tripCreditOverride = dayEntries.find(entry => Number.isFinite(entry.day?.pairing?.tripCreditMinutes));
     const tripCreditMinutes = tripCreditOverride?.day?.pairing?.tripCreditMinutes;
     const tafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.tafbMinutes));
     const overrideAllowed = !boundaryCancelled;
-    let tafbMinutes = Number.isFinite(tripTafbMinutes)
-      ? tripTafbMinutes
-      : (overrideAllowed && Number.isFinite(tafbOverride?.day?.tafbMinutes)
-        ? tafbOverride.day.tafbMinutes
-        : null);
+    let tafbMinutes = null;
+    if (!boundaryCancelled){
+      tafbMinutes = Number.isFinite(tripTafbMinutes)
+        ? tripTafbMinutes
+        : (overrideAllowed && Number.isFinite(tafbOverride?.day?.tafbMinutes)
+          ? tafbOverride.day.tafbMinutes
+          : null);
+    }
     if (!Number.isFinite(tafbMinutes) && Number.isFinite(pairingCheckInMs) && Number.isFinite(pairingCheckOutMs)){
       const diffMinutes = Math.round((pairingCheckOutMs - pairingCheckInMs) / 60000);
       tafbMinutes = diffMinutes >= 0 ? diffMinutes : null;
@@ -11583,7 +11581,7 @@ const INFO_COPY = {
     esop: 'Employee ESOP deduction for the month at the selected percentage of gross (capped to the monthly portion of $30,000).',
     esopMatch: 'Employer ESOP match for the month (30% of your contribution) reduced by estimated tax on the match.',
     union: 'Estimated monthly union dues based on seat, aircraft, year and hours.',
-    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out based on the first/last active flights when boundary flights are canceled, with check-out extending past midnight when the last flight arrives after midnight and the check-out is logged on the same date. Manual overrides apply only when the boundaries are intact.',
+    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out. If the original first/last flight is cancelled, TRIP and manual overrides are ignored and TAFB is recalculated as 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel).',
     marginalFed: 'Marginal federal tax rate based on annualized taxable income (gross minus pension).',
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
@@ -11591,7 +11589,7 @@ const INFO_COPY = {
     pairingCredit: 'Pairing credit uses the trip credit from TRIP TAFB lines when available, minus CNX (non-PP) event credits; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
     creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals include vacation credit and use TRIP credit overrides minus CNX (non-PP) credits when available; otherwise they sum daily credits (CNX PP credits remain included).',
-    tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month.'
+    tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. If the original pairing boundary flights cancel, TAFB recalculates from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank when all flights cancel).'
   },
   vo: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
