@@ -6620,9 +6620,25 @@ function renderCalendarPairingDetail(pairingId){
     summaryEl.innerHTML = blocks.join('');
   }
   daysEl.innerHTML = '';
-  pairing.days.forEach((dateKey) => {
+  pairing.days.forEach((dateKey, index) => {
     const day = calendarState.eventsByDate?.[dateKey];
     if (!day) return;
+    const nextDateKey = pairing.days[index + 1];
+    const nextDay = nextDateKey ? calendarState.eventsByDate?.[nextDateKey] : null;
+    const hasEvents = Array.isArray(day.events) && day.events.length > 0;
+    const hasNextFlights = Array.isArray(nextDay?.events) && nextDay.events.length > 0;
+    const layoverParts = [];
+    const layoverDurationMinutes = day.layover?.durationMinutes;
+    const hasLayoverDuration = Number.isFinite(layoverDurationMinutes);
+    if (hasLayoverDuration){
+      layoverParts.push(formatDurationMinutes(layoverDurationMinutes));
+    }
+    const layoverLabel = getCalendarLayoverLocationLabel(day, dateKey);
+    if (layoverLabel){
+      layoverParts.push(layoverLabel);
+    }
+    const shouldInsertSeparator = hasEvents && hasLayoverDuration && hasNextFlights && layoverParts.length;
+    const shouldShowLayoverInHeader = layoverParts.length && !shouldInsertSeparator;
     const dayRow = document.createElement('button');
     dayRow.type = 'button';
     dayRow.className = 'calendar-pairing-day';
@@ -6633,15 +6649,7 @@ function renderCalendarPairingDetail(pairingId){
     dayLabel.className = 'calendar-pairing-day-title';
     dayLabel.textContent = formatCalendarDateLabel(dateKey);
     header.appendChild(dayLabel);
-    const layoverParts = [];
-    if (Number.isFinite(day.layover?.durationMinutes)){
-      layoverParts.push(formatDurationMinutes(day.layover.durationMinutes));
-    }
-    const layoverLabel = getCalendarLayoverLocationLabel(day, dateKey);
-    if (layoverLabel){
-      layoverParts.push(layoverLabel);
-    }
-    if (layoverParts.length){
+    if (shouldShowLayoverInHeader){
       const layover = document.createElement('div');
       layover.className = 'calendar-pairing-day-layover';
       layover.textContent = `Layover ${layoverParts.join(' · ')}`;
@@ -6650,7 +6658,7 @@ function renderCalendarPairingDetail(pairingId){
     dayRow.appendChild(header);
     const flights = document.createElement('div');
     flights.className = 'calendar-pairing-day-flights';
-    if (day.events?.length){
+    if (hasEvents){
       day.events.forEach((event) => {
         const flight = document.createElement('div');
         flight.className = 'calendar-pairing-flight';
@@ -6668,6 +6676,12 @@ function renderCalendarPairingDetail(pairingId){
     }
     dayRow.appendChild(flights);
     daysEl.appendChild(dayRow);
+    if (shouldInsertSeparator){
+      const separator = document.createElement('div');
+      separator.className = 'calendar-pairing-day-separator';
+      separator.textContent = `Layover ${layoverParts.join(' · ')}`;
+      daysEl.appendChild(separator);
+    }
   });
   if (statusEl) statusEl.textContent = '';
 }
