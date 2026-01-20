@@ -6189,10 +6189,12 @@ function parsePastedScheduleText(text){
   let currentLines = [];
   let currentPairing = null;
   let pairingCounter = 0;
+  let pairingNeedsReset = false;
 
   const startPairing = (pairingNumber) => {
-    const pairingId = pairingNumber || `P${String(pairingCounter + 1).padStart(3, '0')}`;
+    const pairingLabel = pairingNumber || 'PAIR';
     pairingCounter += 1;
+    const pairingId = `${pairingLabel}-${pairingCounter}`;
     currentPairing = {
       pairingId,
       pairingNumber: pairingNumber || '',
@@ -6203,7 +6205,8 @@ function parsePastedScheduleText(text){
 
   const ensurePairing = (pairingNumber, forceNew = false) => {
     const normalizedNumber = pairingNumber ? pairingNumber.toUpperCase() : '';
-    if (!currentPairing || forceNew){
+    if (!currentPairing || forceNew || pairingNeedsReset){
+      pairingNeedsReset = false;
       return startPairing(normalizedNumber);
     }
     if (normalizedNumber){
@@ -6243,6 +6246,7 @@ function parsePastedScheduleText(text){
       currentDateKey = null;
       currentLines = [];
       currentPairing = null;
+      pairingNeedsReset = true;
       return;
     }
     if (/^-{3,}\s*$/.test(workingLine)){
