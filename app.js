@@ -4925,7 +4925,7 @@ async function loadCalendarFromCloud(){
   const localUpdatedAt = normalizeCalendarUpdatedAt(calendarState.updatedAt);
   let statusMessage = 'Pulled from cloud.';
   if (remoteUpdatedAt > localUpdatedAt){
-    const confirmOverwrite = window.confirm('Cloud schedule is newer than local. Overwrite local schedule?');
+    const confirmOverwrite = await requestCalendarOverwriteConfirm();
     if (!confirmOverwrite){
       return { state: calendarState, statusMessage: 'Kept local schedule (cloud newer).' };
     }
@@ -7003,6 +7003,127 @@ function setCalendarEventCancellation(eventId, status){
   }
 }
 
+const CALENDAR_DELETE_MONTH_SKIP_KEY = 'acpay.calendar.deleteMonth.skipConfirm';
+const calendarDeleteMonthState = { monthKey: null };
+const calendarOverwriteConfirmState = { resolve: null };
+
+function getCalendarDeleteMonthSkipConfirm(){
+  try {
+    return localStorage.getItem(CALENDAR_DELETE_MONTH_SKIP_KEY) === 'true';
+  } catch (err){
+    console.warn('Calendar delete skip confirm read failed', err);
+    return false;
+  }
+}
+
+function setCalendarDeleteMonthSkipConfirm(shouldSkip){
+  try {
+    if (shouldSkip){
+      localStorage.setItem(CALENDAR_DELETE_MONTH_SKIP_KEY, 'true');
+    } else {
+      localStorage.removeItem(CALENDAR_DELETE_MONTH_SKIP_KEY);
+    }
+  } catch (err){
+    console.warn('Calendar delete skip confirm write failed', err);
+  }
+}
+
+function closeCalendarDeleteMonthOverlay(){
+  const overlay = document.getElementById('calendar-delete-month-overlay');
+  if (overlay){
+    overlay.classList.add('hidden');
+  }
+  calendarDeleteMonthState.monthKey = null;
+}
+
+function getCalendarDeleteMonthOverlay(){
+  const overlay = document.getElementById('calendar-delete-month-overlay');
+  if (!overlay) return null;
+  if (overlay.dataset.ready === 'true') return overlay;
+  overlay.dataset.ready = 'true';
+  addTapListener(overlay, (event) => {
+    if (event.target === overlay){
+      closeCalendarDeleteMonthOverlay();
+    }
+  });
+  addTapListener(overlay.querySelector('[data-calendar-delete-month-cancel]'), closeCalendarDeleteMonthOverlay);
+  addTapListener(overlay.querySelector('[data-calendar-delete-month-confirm]'), () => {
+    const monthKey = calendarDeleteMonthState.monthKey;
+    if (!monthKey){
+      closeCalendarDeleteMonthOverlay();
+      return;
+    }
+    const skipBox = overlay.querySelector('#calendar-delete-month-skip');
+    setCalendarDeleteMonthSkipConfirm(Boolean(skipBox?.checked));
+    const label = formatCalendarMonthLabel(monthKey);
+    deleteCalendarMonth(monthKey);
+    setCalendarStatus(`Deleted ${label}.`);
+    closeCalendarDeleteMonthOverlay();
+  });
+  return overlay;
+}
+
+function openCalendarDeleteMonthOverlay(monthKey){
+  const overlay = getCalendarDeleteMonthOverlay();
+  if (!overlay) return;
+  const message = overlay.querySelector('#calendar-delete-month-message');
+  const skipBox = overlay.querySelector('#calendar-delete-month-skip');
+  const label = formatCalendarMonthLabel(monthKey);
+  calendarDeleteMonthState.monthKey = monthKey;
+  if (message){
+    message.textContent = `Delete ${label} from the calendar?`;
+  }
+  if (skipBox){
+    skipBox.checked = false;
+  }
+  overlay.classList.remove('hidden');
+  overlay.querySelector('[data-calendar-delete-month-cancel]')?.focus();
+}
+
+function closeCalendarOverwriteOverlay({ confirmed } = {}){
+  const overlay = document.getElementById('calendar-overwrite-overlay');
+  if (overlay){
+    overlay.classList.add('hidden');
+  }
+  const resolver = calendarOverwriteConfirmState.resolve;
+  if (resolver){
+    calendarOverwriteConfirmState.resolve = null;
+    resolver(Boolean(confirmed));
+  }
+}
+
+function getCalendarOverwriteOverlay(){
+  const overlay = document.getElementById('calendar-overwrite-overlay');
+  if (!overlay) return null;
+  if (overlay.dataset.ready === 'true') return overlay;
+  overlay.dataset.ready = 'true';
+  addTapListener(overlay, (event) => {
+    if (event.target === overlay){
+      closeCalendarOverwriteOverlay({ confirmed: false });
+    }
+  });
+  addTapListener(overlay.querySelector('[data-calendar-overwrite-cancel]'), () => {
+    closeCalendarOverwriteOverlay({ confirmed: false });
+  });
+  addTapListener(overlay.querySelector('[data-calendar-overwrite-confirm]'), () => {
+    closeCalendarOverwriteOverlay({ confirmed: true });
+  });
+  return overlay;
+}
+
+function requestCalendarOverwriteConfirm(){
+  return new Promise((resolve) => {
+    const overlay = getCalendarOverwriteOverlay();
+    if (!overlay){
+      resolve(false);
+      return;
+    }
+    calendarOverwriteConfirmState.resolve = resolve;
+    overlay.classList.remove('hidden');
+    overlay.querySelector('[data-calendar-overwrite-cancel]')?.focus();
+  });
+}
+
 function initCalendar(){
   loadCalendarState();
   renderCalendar();
@@ -7033,10 +7154,13 @@ function initCalendar(){
   if (deleteMonthButton){
     deleteMonthButton.addEventListener('click', () => {
       if (!calendarState.selectedMonth) return;
-      const label = formatCalendarMonthLabel(calendarState.selectedMonth);
-      if (!window.confirm(`Delete ${label} from the calendar?`)) return;
-      deleteCalendarMonth(calendarState.selectedMonth);
-      setCalendarStatus(`Deleted ${label}.`);
+      if (getCalendarDeleteMonthSkipConfirm()){
+        const label = formatCalendarMonthLabel(calendarState.selectedMonth);
+        deleteCalendarMonth(calendarState.selectedMonth);
+        setCalendarStatus(`Deleted ${label}.`);
+        return;
+      }
+      openCalendarDeleteMonthOverlay(calendarState.selectedMonth);
     });
   }
   const blockMonthButton = document.getElementById('modern-calendar-block-month');
