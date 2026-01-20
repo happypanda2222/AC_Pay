@@ -6151,6 +6151,17 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
           pairingContext.tripTafbMinutes = minutes;
         }
       }
+      const tafbDurations = trimmed.match(/\d{1,3}:\d{2}/g) || [];
+      const tripCreditToken = tafbDurations.length ? tafbDurations[tafbDurations.length - 1] : null;
+      if (tripCreditToken){
+        const creditMinutes = parseDurationToMinutes(tripCreditToken);
+        if (Number.isFinite(creditMinutes)){
+          tripCreditMinutes = creditMinutes;
+          if (pairingContext){
+            pairingContext.tripCreditMinutes = creditMinutes;
+          }
+        }
+      }
       const thgMatch = trimmed.match(/\bTHG\s+(\d{1,3}:\d{2})/i);
       if (thgMatch){
         const thgValue = parseDurationToMinutes(thgMatch[1]);
@@ -6641,7 +6652,7 @@ function renderCalendarPairingDetail(pairingId){
     const summary = getCalendarPairingSummary(pairingId);
     const blocks = [];
     if (Number.isFinite(summary.creditMinutes)){
-      blocks.push(`<div class="block"><div class="label">Total credit</div><div class="value">${escapeHtml(formatDurationMinutes(summary.creditMinutes))}</div></div>`);
+      blocks.push(`<div class="block"><div class="label">${labelWithInfo('Total credit', INFO_COPY.calendar.pairingCredit)}</div><div class="value">${escapeHtml(formatDurationMinutes(summary.creditMinutes))}</div></div>`);
     }
     if (Number.isFinite(summary.tafbMinutes)){
       blocks.push(`<div class="block"><div class="label">Total TAFB</div><div class="value">${escapeHtml(formatDurationMinutes(summary.tafbMinutes))}</div></div>`);
@@ -10733,6 +10744,9 @@ const INFO_COPY = {
     tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out based on the first/last active flights when boundary flights are canceled. Manual overrides apply only when the boundaries are intact.',
     marginalFed: 'Marginal federal tax rate based on annualized taxable income (gross minus pension).',
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
+  },
+  calendar: {
+    pairingCredit: 'Total credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit.'
   },
   vo: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
