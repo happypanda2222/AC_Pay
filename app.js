@@ -6950,24 +6950,15 @@ function getCalendarMonthlyCreditMinutes(monthKey){
   return totalMinutes;
 }
 
-function updateCalendarTotals(year, month){
-  let creditMinutes = 0;
-  let dutyMinutes = 0;
+function getCalendarMonthlyTafbMinutes(monthKey){
+  if (!monthKey) return 0;
+  const prefix = `${monthKey}-`;
+  const range = getCalendarBlockMonthRangeForMonth(monthKey);
   const countedPairings = new Set();
-  const monthKey = Number.isFinite(year) && Number.isFinite(month) && year > 0 && month > 0
-    ? `${year}-${String(month).padStart(2, '0')}`
-    : null;
-  const range = monthKey ? getCalendarBlockMonthRangeForMonth(monthKey) : null;
-  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
-  if (monthKey){
-    creditMinutes = getCalendarMonthlyCreditMinutes(monthKey);
-  }
+  let dutyMinutes = 0;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-    if (range){
-      if (!isCalendarDateKeyInRange(dateKey, range)) return;
-    } else if (!dateKey.startsWith(monthPrefix)){
-      return;
-    }
+    if (!dateKey.startsWith(prefix)) return;
+    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
     const pairingId = String(day?.pairing?.pairingId || '').trim();
     if (pairingId && Number.isFinite(day?.pairing?.tafbMinutes)){
       if (!countedPairings.has(pairingId)){
@@ -6978,6 +6969,19 @@ function updateCalendarTotals(year, month){
       dutyMinutes += getCalendarDayTafbTotal(dateKey, day);
     }
   });
+  return dutyMinutes;
+}
+
+function updateCalendarTotals(year, month){
+  let creditMinutes = 0;
+  let dutyMinutes = 0;
+  const monthKey = Number.isFinite(year) && Number.isFinite(month) && year > 0 && month > 0
+    ? `${year}-${String(month).padStart(2, '0')}`
+    : null;
+  if (monthKey){
+    creditMinutes = getCalendarMonthlyCreditMinutes(monthKey);
+    dutyMinutes = getCalendarMonthlyTafbMinutes(monthKey);
+  }
   if (monthKey){
     creditMinutes += getCalendarVacationCreditMinutes(monthKey);
   }
@@ -7631,28 +7635,7 @@ function buildCalendarCreditValueTooltip(rateInfo){
 }
 
 function getCalendarTafbTotalMinutes(monthKey){
-  if (!monthKey) return 0;
-  const prefix = `${monthKey}-`;
-  const range = getCalendarBlockMonthRangeForMonth(monthKey);
-  const countedPairings = new Set();
-  let dutyMinutes = 0;
-  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-    if (range){
-      if (!isCalendarDateKeyInRange(dateKey, range)) return;
-    } else if (!dateKey.startsWith(prefix)){
-      return;
-    }
-    const pairingId = String(day?.pairing?.pairingId || '').trim();
-    if (pairingId && Number.isFinite(day?.pairing?.tafbMinutes)){
-      if (!countedPairings.has(pairingId)){
-        dutyMinutes += day.pairing.tafbMinutes;
-        countedPairings.add(pairingId);
-      }
-    } else {
-      dutyMinutes += getCalendarDayTafbTotal(dateKey, day);
-    }
-  });
-  return dutyMinutes;
+  return getCalendarMonthlyTafbMinutes(monthKey);
 }
 
 function renderCalendarTafbDetail(){
@@ -7701,14 +7684,13 @@ function renderCalendarCreditDetail(){
   titleEl.textContent = `${formatCalendarMonthLabel(monthKey)} credit`;
   const prefix = `${monthKey}-`;
   const range = getCalendarBlockMonthRangeForMonth(monthKey);
-  const totalCreditMinutes = getCalendarMonthlyCreditMinutes(monthKey);
+  const baseCreditMinutes = getCalendarMonthlyCreditMinutes(monthKey);
   let ppCreditMinutes = 0;
   let lostCreditMinutes = 0;
   let blockGrowthMinutes = 0;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!dateKey.startsWith(prefix)) return;
     if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
-    totalCreditMinutes += getCalendarDayCreditTotal(dateKey, day);
     (day?.events || []).forEach((event) => {
       const creditTotal = getCalendarEventCreditTotal(event);
       if (event?.cancellation === 'CNX PP' && creditTotal){
@@ -7720,7 +7702,7 @@ function renderCalendarCreditDetail(){
     });
   });
   const vacationMinutes = getCalendarVacationCreditMinutes(monthKey);
-  const totalWithVacation = totalCreditMinutes + vacationMinutes;
+  const totalWithVacation = baseCreditMinutes + vacationMinutes;
   const currentRate = getCalendarCreditRate();
   const creditValue = currentRate ? (totalWithVacation / 60) * currentRate.rate : null;
   const creditValueTooltip = buildCalendarCreditValueTooltip(currentRate);
@@ -11588,8 +11570,8 @@ const INFO_COPY = {
   calendar: {
     pairingCredit: 'Pairing credit uses the trip credit from TRIP TAFB lines when available, minus CNX (non-PP) event credits; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals include vacation credit and use TRIP credit overrides minus CNX (non-PP) credits when available; otherwise they sum daily credits (CNX PP credits remain included).',
-    tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. If the original pairing boundary flights cancel, TAFB recalculates from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank when all flights cancel).'
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals use TRIP credit minus CNX (non-PP) credits when available; otherwise they sum daily credits (CNX PP credits remain included). Non-pairing days always use daily credit totals, and vacation credit is added once.',
+    tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. Pairing TAFB uses updated boundary times from the first and last non-cancelled flights; if all boundary flights cancel, TAFB is blank.'
   },
   vo: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
