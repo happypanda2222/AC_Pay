@@ -5177,12 +5177,28 @@ async function syncCalendarToCloud(){
   if (!endpoint){
     throw new Error('Missing calendar sync endpoint.');
   }
+  const eventsByDate = calendarState.eventsByDate && typeof calendarState.eventsByDate === 'object'
+    && !Array.isArray(calendarState.eventsByDate)
+    ? calendarState.eventsByDate
+    : {};
+  const months = Array.isArray(calendarState.months) ? calendarState.months : [];
+  const selectedMonth = typeof calendarState.selectedMonth === 'string' ? calendarState.selectedMonth : null;
+  const blockMonthsByMonthKey = calendarState.blockMonthsByMonthKey
+    && typeof calendarState.blockMonthsByMonthKey === 'object'
+    && !Array.isArray(calendarState.blockMonthsByMonthKey)
+    ? calendarState.blockMonthsByMonthKey
+    : {};
+  const blockMonthRecurring = calendarState.blockMonthRecurring
+    && typeof calendarState.blockMonthRecurring === 'object'
+    && !Array.isArray(calendarState.blockMonthRecurring)
+    ? calendarState.blockMonthRecurring
+    : {};
   const payload = {
-    eventsByDate: calendarState.eventsByDate,
-    months: calendarState.months,
-    selectedMonth: calendarState.selectedMonth,
-    blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey || {},
-    blockMonthRecurring: calendarState.blockMonthRecurring || {}
+    eventsByDate,
+    months,
+    selectedMonth,
+    blockMonthsByMonthKey,
+    blockMonthRecurring
   };
   let response;
   try {
@@ -5199,7 +5215,15 @@ async function syncCalendarToCloud(){
     throw new Error(`Unable to reach calendar sync endpoint (${endpoint}). Check the URL and https.`, { cause: err });
   }
   if (!response.ok){
-    throw new Error(`Calendar sync failed (${response.status})`);
+    let validationMessage = '';
+    try {
+      const errorBody = await response.json();
+      validationMessage = errorBody?.message || errorBody?.error || '';
+    } catch (err){
+      console.warn('Failed to read calendar sync error response', err);
+    }
+    const suffix = validationMessage ? `: ${validationMessage}` : '';
+    throw new Error(`Calendar sync failed (${response.status})${suffix}`);
   }
   try {
     const result = await response.json();
