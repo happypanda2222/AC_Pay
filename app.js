@@ -7524,6 +7524,49 @@ function setCalendarVacationCreditMinutes(monthKey, minutes){
   }
 }
 
+function getCurrentPayRateInputs(){
+  const fallback = getAnnualParams(true);
+  if (currentModernSubTab === 'modern-monthly'){
+    return {
+      seat: document.getElementById('modern-mon-seat')?.value ?? fallback.seat,
+      ac: document.getElementById('modern-mon-ac')?.value ?? fallback.ac,
+      year: +document.getElementById('modern-mon-year')?.value || fallback.year,
+      stepInput: +document.getElementById('modern-mon-step')?.value || fallback.stepInput,
+      tieOn: document.getElementById('modern-mon-tie')?.checked ?? fallback.tieOn,
+      xlrOn: document.getElementById('modern-mon-xlr')?.checked ?? fallback.xlrOn
+    };
+  }
+  if (currentModernSubTab === 'modern-vo'){
+    return {
+      seat: document.getElementById('modern-ot-seat')?.value ?? fallback.seat,
+      ac: document.getElementById('modern-ot-ac')?.value ?? fallback.ac,
+      year: +document.getElementById('modern-ot-year')?.value || fallback.year,
+      stepInput: +document.getElementById('modern-ot-step')?.value || fallback.stepInput,
+      tieOn: document.getElementById('modern-ot-tie')?.checked ?? fallback.tieOn,
+      xlrOn: document.getElementById('modern-ot-xlr')?.checked ?? fallback.xlrOn
+    };
+  }
+  return {
+    seat: fallback.seat,
+    ac: fallback.ac,
+    year: fallback.year,
+    stepInput: fallback.stepInput,
+    tieOn: fallback.tieOn,
+    xlrOn: fallback.xlrOn
+  };
+}
+
+function getCurrentPayRate(){
+  const params = getCurrentPayRateInputs();
+  const year = Number(params.year);
+  const stepInput = Number(params.stepInput);
+  if (!params.seat || !params.ac || !Number.isFinite(year) || !Number.isFinite(stepInput)) return null;
+  const step = params.tieOn ? stepOnJan1(stepInput, true, year) : clampStep(stepInput);
+  const rate = rateFor(params.seat, params.ac, year, step, !!params.xlrOn);
+  if (!Number.isFinite(rate)) return null;
+  return { rate, step, year };
+}
+
 function renderCalendarCreditDetail(){
   const titleEl = document.getElementById('calendar-credit-detail-title');
   const infoEl = document.getElementById('calendar-credit-detail-info');
@@ -7561,8 +7604,11 @@ function renderCalendarCreditDetail(){
   });
   const vacationMinutes = getCalendarVacationCreditMinutes(monthKey);
   const totalWithVacation = totalCreditMinutes + vacationMinutes;
+  const currentRate = getCurrentPayRate();
+  const creditValue = currentRate ? (totalWithVacation / 60) * currentRate.rate : null;
   const blocks = [
     { label: 'Total credit', value: formatDurationMinutes(totalWithVacation) },
+    { label: labelWithInfo('Credit value', INFO_COPY.calendar.creditValue), value: Number.isFinite(creditValue) ? money(creditValue) : '—', labelIsHtml: true },
     { label: 'PP credit (CNX PP)', value: formatDurationMinutes(ppCreditMinutes) },
     { label: 'Lost credit (CNX)', value: formatDurationMinutes(lostCreditMinutes) },
     { label: 'Vacation credit', value: formatDurationMinutes(vacationMinutes) },
@@ -7570,10 +7616,11 @@ function renderCalendarCreditDetail(){
   ];
   infoEl.innerHTML = `<div class="simple">${blocks
     .map((block) => {
+      const label = block.labelIsHtml ? block.label : escapeHtml(block.label);
       if (block.action === 'block-growth'){
-        return `<button class="block actionable" type="button" data-open-block-growth-detail="true"><div class="label">${escapeHtml(block.label)}</div><div class="value">${escapeHtml(block.value)}</div></button>`;
+        return `<button class="block actionable" type="button" data-open-block-growth-detail="true"><div class="label">${label}</div><div class="value">${escapeHtml(block.value)}</div></button>`;
       }
-      return `<div class="block"><div class="label">${escapeHtml(block.label)}</div><div class="value">${escapeHtml(block.value)}</div></div>`;
+      return `<div class="block"><div class="label">${label}</div><div class="value">${escapeHtml(block.value)}</div></div>`;
     })
     .join('')}</div>`;
   const blockGrowthButton = infoEl.querySelector('[data-open-block-growth-detail]');
@@ -11373,7 +11420,8 @@ const INFO_COPY = {
   },
   calendar: {
     pairingCredit: 'Total credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit.',
-    cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.'
+    cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
+    creditValue: 'Credit value multiplies the displayed total credit (including CNX/CNX PP rules, block growth, extras, and vacation credit) by the current hourly rate from the pay tabs (tie-step/XLR included).'
   },
   vo: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
