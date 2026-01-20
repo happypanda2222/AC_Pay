@@ -4575,19 +4575,37 @@ function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsB
     if (!nextDay.sourceMonthKey && typeof sourceDay?.sourceMonthKey === 'string'){
       nextDay.sourceMonthKey = sourceDay.sourceMonthKey;
     }
-    if (!nextDay.pairing && pairingId){
-      nextDay.pairing = {
-        pairingId,
-        pairingNumber,
-        pairingDays: []
-      };
+    if (pairingId){
+      const existingPairing = nextDay.pairing && typeof nextDay.pairing === 'object'
+        ? nextDay.pairing
+        : null;
+      if (!existingPairing){
+        nextDay.pairing = {
+          pairingId,
+          pairingNumber,
+          pairingDays: []
+        };
+      } else {
+        if (!existingPairing.pairingId) existingPairing.pairingId = pairingId;
+        if (!existingPairing.pairingNumber && pairingNumber){
+          existingPairing.pairingNumber = pairingNumber;
+        }
+        if (!Array.isArray(existingPairing.pairingDays)){
+          existingPairing.pairingDays = [];
+        }
+      }
     }
-    if (!nextDay.layover){
+    const existingLayover = nextDay.layover && typeof nextDay.layover === 'object'
+      ? nextDay.layover
+      : null;
+    if (!existingLayover){
       nextDay.layover = {
         hotel: typeof layover.hotel === 'string' ? layover.hotel : '',
         durationMinutes: Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null,
         placeholderFromDateKey: typeof sourceDateKey === 'string' ? sourceDateKey : ''
       };
+    } else if (!existingLayover.placeholderFromDateKey && typeof sourceDateKey === 'string'){
+      existingLayover.placeholderFromDateKey = sourceDateKey;
     }
     targetEventsByDate[dateKey] = nextDay;
   });
@@ -5505,11 +5523,19 @@ function getCalendarLayoverLocationLabel(day, dateKey){
 }
 
 function getCalendarPairingDaysForDay(day){
-  if (!day?.pairing?.pairingId) return [];
-  const pairingDays = Array.isArray(day.pairing.pairingDays) && day.pairing.pairingDays.length
-    ? day.pairing.pairingDays
-    : getCalendarPairingDays(day.pairing.pairingId);
-  return pairingDays;
+  const pairingId = String(day?.pairing?.pairingId || '').trim();
+  if (!pairingId) return [];
+  const calculatedDays = getCalendarPairingDays(pairingId);
+  const storedDays = Array.isArray(day?.pairing?.pairingDays) ? day.pairing.pairingDays : [];
+  if (calculatedDays.length){
+    if (!storedDays.length || storedDays.join() !== calculatedDays.join()){
+      if (day?.pairing && typeof day.pairing === 'object'){
+        day.pairing.pairingDays = calculatedDays;
+      }
+    }
+    return calculatedDays;
+  }
+  return storedDays;
 }
 
 function getCalendarPairingLayoverLabel(day, dateKey){
