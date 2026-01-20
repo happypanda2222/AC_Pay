@@ -6677,8 +6677,11 @@ function updateCalendarTotals(year, month){
   const range = monthKey ? getCalendarBlockMonthRangeForMonth(monthKey) : null;
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-    if (!dateKey.startsWith(monthPrefix)) return;
-    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
+    if (range){
+      if (!isCalendarDateKeyInRange(dateKey, range)) return;
+    } else if (!dateKey.startsWith(monthPrefix)){
+      return;
+    }
     creditMinutes += getCalendarDayCreditTotal(dateKey, day);
     const pairingId = String(day?.pairing?.pairingId || '').trim();
     if (pairingId && Number.isFinite(day?.pairing?.tafbMinutes)){
