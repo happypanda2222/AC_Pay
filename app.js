@@ -5604,6 +5604,63 @@ function getCalendarLastFlightArrivalCode(day, dateKey){
   return '';
 }
 
+function getCalendarLastFlightDepartureCode(day, dateKey){
+  const events = Array.isArray(day?.events) ? day.events : [];
+  const dayStartMs = getDateKeyStartMs(dateKey);
+  let lastSegment = null;
+  let lastSegmentEndMs = null;
+  if (Number.isFinite(dayStartMs)){
+    events.forEach((event) => {
+      const segments = Array.isArray(event?.segments) ? event.segments : [];
+      segments.forEach((segment) => {
+        const departureMinutes = Number(segment?.departureMinutes);
+        const arrivalMinutes = Number(segment?.arrivalMinutes);
+        if (!Number.isFinite(departureMinutes) && !Number.isFinite(arrivalMinutes)) return;
+        const startMinutes = Number.isFinite(departureMinutes) ? departureMinutes : arrivalMinutes;
+        let endMinutes = Number.isFinite(arrivalMinutes) ? arrivalMinutes : departureMinutes;
+        if (Number.isFinite(departureMinutes) && Number.isFinite(arrivalMinutes) && arrivalMinutes < departureMinutes){
+          endMinutes = arrivalMinutes + 1440;
+        }
+        const endMs = dayStartMs + (endMinutes * 60000);
+        if (!Number.isFinite(lastSegmentEndMs) || endMs > lastSegmentEndMs){
+          lastSegmentEndMs = endMs;
+          lastSegment = segment;
+        }
+      });
+    });
+  }
+  if (lastSegment){
+    const from = String(lastSegment?.from || '').trim().toUpperCase();
+    if (/^[A-Z]{3}$/.test(from)) return from;
+  }
+  let lastEvent = null;
+  let lastEventEndMs = null;
+  events.forEach((event) => {
+    const timing = getCalendarEventTiming(event, dateKey);
+    if (!timing || !Number.isFinite(timing.endMs)) return;
+    if (!Number.isFinite(lastEventEndMs) || timing.endMs > lastEventEndMs){
+      lastEventEndMs = timing.endMs;
+      lastEvent = event;
+    }
+  });
+  if (!lastEvent && events.length){
+    lastEvent = events[events.length - 1];
+  }
+  const segments = Array.isArray(lastEvent?.segments) ? lastEvent.segments : [];
+  if (segments.length){
+    for (let i = segments.length - 1; i >= 0; i -= 1){
+      const from = String(segments[i]?.from || '').trim().toUpperCase();
+      if (/^[A-Z]{3}$/.test(from)) return from;
+    }
+  }
+  const legs = Array.isArray(lastEvent?.legs) ? lastEvent.legs : [];
+  for (let i = legs.length - 1; i >= 0; i -= 1){
+    const from = String(legs[i]?.from || '').trim().toUpperCase();
+    if (/^[A-Z]{3}$/.test(from)) return from;
+  }
+  return '';
+}
+
 function getCalendarPairingPriorArrivalCode(day, dateKey){
   const pairingDays = getCalendarPairingDaysForDay(day);
   if (!pairingDays.length || !dateKey) return '';
@@ -5706,8 +5763,8 @@ function getCalendarPairingLabelParts(day, dateKey){
     };
   }
   if (hasNextDayCheckoutPlaceholder){
-    const arrivalLabel = getCalendarLastFlightArrivalCode(day, dateKey);
-    if (arrivalLabel) return { primary: arrivalLabel, secondary: '' };
+    const departureLabel = getCalendarLastFlightDepartureCode(day, dateKey);
+    if (departureLabel) return { primary: departureLabel, secondary: '' };
     if (layoverLabel) return { primary: layoverLabel, secondary: '' };
     return { primary: '1 Day', secondary: '' };
   }
