@@ -5231,12 +5231,16 @@ function getCalendarDayCreditExtras(day){
 function getCalendarDayCreditTotal(dateKey, day){
   let totalMinutes = 0;
   const events = day?.events || [];
+  const hasPerFlightCredits = events.some(event => Number.isFinite(event.creditMinutes));
   events.forEach((event) => {
     const creditTotal = getCalendarEventCreditTotal(event);
     if (!isCreditCancelled(event) && creditTotal){
       totalMinutes += creditTotal;
     }
   });
+  if (!hasPerFlightCredits && Number.isFinite(day?.summaryCreditMinutes)){
+    totalMinutes += day.summaryCreditMinutes;
+  }
   getCalendarDayCreditExtras(day).forEach((extra) => {
     totalMinutes += extra.minutes;
   });
@@ -6084,10 +6088,6 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     return null;
   }
 
-  const hasAnyCredits = events.some(event => Number.isFinite(event.creditMinutes));
-  if (!hasAnyCredits && Number.isFinite(summaryCreditMinutes) && events.length){
-    events[0].creditMinutes = summaryCreditMinutes;
-  }
   if (Number.isFinite(dutyMinutes)) dayTafbMinutes = dutyMinutes;
   if (pairing?.pairingId){
     events.forEach((event) => {
@@ -6100,6 +6100,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     pairing,
     layover,
     creditExtras,
+    summaryCreditMinutes: Number.isFinite(summaryCreditMinutes) ? summaryCreditMinutes : null,
     dpgMinutes: Number.isFinite(dpgMinutes) ? dpgMinutes : null,
     thgMinutes: Number.isFinite(thgMinutes) ? thgMinutes : null,
     tafbMinutes: Number.isFinite(dayTafbMinutes) ? dayTafbMinutes : null,
