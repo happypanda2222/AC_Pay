@@ -1526,10 +1526,10 @@
                     <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses the TRIP credit line (H:MM after TRIP) when available; otherwise day summary credit is used when no per-flight credits are available, plus block growth, DPG/THG extras, and vacation credit. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses the TRIP credit line (H:MM after TRIP) when available; otherwise day summary credit is used when no per-flight credits are available, plus block growth, DPG/THG extras, and vacation credit. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs.</span></span></div>
                     <div class="metric-value" id="modern-calendar-total-credit">--</div>
                   </button>
-                  <div class="metric-card">
-                    <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals include days in that range (including the 3-day buffer outside the month when configured), and trip TAFB is counted on the pairing’s first day inside the range."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals include days in that range (including the 3-day buffer outside the month when configured), and trip TAFB is counted on the pairing’s first day inside the range.</span></span></div>
+                  <button class="metric-card actionable" id="modern-calendar-tafb-card" type="button">
+                    <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals include days in that range (including the 3-day buffer outside the month when configured), and trip TAFB is counted on the pairing’s first day inside the range. TAFB detail converts minutes to dollars at $5.427/hr."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals include days in that range (including the 3-day buffer outside the month when configured), and trip TAFB is counted on the pairing’s first day inside the range. TAFB detail converts minutes to dollars at $5.427/hr.</span></span></div>
                     <div class="metric-value" id="modern-calendar-total-tafb">--</div>
-                  </div>
+                  </button>
                   <div class="metric-card">
                     <div class="metric-label">Events</div>
                     <div class="metric-value" id="modern-calendar-total-events">--</div>
@@ -1618,6 +1618,16 @@
                   </div>
                 </div>
                 <div class="muted-note" id="calendar-credit-detail-status" aria-live="polite"></div>
+              </div>
+            </div>
+            <div id="modern-calendar-tafb-detail" class="hidden">
+              <div class="calendar-detail">
+                <div class="calendar-detail-header">
+                  <button id="calendar-tafb-detail-back" class="btn btn-secondary" type="button">Back</button>
+                  <div class="calendar-detail-title" id="calendar-tafb-detail-title">TAFB detail</div>
+                </div>
+                <div class="calendar-detail-grid" id="calendar-tafb-detail-info"></div>
+                <div class="muted-note" id="calendar-tafb-detail-status" aria-live="polite"></div>
               </div>
             </div>
             <div id="modern-calendar-block-growth-detail" class="hidden">
