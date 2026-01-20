@@ -4560,11 +4560,11 @@ function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsB
         if (existingDay && Array.isArray(existingDay.events) && existingDay.events.length){
           continue;
         }
-        placeholders.push({ dateKey: coveredDateKey, sourceDay: day });
+        placeholders.push({ dateKey: coveredDateKey, sourceDay: day, sourceDateKey: dateKey });
       }
     }
   });
-  placeholders.forEach(({ dateKey, sourceDay }) => {
+  placeholders.forEach(({ dateKey, sourceDay, sourceDateKey }) => {
     const existingDay = targetEventsByDate[dateKey];
     const pairingId = String(sourceDay?.pairing?.pairingId || '').trim();
     const pairingNumber = String(sourceDay?.pairing?.pairingNumber || '').trim();
@@ -4584,7 +4584,8 @@ function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsB
     if (!nextDay.layover){
       nextDay.layover = {
         hotel: typeof layover.hotel === 'string' ? layover.hotel : '',
-        durationMinutes: Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null
+        durationMinutes: Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null,
+        placeholderFromDateKey: typeof sourceDateKey === 'string' ? sourceDateKey : ''
       };
     }
     targetEventsByDate[dateKey] = nextDay;
@@ -5452,12 +5453,30 @@ function getCalendarLastFlightArrivalCode(day, dateKey){
   return '';
 }
 
+function getCalendarPairingPriorArrivalCode(day, dateKey){
+  const pairingDays = getCalendarPairingDaysForDay(day);
+  if (!pairingDays.length || !dateKey) return '';
+  const dayIndex = pairingDays.indexOf(dateKey);
+  if (dayIndex <= 0) return '';
+  for (let i = dayIndex - 1; i >= 0; i -= 1){
+    const priorDateKey = pairingDays[i];
+    const priorDay = calendarState.eventsByDate?.[priorDateKey];
+    const priorArrivalCode = getCalendarLastFlightArrivalCode(priorDay, priorDateKey);
+    if (priorArrivalCode) return priorArrivalCode;
+  }
+  return '';
+}
+
 function getCalendarLayoverLocationLabel(day, dateKey){
   const layover = day?.layover;
   const hasLayover = Boolean(layover)
     && (Number.isFinite(layover.durationMinutes) || (typeof layover.hotel === 'string' && layover.hotel.trim()));
   if (!hasLayover) return '';
-  return getCalendarLastFlightArrivalCode(day, dateKey);
+  const directLabel = getCalendarLastFlightArrivalCode(day, dateKey);
+  if (directLabel) return directLabel;
+  const events = Array.isArray(day?.events) ? day.events : [];
+  if (events.length) return '';
+  return getCalendarPairingPriorArrivalCode(day, dateKey);
 }
 
 function getCalendarPairingDaysForDay(day){
@@ -5471,6 +5490,14 @@ function getCalendarPairingDaysForDay(day){
 function getCalendarPairingLayoverLabel(day, dateKey){
   const directLabel = getCalendarLayoverLocationLabel(day, dateKey);
   if (directLabel) return directLabel;
+  const layover = day?.layover;
+  const hasLayover = Boolean(layover)
+    && (Number.isFinite(layover.durationMinutes) || (typeof layover.hotel === 'string' && layover.hotel.trim()));
+  const hasEvents = Array.isArray(day?.events) && day.events.length;
+  if (hasLayover && !hasEvents){
+    const priorArrivalLabel = getCalendarPairingPriorArrivalCode(day, dateKey);
+    if (priorArrivalLabel) return priorArrivalLabel;
+  }
   const pairingDays = getCalendarPairingDaysForDay(day);
   if (!pairingDays.length || !dateKey) return '';
   const dayIndex = pairingDays.indexOf(dateKey);
