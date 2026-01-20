@@ -4368,6 +4368,7 @@ let calendarPairingId = null;
 let calendarDayDetailDateKey = null;
 let calendarCreditDetailOpen = false;
 let calendarBlockGrowthDetailOpen = false;
+let calendarTafbDetailOpen = false;
 let calendarBlockMonthSelecting = false;
 let calendarBlockMonthDraft = null;
 const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
@@ -7100,6 +7101,7 @@ function renderCalendar(){
   refreshCalendarPairingDetail();
   refreshCalendarDayDetail();
   refreshCalendarCreditDetail();
+  refreshCalendarTafbDetail();
   refreshCalendarBlockGrowthDetail();
 }
 
@@ -7345,9 +7347,11 @@ function openCalendarDetail(eventId, source = 'main'){
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-tafb-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
   calendarCreditDetailOpen = false;
   calendarBlockGrowthDetailOpen = false;
+  calendarTafbDetailOpen = false;
 }
 
 function closeCalendarDetail(){
@@ -7439,9 +7443,11 @@ function openCalendarPairingDetail(pairingId){
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-tafb-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
   calendarCreditDetailOpen = false;
   calendarBlockGrowthDetailOpen = false;
+  calendarTafbDetailOpen = false;
 }
 
 function closeCalendarPairingDetail(){
@@ -7467,9 +7473,11 @@ function openCalendarDayDetail(dateKey){
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-tafb-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
   calendarCreditDetailOpen = false;
   calendarBlockGrowthDetailOpen = false;
+  calendarTafbDetailOpen = false;
   detailEl.classList.remove('hidden');
 }
 
@@ -7565,6 +7573,57 @@ function getCurrentPayRate(){
   const rate = rateFor(params.seat, params.ac, year, step, !!params.xlrOn);
   if (!Number.isFinite(rate)) return null;
   return { rate, step, year };
+}
+
+function getCalendarTafbTotalMinutes(monthKey){
+  if (!monthKey) return 0;
+  const prefix = `${monthKey}-`;
+  const range = getCalendarBlockMonthRangeForMonth(monthKey);
+  const countedPairings = new Set();
+  let dutyMinutes = 0;
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (!dateKey.startsWith(prefix)) return;
+    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    if (pairingId && Number.isFinite(day?.pairing?.tafbMinutes)){
+      if (!countedPairings.has(pairingId)){
+        dutyMinutes += day.pairing.tafbMinutes;
+        countedPairings.add(pairingId);
+      }
+    } else {
+      dutyMinutes += getCalendarDayTafbTotal(dateKey, day);
+    }
+  });
+  return dutyMinutes;
+}
+
+function renderCalendarTafbDetail(){
+  const titleEl = document.getElementById('calendar-tafb-detail-title');
+  const infoEl = document.getElementById('calendar-tafb-detail-info');
+  const statusEl = document.getElementById('calendar-tafb-detail-status');
+  if (!titleEl || !infoEl) return;
+  const monthKey = calendarState.selectedMonth;
+  if (!monthKey){
+    titleEl.textContent = 'TAFB detail';
+    infoEl.innerHTML = '';
+    if (statusEl) statusEl.textContent = 'No month selected.';
+    return;
+  }
+  titleEl.textContent = `${formatCalendarMonthLabel(monthKey)} TAFB`;
+  const totalMinutes = getCalendarTafbTotalMinutes(monthKey);
+  const tafbRate = 5.427;
+  const tafbValue = (totalMinutes / 60) * tafbRate;
+  const blocks = [
+    { label: 'Total TAFB', value: formatDurationMinutes(totalMinutes) },
+    { label: labelWithInfo('TAFB value', INFO_COPY.calendar.tafbValue), value: money(tafbValue), labelIsHtml: true }
+  ];
+  infoEl.innerHTML = `<div class="simple">${blocks
+    .map((block) => {
+      const label = block.labelIsHtml ? block.label : escapeHtml(block.label);
+      return `<div class="block"><div class="label">${label}</div><div class="value">${escapeHtml(block.value)}</div></div>`;
+    })
+    .join('')}</div>`;
+  if (statusEl) statusEl.textContent = '';
 }
 
 function renderCalendarCreditDetail(){
@@ -7694,12 +7753,14 @@ function openCalendarCreditDetail(){
   if (!mainEl || !detailEl) return;
   calendarCreditDetailOpen = true;
   calendarBlockGrowthDetailOpen = false;
+  calendarTafbDetailOpen = false;
   renderCalendarCreditDetail();
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-tafb-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
 }
 
@@ -7718,6 +7779,36 @@ function refreshCalendarCreditDetail(){
   renderCalendarCreditDetail();
 }
 
+function openCalendarTafbDetail(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-tafb-detail');
+  if (!mainEl || !detailEl) return;
+  calendarTafbDetailOpen = true;
+  renderCalendarTafbDetail();
+  mainEl.classList.add('hidden');
+  detailEl.classList.remove('hidden');
+  document.getElementById('modern-calendar-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-credit-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
+  calendarCreditDetailOpen = false;
+  calendarBlockGrowthDetailOpen = false;
+}
+
+function closeCalendarTafbDetail(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  const detailEl = document.getElementById('modern-calendar-tafb-detail');
+  if (mainEl) mainEl.classList.remove('hidden');
+  if (detailEl) detailEl.classList.add('hidden');
+  calendarTafbDetailOpen = false;
+}
+
+function refreshCalendarTafbDetail(){
+  if (!calendarTafbDetailOpen) return;
+  renderCalendarTafbDetail();
+}
+
 function openCalendarBlockGrowthDetail(){
   const creditEl = document.getElementById('modern-calendar-credit-detail');
   const detailEl = document.getElementById('modern-calendar-block-growth-detail');
@@ -7728,8 +7819,10 @@ function openCalendarBlockGrowthDetail(){
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
   document.getElementById('modern-calendar-day-detail')?.classList.add('hidden');
+  document.getElementById('modern-calendar-tafb-detail')?.classList.add('hidden');
   if (creditEl) creditEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
+  calendarTafbDetailOpen = false;
 }
 
 function closeCalendarBlockGrowthDetail(){
@@ -7766,6 +7859,7 @@ function setCalendarEventCancellation(eventId, status){
     refreshCalendarPairingDetail();
     refreshCalendarDayDetail();
     refreshCalendarCreditDetail();
+    refreshCalendarTafbDetail();
   }
 }
 
@@ -8136,10 +8230,22 @@ function initCalendar(){
       openCalendarCreditDetail();
     });
   }
+  const tafbCard = document.getElementById('modern-calendar-tafb-card');
+  if (tafbCard){
+    tafbCard.addEventListener('click', () => {
+      openCalendarTafbDetail();
+    });
+  }
   const creditDetailBack = document.getElementById('calendar-credit-detail-back');
   if (creditDetailBack){
     creditDetailBack.addEventListener('click', () => {
       closeCalendarCreditDetail();
+    });
+  }
+  const tafbDetailBack = document.getElementById('calendar-tafb-detail-back');
+  if (tafbDetailBack){
+    tafbDetailBack.addEventListener('click', () => {
+      closeCalendarTafbDetail();
     });
   }
   const blockGrowthDetailBack = document.getElementById('calendar-block-growth-detail-back');
@@ -8166,6 +8272,7 @@ function initCalendar(){
     setCalendarVacationCreditMinutes(monthKey, minutes);
     renderCalendar();
     refreshCalendarCreditDetail();
+    refreshCalendarTafbDetail();
     if (statusEl) statusEl.textContent = 'Vacation credit saved.';
   };
   if (creditVacationSave){
@@ -8203,6 +8310,7 @@ function initCalendar(){
       refreshCalendarPairingDetail();
       refreshCalendarDayDetail();
       refreshCalendarCreditDetail();
+      refreshCalendarTafbDetail();
       refreshCalendarBlockGrowthDetail();
       if (statusEl) statusEl.textContent = 'Block growth saved.';
     });
@@ -11421,7 +11529,8 @@ const INFO_COPY = {
   calendar: {
     pairingCredit: 'Total credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed total credit (including CNX/CNX PP rules, block growth, extras, and vacation credit) by the current hourly rate from the pay tabs (tie-step/XLR included).'
+    creditValue: 'Credit value multiplies the displayed total credit (including CNX/CNX PP rules, block growth, extras, and vacation credit) by the current hourly rate from the pay tabs (tie-step/XLR included).',
+    tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr.'
   },
   vo: {
     hourlyRate: 'Pay table rate for the chosen seat, aircraft, year and step (including XLR when toggled). Projected years (2027+) follow the selected growth scenario and FO/RP slope anchoring.',
