@@ -7381,9 +7381,11 @@ function initCalendar(){
   const parseButton = document.getElementById('modern-calendar-parse');
   if (parseButton && pasteInput){
     parseButton.addEventListener('click', () => {
+      const pastedText = pasteInput.value;
+      pasteInput.value = '';
       setCalendarStatus('Parsing schedule…');
       try {
-        const { eventsByDate, statusMessage } = parsePastedScheduleText(pasteInput.value);
+        const { eventsByDate, statusMessage } = parsePastedScheduleText(pastedText);
         const parsedMonths = buildCalendarMonths(eventsByDate);
         if (!parsedMonths.length){
           setCalendarStatus(statusMessage || 'No calendar events found in pasted schedule.');
