@@ -5476,6 +5476,18 @@ function getCalendarLayoverLocationLabel(day, dateKey){
   if (directLabel) return directLabel;
   const events = Array.isArray(day?.events) ? day.events : [];
   if (events.length) return '';
+  const placeholderSourceKey = typeof layover?.placeholderFromDateKey === 'string'
+    ? layover.placeholderFromDateKey
+    : '';
+  if (placeholderSourceKey){
+    const sourceDay = calendarState.eventsByDate?.[placeholderSourceKey];
+    if (sourceDay){
+      const sourceDirectLabel = getCalendarLastFlightArrivalCode(sourceDay, placeholderSourceKey);
+      if (sourceDirectLabel) return sourceDirectLabel;
+      const sourcePriorLabel = getCalendarPairingPriorArrivalCode(sourceDay, placeholderSourceKey);
+      if (sourcePriorLabel) return sourcePriorLabel;
+    }
+  }
   return getCalendarPairingPriorArrivalCode(day, dateKey);
 }
 
