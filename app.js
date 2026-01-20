@@ -5200,30 +5200,57 @@ async function syncCalendarToCloud(){
     blockMonthsByMonthKey,
     blockMonthRecurring
   };
-  let response;
-  try {
-    response = await fetch(endpoint, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(payload),
-      cache: 'no-store'
-    });
-  } catch (err){
-    throw new Error(`Unable to reach calendar sync endpoint (${endpoint}). Check the URL and https.`, { cause: err });
-  }
-  if (!response.ok){
-    let validationMessage = '';
+  const fallbackPayload = {
+    eventsByDate,
+    months,
+    selectedMonth
+  };
+  const sendCalendarPayload = async (bodyPayload) => {
     try {
-      const errorBody = await response.json();
-      validationMessage = errorBody?.message || errorBody?.error || '';
+      return await fetch(endpoint, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(bodyPayload),
+        cache: 'no-store'
+      });
+    } catch (err){
+      throw new Error(`Unable to reach calendar sync endpoint (${endpoint}). Check the URL and https.`, { cause: err });
+    }
+  };
+  const readCalendarSyncMessage = async (resp) => {
+    try {
+      const errorBody = await resp.json();
+      return errorBody?.message || errorBody?.error || '';
     } catch (err){
       console.warn('Failed to read calendar sync error response', err);
+      return '';
     }
-    const suffix = validationMessage ? `: ${validationMessage}` : '';
-    throw new Error(`Calendar sync failed (${response.status})${suffix}`);
+  };
+  const shouldRetryPayload = (status, message) => {
+    if (status !== 400) return false;
+    if (!message || typeof message !== 'string') return false;
+    const lower = message.toLowerCase();
+    if (!lower.includes('unexpected')) return false;
+    return ['blockmonthsbymonthkey', 'blockmonthrecurring'].some((key) => lower.includes(key));
+  };
+  let response = await sendCalendarPayload(payload);
+  if (!response.ok){
+    const validationMessage = await readCalendarSyncMessage(response);
+    if (shouldRetryPayload(response.status, validationMessage)){
+      console.warn('Calendar sync rejected unexpected keys; retrying without block month payload.');
+      response = await sendCalendarPayload(fallbackPayload);
+      if (!response.ok){
+        const retryMessage = await readCalendarSyncMessage(response);
+        const retrySuffix = retryMessage ? `: ${retryMessage}` : '';
+        throw new Error(`Calendar sync failed (${response.status})${retrySuffix}`);
+      }
+    } else {
+      const suffix = validationMessage ? `: ${validationMessage}` : '';
+      throw new Error(`Calendar sync failed (${response.status})${suffix}`);
+    }
   }
   try {
     const result = await response.json();
