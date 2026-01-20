@@ -7221,6 +7221,7 @@ function getCalendarPairingSummary(pairingId, monthKey = calendarState.selectedM
   let thgMinutes = 0;
   let tafbMinutes = null;
   let tripCreditMinutes = null;
+  let cnxCreditMinutes = 0;
   let rangeExcludesDay = false;
   const range = getCalendarBlockMonthRangeForMonth(monthKey);
   const firstDayInRange = range
@@ -7233,6 +7234,11 @@ function getCalendarPairingSummary(pairingId, monthKey = calendarState.selectedM
     }
     const day = calendarState.eventsByDate?.[dateKey];
     if (!day) return;
+    (day?.events || []).forEach((event) => {
+      if (event?.cancellation !== 'CNX') return;
+      const creditTotal = getCalendarEventCreditTotal(event);
+      if (creditTotal) cnxCreditMinutes += creditTotal;
+    });
     if (!Number.isFinite(tripCreditMinutes)){
       const pairingTripCredit = day?.pairing?.tripCreditMinutes;
       if (Number.isFinite(pairingTripCredit)) tripCreditMinutes = pairingTripCredit;
@@ -7249,7 +7255,7 @@ function getCalendarPairingSummary(pairingId, monthKey = calendarState.selectedM
     }
   });
   if (Number.isFinite(tripCreditMinutes) && !rangeExcludesDay){
-    creditMinutes = tripCreditMinutes;
+    creditMinutes = Math.max(0, tripCreditMinutes - cnxCreditMinutes);
   }
   return {
     creditMinutes,
@@ -11582,9 +11588,9 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Pairing credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules and add vacation credit once.',
+    pairingCredit: 'Pairing credit uses the trip credit from TRIP TAFB lines when available, minus CNX (non-PP) event credits; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals include vacation credit and use TRIP credit overrides when available; otherwise they sum daily credits.',
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals include vacation credit and use TRIP credit overrides minus CNX (non-PP) credits when available; otherwise they sum daily credits (CNX PP credits remain included).',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month.'
   },
   vo: {
