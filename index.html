@@ -1439,50 +1439,53 @@
 
         <div id="modern-calendar" class="modern-tab hidden">
           <div class="modern-panel">
-            <h3>Calendar</h3>
-            <div class="calendar-toolbar">
-              <div class="calendar-month-controls">
-                <label>Month</label>
-                <select id="modern-calendar-month"></select>
-              </div>
-            </div>
-            <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
-            <div class="calendar-summary-header">
-              <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
-              <div class="metric-grid calendar-summary-grid">
-                <button class="metric-card actionable" id="modern-calendar-credit-card" type="button">
-                  <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses the TRIP credit line (H:MM after TRIP) when available; otherwise day summary credit is used when no per-flight credits are available, plus block growth, DPG/THG extras, and vacation credit. If a block-month range is set, totals only include days in that range."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses the TRIP credit line (H:MM after TRIP) when available; otherwise day summary credit is used when no per-flight credits are available, plus block growth, DPG/THG extras, and vacation credit. If a block-month range is set, totals only include days in that range.</span></span></div>
-                  <div class="metric-value" id="modern-calendar-total-credit">--</div>
-                </button>
-                <div class="metric-card">
-                  <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals only include days in that range."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals only include days in that range.</span></span></div>
-                  <div class="metric-value" id="modern-calendar-total-tafb">--</div>
-                </div>
-                <div class="metric-card">
-                  <div class="metric-label">Events</div>
-                  <div class="metric-value" id="modern-calendar-total-events">--</div>
-                </div>
-              </div>
-            </div>
             <div id="modern-calendar-main">
+              <h3>Calendar</h3>
+              <div class="calendar-toolbar">
+                <div class="calendar-month-controls">
+                  <label>Month</label>
+                  <select id="modern-calendar-month"></select>
+                </div>
+              </div>
+              <div class="muted-note" id="modern-calendar-status" aria-live="polite"></div>
+              <div class="calendar-summary-header">
+                <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
+                <div class="metric-grid calendar-summary-grid">
+                  <button class="metric-card actionable" id="modern-calendar-credit-card" type="button">
+                    <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses the TRIP credit line (H:MM after TRIP) when available; otherwise day summary credit is used when no per-flight credits are available, plus block growth, DPG/THG extras, and vacation credit. If a block-month range is set, totals only include days in that range."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses the TRIP credit line (H:MM after TRIP) when available; otherwise day summary credit is used when no per-flight credits are available, plus block growth, DPG/THG extras, and vacation credit. If a block-month range is set, totals only include days in that range.</span></span></div>
+                    <div class="metric-value" id="modern-calendar-total-credit">--</div>
+                  </button>
+                  <div class="metric-card">
+                    <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals only include days in that range."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals only include days in that range.</span></span></div>
+                    <div class="metric-value" id="modern-calendar-total-tafb">--</div>
+                  </div>
+                  <div class="metric-card">
+                    <div class="metric-label">Events</div>
+                    <div class="metric-value" id="modern-calendar-total-events">--</div>
+                  </div>
+                </div>
+              </div>
               <div class="calendar-grid" id="modern-calendar-grid"></div>
-            </div>
-            <div class="calendar-post-actions">
-              <div class="calendar-paste">
-                <label for="modern-calendar-text">Paste schedule</label>
-                <textarea id="modern-calendar-text" rows="6" placeholder="Paste schedule text"></textarea>
+              <div class="calendar-post-actions">
+                <div class="calendar-paste">
+                  <label for="modern-calendar-text">Paste schedule</label>
+                  <textarea id="modern-calendar-text" rows="6" placeholder="Paste schedule text"></textarea>
+                </div>
+                <div class="calendar-parse">
+                  <button id="modern-calendar-parse" class="btn-primary" type="button">Parse schedule</button>
+                </div>
               </div>
-              <div class="calendar-parse">
-                <button id="modern-calendar-parse" class="btn-primary" type="button">Parse schedule</button>
+              <div class="calendar-sync-actions">
+                <button id="modern-calendar-sync-now" class="btn" type="button">Sync Now</button>
+                <button id="modern-calendar-pull" class="btn btn-secondary" type="button">Pull from Cloud</button>
               </div>
-            </div>
-            <div class="calendar-sync-actions">
-              <button id="modern-calendar-sync-now" class="btn" type="button">Sync Now</button>
-              <button id="modern-calendar-pull" class="btn btn-secondary" type="button">Pull from Cloud</button>
-            </div>
-            <div class="calendar-delete-actions">
-              <button id="modern-calendar-block-month" class="btn btn-secondary" type="button">Config Block Month</button>
-              <button id="modern-calendar-delete-month" class="btn btn-secondary" type="button">Delete month</button>
+              <div class="calendar-delete-actions">
+                <button id="modern-calendar-block-month" class="btn btn-secondary" type="button">Config Block Month</button>
+                <button id="modern-calendar-delete-month" class="btn btn-secondary" type="button">Delete month</button>
+              </div>
+              <div class="calendar-sync-footer">
+                <button id="modern-calendar-sync-settings-btn" class="btn btn-secondary" type="button">Sync settings</button>
+              </div>
             </div>
             <div id="modern-calendar-detail" class="hidden">
               <div class="calendar-detail">
@@ -1555,9 +1558,6 @@
                 <div class="calendar-block-growth-list" id="calendar-block-growth-detail-info"></div>
                 <div class="muted-note" id="calendar-block-growth-detail-status" aria-live="polite"></div>
               </div>
-            </div>
-            <div class="calendar-sync-footer">
-              <button id="modern-calendar-sync-settings-btn" class="btn btn-secondary" type="button">Sync settings</button>
             </div>
           </div>
         </div>
