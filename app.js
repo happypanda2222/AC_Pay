@@ -5068,11 +5068,11 @@ function buildCalendarMonths(eventsByDate){
   return Array.from(months).sort();
 }
 
-function setCalendarSourceMonthKey(eventsByDate, sourceMonthKey){
-  if (!sourceMonthKey) return;
-  Object.values(eventsByDate || {}).forEach((day) => {
+function setCalendarSourceMonthKey(eventsByDate){
+  Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day || typeof day !== 'object') return;
-    day.sourceMonthKey = sourceMonthKey;
+    if (typeof dateKey !== 'string' || dateKey.length < 7) return;
+    day.sourceMonthKey = dateKey.slice(0, 7);
   });
 }
 
@@ -7389,11 +7389,12 @@ function initCalendar(){
           setCalendarStatus(statusMessage || 'No calendar events found in pasted schedule.');
           return;
         }
-        const sourceMonthKey = normalizeCalendarMonthKey(parsedMonths[0]);
-        setCalendarSourceMonthKey(eventsByDate, sourceMonthKey);
+        const parsedMonthSet = new Set(parsedMonths);
+        setCalendarSourceMonthKey(eventsByDate);
         const retainedEvents = {};
         Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-          if (day?.sourceMonthKey === sourceMonthKey) return;
+          const monthKey = typeof dateKey === 'string' ? dateKey.slice(0, 7) : '';
+          if (parsedMonthSet.has(monthKey)) return;
           retainedEvents[dateKey] = day;
         });
         calendarState.eventsByDate = { ...retainedEvents, ...eventsByDate };
