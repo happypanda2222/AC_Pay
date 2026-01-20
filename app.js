@@ -5451,12 +5451,15 @@ function getCalendarPairingLayoverLabel(day, dateKey){
   return '';
 }
 
-function getCalendarPairingLabel(day, dateKey){
+function getCalendarPairingLabelParts(day, dateKey){
   const pairingDays = getCalendarPairingDaysForDay(day);
+  const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
+  const isSingleDay = pairingDays.length === 1;
+  if (isSingleDay && !layoverLabel) return { primary: '1 Day', secondary: '' };
   if (dateKey && pairingDays.length){
     const firstDay = pairingDays[0];
     const lastDay = pairingDays[pairingDays.length - 1];
-    if (dateKey === lastDay){
+    if (dateKey === lastDay && dateKey !== firstDay){
       let endMinutes = Number.isFinite(day?.checkOutMinutes) ? day.checkOutMinutes : null;
       if (!Number.isFinite(endMinutes) && dateKey){
         const lastFlightMs = getCalendarDayLastFlightEndMs(day, dateKey);
@@ -5465,7 +5468,10 @@ function getCalendarPairingLabel(day, dateKey){
           endMinutes = Math.round((lastFlightMs - dayStartMs) / 60000);
         }
       }
-      return Number.isFinite(endMinutes) ? formatMinutesToTime(endMinutes) : 'Check out';
+      return {
+        primary: Number.isFinite(endMinutes) ? formatMinutesToTime(endMinutes) : 'Check out',
+        secondary: ''
+      };
     }
     if (dateKey === firstDay){
       let checkInMinutes = Number.isFinite(day?.checkInMinutes) ? day.checkInMinutes : null;
@@ -5480,13 +5486,16 @@ function getCalendarPairingLabel(day, dateKey){
       const timeLabel = Number.isFinite(checkInMinutes)
         ? formatMinutesToTime(checkInMinutes)
         : 'Check in';
-      const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
-      return layoverLabel ? `${timeLabel} ${layoverLabel}` : timeLabel;
+      return { primary: timeLabel, secondary: layoverLabel };
     }
   }
-  const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
-  if (layoverLabel) return layoverLabel;
-  return '1 Day';
+  if (layoverLabel) return { primary: layoverLabel, secondary: '' };
+  return { primary: '1 Day', secondary: '' };
+}
+
+function getCalendarPairingLabel(day, dateKey){
+  const { primary, secondary } = getCalendarPairingLabelParts(day, dateKey);
+  return secondary ? `${primary} ${secondary}` : primary;
 }
 
 function getCalendarEventLabel(event){
@@ -6218,7 +6227,17 @@ function renderCalendar(){
       if (dayEvents.some(event => isDeadheadEvent(event))) eventBtn.classList.add('is-deadhead');
       const title = document.createElement('div');
       title.className = 'calendar-event-title';
-      title.textContent = getCalendarPairingLabel(dayData, dateKey);
+      const labelParts = getCalendarPairingLabelParts(dayData, dateKey);
+      const primary = document.createElement('span');
+      primary.className = 'calendar-event-title-main';
+      primary.textContent = labelParts.primary;
+      title.appendChild(primary);
+      if (labelParts.secondary){
+        const secondary = document.createElement('span');
+        secondary.className = 'calendar-event-title-sub';
+        secondary.textContent = labelParts.secondary;
+        title.appendChild(secondary);
+      }
       const meta = document.createElement('div');
       meta.className = 'calendar-event-meta';
       const parts = [];
