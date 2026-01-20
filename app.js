@@ -5175,6 +5175,15 @@ function formatCalendarDateLabel(dateKey){
   });
 }
 
+function formatCalendarShortDateLabel(dateKey){
+  const [year, month, day] = String(dateKey || '').split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)){
+    return String(dateKey || '');
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) return String(dateKey || '');
+  return `${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}/${year}`;
+}
+
 const MONTH_NAME_TO_INDEX = {
   jan: 0,
   january: 0,
@@ -6808,6 +6817,12 @@ function buildCalendarPairingIndex(){
   return pairingMap;
 }
 
+function getCalendarPairingDisplayLabel(pairing){
+  const firstDay = pairing?.days?.[0];
+  const dateLabel = formatCalendarShortDateLabel(firstDay);
+  return dateLabel || 'Pairing';
+}
+
 function getCalendarPairingSummary(pairingId){
   const pairingDays = getCalendarPairingDays(pairingId);
   let creditMinutes = 0;
@@ -6868,8 +6883,8 @@ function renderCalendarPairingDetail(pairingId){
     if (statusEl) statusEl.textContent = 'Pairing not found.';
     return;
   }
-  const label = pairing.pairingNumber || pairing.pairingId;
-  titleEl.textContent = label ? `Pairing ${label}` : 'Pairing';
+  const label = getCalendarPairingDisplayLabel(pairing);
+  titleEl.textContent = label;
   if (summaryEl){
     const summary = getCalendarPairingSummary(pairingId);
     const blocks = [];
@@ -7207,6 +7222,7 @@ function renderCalendarBlockGrowthDetail(){
   const infoEl = document.getElementById('calendar-block-growth-detail-info');
   const statusEl = document.getElementById('calendar-block-growth-detail-status');
   if (!titleEl || !infoEl) return;
+  const pairingMap = buildCalendarPairingIndex();
   const monthKey = calendarState.selectedMonth;
   if (!monthKey){
     titleEl.textContent = 'Block growth detail';
@@ -7226,11 +7242,9 @@ function renderCalendarBlockGrowthDetail(){
     const events = (day?.events || []).filter(event => getCalendarEventBlockGrowth(event) > 0);
     if (!events.length) return;
     const pairingId = String(day?.pairing?.pairingId || '').trim();
-    const pairingNumber = String(day?.pairing?.pairingNumber || '').trim();
-    const pairingParts = [];
-    if (pairingNumber) pairingParts.push(`Pairing ${pairingNumber}`);
-    if (pairingId && pairingId !== pairingNumber) pairingParts.push(`ID ${pairingId}`);
-    const pairingLabel = pairingParts.join(' · ') || 'Pairing';
+    const pairingLabel = pairingId && pairingMap.has(pairingId)
+      ? getCalendarPairingDisplayLabel(pairingMap.get(pairingId))
+      : 'Pairing';
     const dateLabel = formatCalendarDateLabel(dateKey);
     const flightItems = events.map((event) => {
       const primaryLabel = event.label || event.identifiers?.join(', ') || 'Flight';
