@@ -6931,7 +6931,6 @@ function isCalendarDateKeyInRange(dateKey, range){
 function updateCalendarTotals(year, month){
   let creditMinutes = 0;
   let dutyMinutes = 0;
-  let eventCount = 0;
   const countedPairings = new Set();
   const monthKey = Number.isFinite(year) && Number.isFinite(month) && year > 0 && month > 0
     ? `${year}-${String(month).padStart(2, '0')}`
@@ -6954,17 +6953,14 @@ function updateCalendarTotals(year, month){
     } else {
       dutyMinutes += getCalendarDayTafbTotal(dateKey, day);
     }
-    eventCount += day?.events?.length || 0;
   });
   if (monthKey){
     creditMinutes += getCalendarVacationCreditMinutes(monthKey);
   }
   const creditEl = document.getElementById('modern-calendar-total-credit');
   const tafbEl = document.getElementById('modern-calendar-total-tafb');
-  const eventsEl = document.getElementById('modern-calendar-total-events');
   if (creditEl) creditEl.textContent = formatDurationMinutes(creditMinutes);
   if (tafbEl) tafbEl.textContent = formatDurationMinutes(dutyMinutes);
-  if (eventsEl) eventsEl.textContent = String(eventCount);
 }
 
 function renderCalendar(){
