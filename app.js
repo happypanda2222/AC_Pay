@@ -7050,9 +7050,14 @@ function renderCalendar(){
     const dateKey = buildCalendarDateKeyFromDate(current);
     const dayData = calendarState.eventsByDate?.[dateKey];
     const dayEvents = dayData?.events || [];
+    const isCnxDay = dayEvents.some(event => {
+      const cancellation = String(event?.cancellation || '').toUpperCase();
+      return cancellation === 'CNX' || cancellation === 'CNX PP';
+    });
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
     dayCell.dataset.dateKey = dateKey;
+    if (isCnxDay) dayCell.classList.add('is-cnx-day');
     if (calendarBlockMonthSelecting){
       dayCell.classList.add('is-block-selectable');
       dayCell.setAttribute('role', 'button');
