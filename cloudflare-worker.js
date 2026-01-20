@@ -35,15 +35,10 @@ function validatePayload(payload) {
     return { ok: false, message: 'Payload must be a JSON object.' };
   }
   const requiredKeys = ['eventsByDate', 'months', 'selectedMonth', 'blockMonthsByMonthKey', 'blockMonthRecurring'];
-  const allowedKeys = [...requiredKeys];
   const keys = Object.keys(payload);
   const missing = requiredKeys.filter(key => !(key in payload));
   if (missing.length) {
     return { ok: false, message: `Missing keys: ${missing.join(', ')}` };
-  }
-  const extra = keys.filter(key => !allowedKeys.includes(key));
-  if (extra.length) {
-    return { ok: false, message: `Unexpected keys: ${extra.join(', ')}` };
   }
   if (typeof payload.eventsByDate !== 'object' || payload.eventsByDate === null || Array.isArray(payload.eventsByDate)) {
     return { ok: false, message: 'eventsByDate must be an object.' };
