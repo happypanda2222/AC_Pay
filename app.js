@@ -4458,7 +4458,74 @@ function normalizeCalendarState(){
       });
     }
   });
+  dedupeCalendarPairingIds(calendarState.eventsByDate);
   updateCalendarPairingMetrics(calendarState.eventsByDate);
+}
+
+function dedupeCalendarPairingIds(targetEventsByDate = calendarState.eventsByDate){
+  const pairingMap = new Map();
+  Object.entries(targetEventsByDate || {}).forEach(([dateKey, day]) => {
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    if (!pairingId) return;
+    if (!pairingMap.has(pairingId)) pairingMap.set(pairingId, []);
+    pairingMap.get(pairingId).push({
+      dateKey,
+      day,
+      sourceMonthKey: typeof day?.sourceMonthKey === 'string' ? day.sourceMonthKey : ''
+    });
+  });
+
+  pairingMap.forEach((entries, pairingId) => {
+    if (entries.length < 2) return;
+    const sortedEntries = entries.slice().sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+    const blocks = [];
+    let currentBlock = null;
+    let lastDateKey = null;
+    let lastSourceMonthKey = null;
+
+    sortedEntries.forEach((entry) => {
+      const entryMonthKey = entry.sourceMonthKey || '';
+      const contiguous = lastDateKey && areDateKeysContiguous(lastDateKey, entry.dateKey);
+      const sameMonth = lastSourceMonthKey === entryMonthKey;
+      if (!currentBlock || !contiguous || !sameMonth){
+        currentBlock = {
+          index: blocks.length + 1,
+          sourceMonthKey: entryMonthKey,
+          entries: []
+        };
+        blocks.push(currentBlock);
+      }
+      currentBlock.entries.push(entry);
+      lastDateKey = entry.dateKey;
+      lastSourceMonthKey = entryMonthKey;
+    });
+
+    if (blocks.length < 2) return;
+    const hasMultipleMonths = new Set(blocks.map(block => block.sourceMonthKey || 'unknown')).size > 1;
+
+    blocks.forEach((block) => {
+      const suffixParts = [];
+      if (hasMultipleMonths) suffixParts.push(block.sourceMonthKey || 'unknown');
+      if (blocks.length > 1) suffixParts.push(`B${block.index}`);
+      const suffix = suffixParts.filter(Boolean).join('-');
+      const newPairingId = suffix ? `${pairingId}-${suffix}` : pairingId;
+      block.entries.forEach(({ day }) => {
+        if (day?.pairing) day.pairing.pairingId = newPairingId;
+        (day?.events || []).forEach((event) => {
+          if (event && typeof event === 'object'){
+            event.pairingId = newPairingId;
+          }
+        });
+      });
+    });
+  });
+}
+
+function areDateKeysContiguous(previousKey, nextKey){
+  const previousMs = getDateKeyStartMs(previousKey);
+  const nextMs = getDateKeyStartMs(nextKey);
+  if (!Number.isFinite(previousMs) || !Number.isFinite(nextMs)) return false;
+  return nextMs - previousMs === 86400000;
 }
 
 function inferCalendarDayPairing(day, dateKey){
