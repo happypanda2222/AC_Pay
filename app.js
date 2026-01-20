@@ -6649,10 +6649,16 @@ function getCalendarBlockMonthHighlightRange(monthKey){
     : { startKey: endKey, endKey: startKey };
   const bounds = getCalendarMonthDateBounds(monthKey, 3);
   if (!bounds) return null;
-  if (!isCalendarDateKeyInRange(range.startKey, bounds) || !isCalendarDateKeyInRange(range.endKey, bounds)){
-    return null;
+  const startInBounds = isCalendarDateKeyInRange(range.startKey, bounds);
+  const endInBounds = isCalendarDateKeyInRange(range.endKey, bounds);
+  if (!startInBounds && !endInBounds){
+    const overlapsBounds = range.startKey <= bounds.endKey && range.endKey >= bounds.startKey;
+    if (!overlapsBounds) return null;
   }
-  return range;
+  return {
+    startKey: range.startKey > bounds.startKey ? range.startKey : bounds.startKey,
+    endKey: range.endKey < bounds.endKey ? range.endKey : bounds.endKey
+  };
 }
 
 function isCalendarDateKeyInRange(dateKey, range){
@@ -6761,13 +6767,13 @@ function renderCalendar(){
       dayCell.setAttribute('role', 'button');
       dayCell.setAttribute('tabindex', '0');
     }
-    if (current.getMonth() + 1 !== month){
-      dayCell.classList.add('is-outside-month');
-    }
     if (blockMonthRange && isCalendarDateKeyInRange(dateKey, blockMonthRange)){
       dayCell.classList.add('is-block-range');
       if (dateKey === blockMonthRange.startKey) dayCell.classList.add('is-block-start');
       if (dateKey === blockMonthRange.endKey) dayCell.classList.add('is-block-end');
+    }
+    if (current.getMonth() + 1 !== month){
+      dayCell.classList.add('is-outside-month');
     }
     if (dayData){
       dayCell.classList.add('has-detail');
