@@ -7537,13 +7537,15 @@ function initCalendar(){
         setCalendarSourceMonthKey(eventsByDate);
         const retainedEvents = {};
         Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-          const monthKey = typeof dateKey === 'string' ? dateKey.slice(0, 7) : '';
+          const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
+            ? day.sourceMonthKey.slice(0, 7)
+            : (typeof dateKey === 'string' ? dateKey.slice(0, 7) : '');
           if (parsedMonthSet.has(monthKey)) return;
           retainedEvents[dateKey] = day;
         });
         calendarState.eventsByDate = { ...retainedEvents, ...eventsByDate };
         normalizeCalendarState();
-        calendarState.months = mergeCalendarMonths(calendarState.months, parsedMonths);
+        calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
         ensureCalendarSelection();
         saveCalendarState();
         renderCalendar();
