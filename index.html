@@ -483,6 +483,18 @@
       flex-direction:column;
       gap:8px;
     }
+    .calendar-day.is-block-selectable{
+      cursor:pointer;
+      border-color:#334155;
+    }
+    .calendar-day.is-block-selectable:hover{
+      border-color:#38bdf8;
+      background:rgba(56, 189, 248, 0.08);
+    }
+    .calendar-day.is-block-selectable:focus-visible{
+      outline:2px solid #38bdf8;
+      outline-offset:2px;
+    }
     .calendar-day.is-block-range{
       border-color:#38bdf8;
       background:rgba(14, 116, 144, 0.22);
@@ -495,6 +507,14 @@
     .calendar-day.is-outside-month{
       background:#0a0d16;
       border-color:#151b26;
+    }
+    .calendar-day.is-outside-month.is-block-selectable{
+      border-color:#243043;
+      background:#0c101b;
+    }
+    .calendar-day.is-outside-month.is-block-selectable:hover{
+      border-color:#38bdf8;
+      background:rgba(14, 116, 144, 0.2);
     }
     .calendar-day.is-outside-month .calendar-day-number{
       color:rgba(148, 163, 184, 0.7);

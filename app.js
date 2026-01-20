@@ -6756,6 +6756,11 @@ function renderCalendar(){
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
     dayCell.dataset.dateKey = dateKey;
+    if (calendarBlockMonthSelecting){
+      dayCell.classList.add('is-block-selectable');
+      dayCell.setAttribute('role', 'button');
+      dayCell.setAttribute('tabindex', '0');
+    }
     if (current.getMonth() + 1 !== month){
       dayCell.classList.add('is-outside-month');
     }
@@ -7734,32 +7739,33 @@ function initCalendar(){
   }
   const grid = document.getElementById('modern-calendar-grid');
   if (grid){
+    const handleBlockMonthSelection = (dateKey) => {
+      if (!dateKey) return;
+      if (!calendarState.blockMonthStartKey){
+        calendarState.blockMonthStartKey = dateKey;
+        renderCalendar();
+        return;
+      }
+      if (!calendarState.blockMonthEndKey){
+        calendarState.blockMonthEndKey = dateKey;
+        const range = getCalendarBlockMonthRangeForMonth(calendarState.selectedMonth);
+        if (!range){
+          calendarState.blockMonthStartKey = dateKey;
+          calendarState.blockMonthEndKey = null;
+          renderCalendar();
+          return;
+        }
+        calendarBlockMonthSelecting = false;
+        calendarBlockMonthDraft = null;
+        saveCalendarState();
+        renderCalendar();
+      }
+    };
     grid.addEventListener('click', (event) => {
       const target = event.target;
       if (calendarBlockMonthSelecting){
         const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
-        const dateKey = dayCell?.dataset?.dateKey;
-        if (dateKey){
-          if (!calendarState.blockMonthStartKey){
-            calendarState.blockMonthStartKey = dateKey;
-            renderCalendar();
-            return;
-          }
-          if (!calendarState.blockMonthEndKey){
-            calendarState.blockMonthEndKey = dateKey;
-            const range = getCalendarBlockMonthRangeForMonth(calendarState.selectedMonth);
-            if (!range){
-              calendarState.blockMonthStartKey = dateKey;
-              calendarState.blockMonthEndKey = null;
-              renderCalendar();
-              return;
-            }
-            calendarBlockMonthSelecting = false;
-            calendarBlockMonthDraft = null;
-            saveCalendarState();
-            renderCalendar();
-          }
-        }
+        handleBlockMonthSelection(dayCell?.dataset?.dateKey);
         return;
       }
       const eventButton = target instanceof Element ? target.closest('.calendar-event') : null;
@@ -7779,6 +7785,15 @@ function initCalendar(){
       if (dateKey && calendarState.eventsByDate?.[dateKey]){
         openCalendarDayDetail(dateKey);
       }
+    });
+    grid.addEventListener('keydown', (event) => {
+      if (!calendarBlockMonthSelecting) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const target = event.target;
+      const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
+      if (!dayCell) return;
+      event.preventDefault();
+      handleBlockMonthSelection(dayCell?.dataset?.dateKey);
     });
   }
   const detailBack = document.getElementById('calendar-detail-back');
