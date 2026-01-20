@@ -4687,11 +4687,6 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
       dateKey,
       day: targetEventsByDate?.[dateKey]
     })).filter(entry => entry.day);
-    const firstCheckIn = dayEntries.find(entry => Number.isFinite(entry.day?.checkInMinutes));
-    const lastCheckOut = [...dayEntries].reverse().find(entry => Number.isFinite(entry.day?.checkOutMinutes));
-    const checkInMs = firstCheckIn
-      ? getDateKeyStartMs(firstCheckIn.dateKey) + (firstCheckIn.day.checkInMinutes * 60000)
-      : null;
     const flightEntries = [];
     dayEntries.forEach(({ dateKey, day }) => {
       (day?.events || []).forEach((event) => {
@@ -4712,6 +4707,61 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
     const lastFlight = flightEntries[flightEntries.length - 1] || null;
     const firstActive = flightEntries.find(entry => !isCancelledEvent(entry.event)) || null;
     const lastActive = [...flightEntries].reverse().find(entry => !isCancelledEvent(entry.event)) || null;
+    if (lastActive && typeof lastActive.dateKey === 'string'){
+      const arrivalDateKey = getDateKeyFromMs(lastActive.endMs);
+      if (arrivalDateKey && arrivalDateKey !== lastActive.dateKey){
+        const sourceDateKey = lastActive.dateKey;
+        const sourceDay = targetEventsByDate?.[sourceDateKey];
+        const pairingNumber = String(sourceDay?.pairing?.pairingNumber || '').trim();
+        const existingDay = targetEventsByDate?.[arrivalDateKey];
+        const nextDay = existingDay && typeof existingDay === 'object' ? existingDay : {};
+        if (!Array.isArray(nextDay.events)) nextDay.events = [];
+        if (!nextDay.sourceMonthKey && typeof sourceDay?.sourceMonthKey === 'string'){
+          nextDay.sourceMonthKey = sourceDay.sourceMonthKey;
+        }
+        const existingPairing = nextDay.pairing && typeof nextDay.pairing === 'object'
+          ? nextDay.pairing
+          : null;
+        if (!existingPairing){
+          nextDay.pairing = {
+            pairingId: pairing.pairingId,
+            pairingNumber,
+            pairingDays: []
+          };
+        } else {
+          if (!existingPairing.pairingId) existingPairing.pairingId = pairing.pairingId;
+          if (!existingPairing.pairingNumber && pairingNumber){
+            existingPairing.pairingNumber = pairingNumber;
+          }
+          if (!Array.isArray(existingPairing.pairingDays)){
+            existingPairing.pairingDays = [];
+          }
+        }
+        let checkOutMinutes = Number.isFinite(sourceDay?.checkOutMinutes) ? sourceDay.checkOutMinutes : null;
+        if (Number.isFinite(checkOutMinutes)){
+          if (checkOutMinutes >= 1440) checkOutMinutes -= 1440;
+        } else {
+          const nextDayStartMs = getDateKeyStartMs(arrivalDateKey);
+          if (Number.isFinite(nextDayStartMs)){
+            const arrivalMinutes = Math.round((lastActive.endMs - nextDayStartMs) / 60000);
+            if (arrivalMinutes >= 0) checkOutMinutes = arrivalMinutes + 15;
+          }
+        }
+        nextDay.checkOutMinutes = Number.isFinite(checkOutMinutes) ? checkOutMinutes : null;
+        nextDay.checkoutPlaceholderFromDateKey = sourceDateKey;
+        targetEventsByDate[arrivalDateKey] = nextDay;
+        if (!pairing.days.includes(arrivalDateKey)){
+          pairing.days.push(arrivalDateKey);
+          pairing.days.sort();
+          dayEntries.push({ dateKey: arrivalDateKey, day: nextDay });
+        }
+      }
+    }
+    const firstCheckIn = dayEntries.find(entry => Number.isFinite(entry.day?.checkInMinutes));
+    const lastCheckOut = [...dayEntries].reverse().find(entry => Number.isFinite(entry.day?.checkOutMinutes));
+    const checkInMs = firstCheckIn
+      ? getDateKeyStartMs(firstCheckIn.dateKey) + (firstCheckIn.day.checkInMinutes * 60000)
+      : null;
     const checkOutMs = lastCheckOut
       ? (() => {
         const checkOutStartMs = getDateKeyStartMs(lastCheckOut.dateKey);
@@ -5635,6 +5685,32 @@ function getCalendarPairingLayoverLabel(day, dateKey){
 function getCalendarPairingLabelParts(day, dateKey){
   const pairingDays = getCalendarPairingDaysForDay(day);
   const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
+  const hasCheckoutPlaceholder = typeof day?.checkoutPlaceholderFromDateKey === 'string'
+    && day.checkoutPlaceholderFromDateKey.trim();
+  const hasNextDayCheckoutPlaceholder = Boolean(dateKey && pairingDays.some((pairingDateKey) => {
+    const pairingDay = calendarState.eventsByDate?.[pairingDateKey];
+    return pairingDay?.checkoutPlaceholderFromDateKey === dateKey;
+  }));
+  if (hasCheckoutPlaceholder){
+    let endMinutes = Number.isFinite(day?.checkOutMinutes) ? day.checkOutMinutes : null;
+    if (!Number.isFinite(endMinutes) && dateKey){
+      const lastFlightMs = getCalendarDayLastFlightEndMs(day, dateKey);
+      const dayStartMs = getDateKeyStartMs(dateKey);
+      if (Number.isFinite(lastFlightMs) && Number.isFinite(dayStartMs)){
+        endMinutes = Math.round((lastFlightMs - dayStartMs) / 60000);
+      }
+    }
+    return {
+      primary: Number.isFinite(endMinutes) ? formatMinutesToTime(endMinutes) : 'Check out',
+      secondary: ''
+    };
+  }
+  if (hasNextDayCheckoutPlaceholder){
+    const arrivalLabel = getCalendarLastFlightArrivalCode(day, dateKey);
+    if (arrivalLabel) return { primary: arrivalLabel, secondary: '' };
+    if (layoverLabel) return { primary: layoverLabel, secondary: '' };
+    return { primary: '1 Day', secondary: '' };
+  }
   const isSingleDay = pairingDays.length === 1;
   if (isSingleDay && dateKey){
     const firstDay = pairingDays[0];
