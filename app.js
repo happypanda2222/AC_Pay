@@ -5181,8 +5181,8 @@ async function syncCalendarToCloud(){
     eventsByDate: calendarState.eventsByDate,
     months: calendarState.months,
     selectedMonth: calendarState.selectedMonth,
-    blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
-    blockMonthRecurring: calendarState.blockMonthRecurring
+    blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey || {},
+    blockMonthRecurring: calendarState.blockMonthRecurring || {}
   };
   let response;
   try {

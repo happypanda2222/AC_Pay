@@ -34,9 +34,11 @@ function validatePayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return { ok: false, message: 'Payload must be a JSON object.' };
   }
-  const allowedKeys = ['eventsByDate', 'months', 'selectedMonth'];
+  const requiredKeys = ['eventsByDate', 'months', 'selectedMonth'];
+  const optionalKeys = ['blockMonthsByMonthKey', 'blockMonthRecurring'];
+  const allowedKeys = [...requiredKeys, ...optionalKeys];
   const keys = Object.keys(payload);
-  const missing = allowedKeys.filter(key => !(key in payload));
+  const missing = requiredKeys.filter(key => !(key in payload));
   if (missing.length) {
     return { ok: false, message: `Missing keys: ${missing.join(', ')}` };
   }
@@ -49,6 +51,40 @@ function validatePayload(payload) {
   }
   if (!Array.isArray(payload.months)) {
     return { ok: false, message: 'months must be an array.' };
+  }
+  if ('blockMonthsByMonthKey' in payload) {
+    const value = payload.blockMonthsByMonthKey;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return { ok: false, message: 'blockMonthsByMonthKey must be an object.' };
+    }
+    for (const entry of Object.values(value)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return { ok: false, message: 'blockMonthsByMonthKey entries must be objects.' };
+      }
+      if (typeof entry.startKey !== 'string' || !entry.startKey.trim()) {
+        return { ok: false, message: 'blockMonthsByMonthKey entries must include startKey.' };
+      }
+      if ('endKey' in entry && entry.endKey !== null && typeof entry.endKey !== 'string') {
+        return { ok: false, message: 'blockMonthsByMonthKey endKey must be a string or null.' };
+      }
+    }
+  }
+  if ('blockMonthRecurring' in payload) {
+    const value = payload.blockMonthRecurring;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return { ok: false, message: 'blockMonthRecurring must be an object.' };
+    }
+    for (const entry of Object.values(value)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return { ok: false, message: 'blockMonthRecurring entries must be objects.' };
+      }
+      if (!Number.isFinite(entry.startDay)) {
+        return { ok: false, message: 'blockMonthRecurring entries must include startDay.' };
+      }
+      if ('endDay' in entry && entry.endDay !== null && !Number.isFinite(entry.endDay)) {
+        return { ok: false, message: 'blockMonthRecurring endDay must be a number or null.' };
+      }
+    }
   }
   return { ok: true };
 }
@@ -67,16 +103,27 @@ async function handleGet(env, origin) {
     eventsByDate: {},
     months: [],
     selectedMonth: null,
+    blockMonthsByMonthKey: {},
+    blockMonthRecurring: {},
     updatedAt: null,
     etag: null
   };
-  const payload = stored || defaultPayload;
+  const payload = stored
+    ? {
+      ...defaultPayload,
+      ...stored,
+      blockMonthsByMonthKey: stored.blockMonthsByMonthKey || {},
+      blockMonthRecurring: stored.blockMonthRecurring || {}
+    }
+    : defaultPayload;
   const headers = withCors({ ETag: payload.etag || '' }, origin);
   return jsonResponse(
     {
       eventsByDate: payload.eventsByDate,
       months: payload.months,
       selectedMonth: payload.selectedMonth,
+      blockMonthsByMonthKey: payload.blockMonthsByMonthKey,
+      blockMonthRecurring: payload.blockMonthRecurring,
       updatedAt: payload.updatedAt,
       etag: payload.etag
     },
@@ -96,11 +143,21 @@ async function handlePut(request, env, origin) {
     return jsonResponse({ error: validation.message }, { status: 400, headers: withCors({}, origin) });
   }
   const updatedAt = new Date().toISOString();
-  const etag = await computeEtag(payload);
+  const blockMonthsByMonthKey = payload.blockMonthsByMonthKey || {};
+  const blockMonthRecurring = payload.blockMonthRecurring || {};
+  const etag = await computeEtag({
+    eventsByDate: payload.eventsByDate,
+    months: payload.months,
+    selectedMonth: payload.selectedMonth,
+    blockMonthsByMonthKey,
+    blockMonthRecurring
+  });
   const record = {
     eventsByDate: payload.eventsByDate,
     months: payload.months,
     selectedMonth: payload.selectedMonth,
+    blockMonthsByMonthKey,
+    blockMonthRecurring,
     updatedAt,
     etag
   };
