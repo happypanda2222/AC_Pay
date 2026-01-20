@@ -6655,7 +6655,9 @@ function renderCalendarPairingDetail(pairingId){
         const flight = document.createElement('div');
         flight.className = 'calendar-pairing-flight';
         if (isDeadheadEvent(event)) flight.classList.add('is-deadhead');
-        flight.textContent = event.label || event.identifiers?.join(', ') || 'Flight';
+        const route = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '';
+        const label = event.label || event.identifiers?.join(', ') || 'Flight';
+        flight.textContent = route ? `${label} · ${route}` : label;
         flights.appendChild(flight);
       });
     } else {
