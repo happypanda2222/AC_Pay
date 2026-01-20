@@ -420,6 +420,8 @@
     .fin-confirm-dialog h4{margin:0 0 8px 0;font-size:16px}
     .fin-confirm-dialog p{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
     .fin-confirm-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+    .fin-confirm-option{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--muted)}
+    .fin-confirm-option input{width:16px;height:16px}
     .metar-history-page{display:block}
     .metar-history-panel{
       width:100%;
@@ -1686,6 +1688,32 @@
               <div class="muted-note" id="fin-flight-status" aria-live="polite"></div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="calendar-delete-month-overlay" class="fin-confirm-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="calendar-delete-month-title">
+      <div class="fin-confirm-dialog" role="document">
+        <h4 id="calendar-delete-month-title">Delete month</h4>
+        <p id="calendar-delete-month-message"></p>
+        <label class="fin-confirm-option" for="calendar-delete-month-skip">
+          <input id="calendar-delete-month-skip" type="checkbox">
+          <span>Don’t ask again</span>
+        </label>
+        <div class="fin-confirm-actions">
+          <button type="button" class="btn btn-secondary" data-calendar-delete-month-cancel>Cancel</button>
+          <button type="button" class="btn btn-danger" data-calendar-delete-month-confirm>Delete month</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="calendar-overwrite-overlay" class="fin-confirm-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="calendar-overwrite-title">
+      <div class="fin-confirm-dialog" role="document">
+        <h4 id="calendar-overwrite-title">Overwrite local schedule?</h4>
+        <p>The cloud schedule is newer than what is stored on this device. Overwrite the local schedule?</p>
+        <div class="fin-confirm-actions">
+          <button type="button" class="btn btn-secondary" data-calendar-overwrite-cancel>Keep local</button>
+          <button type="button" class="btn btn-danger" data-calendar-overwrite-confirm>Overwrite</button>
         </div>
       </div>
     </div>
