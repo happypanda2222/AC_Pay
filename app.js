@@ -5343,11 +5343,13 @@ function parseFlightSegmentsFromLine(line){
 }
 
 function parseBlockMinutesFromLine(line){
-  const endMatch = String(line || '').match(/(\d{1,2}:\d{2})\s*$/);
-  if (endMatch){
-    const minutes = parseDurationToMinutes(endMatch[1]);
-    if (Number.isFinite(minutes)) return minutes;
-  }
+  const durations = String(line || '').match(/\b\d{1,2}:\d{2}\b/g) || [];
+  if (!durations.length) return NaN;
+  const blockToken = durations.length >= 2 ? durations[durations.length - 2] : durations[durations.length - 1];
+  return parseDurationToMinutes(blockToken);
+}
+
+function parseFlightCreditMinutesFromLine(line){
   const durations = String(line || '').match(/\b\d{1,2}:\d{2}\b/g) || [];
   if (!durations.length) return NaN;
   return parseDurationToMinutes(durations[durations.length - 1]);
@@ -5779,7 +5781,10 @@ function parseAdditionalDetailsRows(rows, fallbackYear){
     const columnData = splitRowIntoColumns(row, columns);
     const dateKey = parseDateFromLine(columnData.date, fallbackYear, currentMonth, currentYear);
     if (!dateKey) return;
-    const creditMinutes = extractCreditMinutesFromColumn(columnData.credit);
+    let creditMinutes = extractCreditMinutesFromColumn(columnData.credit);
+    if (!Number.isFinite(creditMinutes)){
+      creditMinutes = parseFlightCreditMinutesFromLine(rowText);
+    }
     if (!isValidFlightRow(columnData, rowText, creditMinutes)) return;
     const dayEvents = ensureDayEvents(dateKey);
     const identifiers = extractIdentifiersFromLine(columnData.identifiers);
@@ -6035,6 +6040,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
         ? segments.map(segment => ({ from: segment.from, to: segment.to }))
         : (airports.length >= 2 ? [{ from: airports[0], to: airports[1] }] : []);
       const blockMinutes = parseBlockMinutesFromLine(trimmed);
+      const creditMinutes = parseFlightCreditMinutesFromLine(trimmed);
       const departureMinutes = segments.length ? segments[0].departureMinutes : null;
       const arrivalMinutes = segments.length ? segments[segments.length - 1].arrivalMinutes : null;
       const cancellationStatus = extractCancellationStatus(trimmed);
@@ -6046,7 +6052,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
         identifiers: [identifier],
         deadhead: prefixInfo.deadhead,
         dutyMinutes: null,
-        creditMinutes: null,
+        creditMinutes: Number.isFinite(creditMinutes) ? creditMinutes : null,
         blockMinutes: Number.isFinite(blockMinutes) ? blockMinutes : null,
         legs,
         segments,
