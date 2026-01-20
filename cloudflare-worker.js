@@ -34,9 +34,8 @@ function validatePayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return { ok: false, message: 'Payload must be a JSON object.' };
   }
-  const requiredKeys = ['eventsByDate', 'months', 'selectedMonth'];
-  const optionalKeys = ['blockMonthsByMonthKey', 'blockMonthRecurring'];
-  const allowedKeys = [...requiredKeys, ...optionalKeys];
+  const requiredKeys = ['eventsByDate', 'months', 'selectedMonth', 'blockMonthsByMonthKey', 'blockMonthRecurring'];
+  const allowedKeys = [...requiredKeys];
   const keys = Object.keys(payload);
   const missing = requiredKeys.filter(key => !(key in payload));
   if (missing.length) {
@@ -52,38 +51,37 @@ function validatePayload(payload) {
   if (!Array.isArray(payload.months)) {
     return { ok: false, message: 'months must be an array.' };
   }
-  if ('blockMonthsByMonthKey' in payload) {
-    const value = payload.blockMonthsByMonthKey;
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      return { ok: false, message: 'blockMonthsByMonthKey must be an object.' };
+  if (payload.selectedMonth !== null && typeof payload.selectedMonth !== 'string') {
+    return { ok: false, message: 'selectedMonth must be a string or null.' };
+  }
+  const blockMonthsValue = payload.blockMonthsByMonthKey;
+  if (typeof blockMonthsValue !== 'object' || blockMonthsValue === null || Array.isArray(blockMonthsValue)) {
+    return { ok: false, message: 'blockMonthsByMonthKey must be an object.' };
+  }
+  for (const entry of Object.values(blockMonthsValue)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { ok: false, message: 'blockMonthsByMonthKey entries must be objects.' };
     }
-    for (const entry of Object.values(value)) {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-        return { ok: false, message: 'blockMonthsByMonthKey entries must be objects.' };
-      }
-      if (typeof entry.startKey !== 'string' || !entry.startKey.trim()) {
-        return { ok: false, message: 'blockMonthsByMonthKey entries must include startKey.' };
-      }
-      if ('endKey' in entry && entry.endKey !== null && typeof entry.endKey !== 'string') {
-        return { ok: false, message: 'blockMonthsByMonthKey endKey must be a string or null.' };
-      }
+    if (typeof entry.startKey !== 'string' || !entry.startKey.trim()) {
+      return { ok: false, message: 'blockMonthsByMonthKey entries must include startKey.' };
+    }
+    if ('endKey' in entry && entry.endKey !== null && typeof entry.endKey !== 'string') {
+      return { ok: false, message: 'blockMonthsByMonthKey endKey must be a string or null.' };
     }
   }
-  if ('blockMonthRecurring' in payload) {
-    const value = payload.blockMonthRecurring;
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      return { ok: false, message: 'blockMonthRecurring must be an object.' };
+  const blockRecurringValue = payload.blockMonthRecurring;
+  if (typeof blockRecurringValue !== 'object' || blockRecurringValue === null || Array.isArray(blockRecurringValue)) {
+    return { ok: false, message: 'blockMonthRecurring must be an object.' };
+  }
+  for (const entry of Object.values(blockRecurringValue)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { ok: false, message: 'blockMonthRecurring entries must be objects.' };
     }
-    for (const entry of Object.values(value)) {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-        return { ok: false, message: 'blockMonthRecurring entries must be objects.' };
-      }
-      if (!Number.isFinite(entry.startDay)) {
-        return { ok: false, message: 'blockMonthRecurring entries must include startDay.' };
-      }
-      if ('endDay' in entry && entry.endDay !== null && !Number.isFinite(entry.endDay)) {
-        return { ok: false, message: 'blockMonthRecurring endDay must be a number or null.' };
-      }
+    if (!Number.isFinite(entry.startDay)) {
+      return { ok: false, message: 'blockMonthRecurring entries must include startDay.' };
+    }
+    if ('endDay' in entry && entry.endDay !== null && !Number.isFinite(entry.endDay)) {
+      return { ok: false, message: 'blockMonthRecurring endDay must be a number or null.' };
     }
   }
   return { ok: true };
@@ -140,7 +138,10 @@ async function handlePut(request, env, origin) {
   }
   const validation = validatePayload(payload);
   if (!validation.ok) {
-    return jsonResponse({ error: validation.message }, { status: 400, headers: withCors({}, origin) });
+    return jsonResponse(
+      { error: validation.message, message: validation.message },
+      { status: 400, headers: withCors({}, origin) }
+    );
   }
   const updatedAt = new Date().toISOString();
   const blockMonthsByMonthKey = payload.blockMonthsByMonthKey || {};
