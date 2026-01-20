@@ -6928,6 +6928,30 @@ function isCalendarDateKeyInRange(dateKey, range){
   return dateKey >= range.startKey && dateKey <= range.endKey;
 }
 
+function getCalendarMonthlyCreditMinutes(monthKey){
+  if (!monthKey) return 0;
+  const prefix = `${monthKey}-`;
+  const range = getCalendarBlockMonthRangeForMonth(monthKey);
+  const countedPairings = new Set();
+  let totalMinutes = 0;
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (!dateKey.startsWith(prefix)) return;
+    if (range && !isCalendarDateKeyInRange(dateKey, range)) return;
+    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    if (pairingId){
+      if (countedPairings.has(pairingId)) return;
+      const summary = getCalendarPairingSummary(pairingId, monthKey);
+      if (Number.isFinite(summary.creditMinutes)){
+        totalMinutes += summary.creditMinutes;
+      }
+      countedPairings.add(pairingId);
+      return;
+    }
+    totalMinutes += getCalendarDayCreditTotal(dateKey, day);
+  });
+  return totalMinutes;
+}
+
 function updateCalendarTotals(year, month){
   let creditMinutes = 0;
   let dutyMinutes = 0;
@@ -6937,13 +6961,15 @@ function updateCalendarTotals(year, month){
     : null;
   const range = monthKey ? getCalendarBlockMonthRangeForMonth(monthKey) : null;
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  if (monthKey){
+    creditMinutes = getCalendarMonthlyCreditMinutes(monthKey);
+  }
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (range){
       if (!isCalendarDateKeyInRange(dateKey, range)) return;
     } else if (!dateKey.startsWith(monthPrefix)){
       return;
     }
-    creditMinutes += getCalendarDayCreditTotal(dateKey, day);
     const pairingId = String(day?.pairing?.pairingId || '').trim();
     if (pairingId && Number.isFinite(day?.pairing?.tafbMinutes)){
       if (!countedPairings.has(pairingId)){
@@ -7188,7 +7214,7 @@ function getCalendarPairingDisplayLabel(pairing){
   return dateLabel || 'Pairing';
 }
 
-function getCalendarPairingSummary(pairingId){
+function getCalendarPairingSummary(pairingId, monthKey = calendarState.selectedMonth){
   const pairingDays = getCalendarPairingDays(pairingId);
   let creditMinutes = 0;
   let dpgMinutes = 0;
@@ -7196,7 +7222,7 @@ function getCalendarPairingSummary(pairingId){
   let tafbMinutes = null;
   let tripCreditMinutes = null;
   let rangeExcludesDay = false;
-  const range = getCalendarBlockMonthRangeForMonth(calendarState.selectedMonth);
+  const range = getCalendarBlockMonthRangeForMonth(monthKey);
   const firstDayInRange = range
     ? pairingDays.find(dateKey => isCalendarDateKeyInRange(dateKey, range))
     : pairingDays[0];
@@ -7668,7 +7694,7 @@ function renderCalendarCreditDetail(){
   titleEl.textContent = `${formatCalendarMonthLabel(monthKey)} credit`;
   const prefix = `${monthKey}-`;
   const range = getCalendarBlockMonthRangeForMonth(monthKey);
-  let totalCreditMinutes = 0;
+  const totalCreditMinutes = getCalendarMonthlyCreditMinutes(monthKey);
   let ppCreditMinutes = 0;
   let lostCreditMinutes = 0;
   let blockGrowthMinutes = 0;
@@ -11553,9 +11579,9 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Total credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit.',
+    pairingCredit: 'Pairing credit uses the trip credit from TRIP TAFB lines when available; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules and add vacation credit once.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed total credit (including CNX/CNX PP rules, block growth, extras, and vacation credit) by the calendar credit hourly rate.',
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals include vacation credit and use TRIP credit overrides when available; otherwise they sum daily credits.',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr.'
   },
   vo: {
