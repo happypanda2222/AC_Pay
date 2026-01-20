@@ -4667,7 +4667,8 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
             Number.isFinite(lastFlight.departureMinutes) &&
             lastFlight.arrivalMinutes < lastFlight.departureMinutes;
           const lastFlightEndsNextDay = lastFlight.endMs > (lastFlightStartMs + (24 * 60 * 60000));
-          if (lastFlightCrossesMidnight || lastFlightEndsNextDay){
+          const checkOutSameDateAsLastFlight = lastCheckOut.dateKey === lastFlight.dateKey;
+          if (checkOutSameDateAsLastFlight && (lastFlightCrossesMidnight || lastFlightEndsNextDay)){
             checkOutMinutes += 1440;
           }
         }
@@ -10755,7 +10756,7 @@ const INFO_COPY = {
     esop: 'Employee ESOP deduction for the month at the selected percentage of gross (capped to the monthly portion of $30,000).',
     esopMatch: 'Employer ESOP match for the month (30% of your contribution) reduced by estimated tax on the match.',
     union: 'Estimated monthly union dues based on seat, aircraft, year and hours.',
-    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out based on the first/last active flights when boundary flights are canceled, with check-out extending past midnight when the last flight arrives after midnight. Manual overrides apply only when the boundaries are intact.',
+    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out based on the first/last active flights when boundary flights are canceled, with check-out extending past midnight when the last flight arrives after midnight and the check-out is logged on the same date. Manual overrides apply only when the boundaries are intact.',
     marginalFed: 'Marginal federal tax rate based on annualized taxable income (gross minus pension).',
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
