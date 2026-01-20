@@ -6199,11 +6199,12 @@ function parsePastedScheduleText(text){
   let currentPairing = null;
   let pairingCounter = 0;
   let pairingNeedsReset = false;
+  const parseSessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
   const startPairing = (pairingNumber) => {
     const pairingLabel = pairingNumber || 'PAIR';
     pairingCounter += 1;
-    const pairingId = `${pairingLabel}-${pairingCounter}`;
+    const pairingId = `${pairingLabel}-${parseSessionId}-${pairingCounter}`;
     currentPairing = {
       pairingId,
       pairingNumber: pairingNumber || '',
