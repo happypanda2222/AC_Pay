@@ -4677,11 +4677,15 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
       (firstFlight && isCancelledEvent(firstFlight.event)) ||
       (lastFlight && isCancelledEvent(lastFlight.event))
     );
+    const tripTafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.pairing?.tripTafbMinutes));
+    const tripTafbMinutes = tripTafbOverride?.day?.pairing?.tripTafbMinutes;
     const tafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.tafbMinutes));
     const overrideAllowed = !boundaryCancelled;
-    let tafbMinutes = overrideAllowed && Number.isFinite(tafbOverride?.day?.tafbMinutes)
-      ? tafbOverride.day.tafbMinutes
-      : null;
+    let tafbMinutes = Number.isFinite(tripTafbMinutes)
+      ? tripTafbMinutes
+      : (overrideAllowed && Number.isFinite(tafbOverride?.day?.tafbMinutes)
+        ? tafbOverride.day.tafbMinutes
+        : null);
     if (!Number.isFinite(tafbMinutes) && Number.isFinite(pairingCheckInMs) && Number.isFinite(pairingCheckOutMs)){
       const diffMinutes = Math.round((pairingCheckOutMs - pairingCheckInMs) / 60000);
       tafbMinutes = diffMinutes >= 0 ? diffMinutes : null;
@@ -4694,6 +4698,9 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
     });
     dayEntries.forEach(({ day }) => {
       if (!day?.pairing) return;
+      if (Number.isFinite(tripTafbMinutes)){
+        day.pairing.tripTafbMinutes = tripTafbMinutes;
+      }
       day.pairing.tafbMinutes = Number.isFinite(tafbMinutes) ? tafbMinutes : null;
       day.pairing.dpgMinutes = dpgTotal || null;
       day.pairing.thgMinutes = thgTotal || null;
@@ -6045,6 +6052,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
   let summaryCreditMinutes = null;
   let dutyMinutes = null;
   let dayTafbMinutes = null;
+  let tripTafbMinutes = null;
   let checkInMinutes = null;
   let checkOutMinutes = null;
   let dpgMinutes = null;
@@ -6095,8 +6103,10 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     if (tafbMatch){
       const minutes = parseDurationToMinutes(tafbMatch[1]);
       if (Number.isFinite(minutes)){
-        dutyMinutes = minutes;
-        dayTafbMinutes = minutes;
+        tripTafbMinutes = minutes;
+        if (pairingContext){
+          pairingContext.tripTafbMinutes = minutes;
+        }
       }
       const thgMatch = trimmed.match(/\bTHG\s+(\d{1,3}:\d{2})/i);
       if (thgMatch){
@@ -6168,6 +6178,11 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
   }
 
   if (Number.isFinite(dutyMinutes)) dayTafbMinutes = dutyMinutes;
+  if (pairing){
+    pairing.tripTafbMinutes = Number.isFinite(pairingContext?.tripTafbMinutes)
+      ? pairingContext.tripTafbMinutes
+      : (Number.isFinite(tripTafbMinutes) ? tripTafbMinutes : null);
+  }
   if (pairing?.pairingId){
     events.forEach((event) => {
       event.pairingId = pairing.pairingId;
@@ -6529,7 +6544,10 @@ function getCalendarPairingSummary(pairingId){
     if (Number.isFinite(day.dpgMinutes)) dpgMinutes += day.dpgMinutes;
     if (Number.isFinite(day.thgMinutes)) thgMinutes += day.thgMinutes;
     if (!Number.isFinite(tafbMinutes)){
-      const pairingTafb = getCalendarPairingTafbMinutes(day, dateKey);
+      const pairingTripTafb = day?.pairing?.tripTafbMinutes;
+      const pairingTafb = Number.isFinite(pairingTripTafb)
+        ? pairingTripTafb
+        : getCalendarPairingTafbMinutes(day, dateKey);
       if (Number.isFinite(pairingTafb)) tafbMinutes = pairingTafb;
     }
   });
@@ -10641,7 +10659,7 @@ const INFO_COPY = {
     esop: 'Employee ESOP deduction for the month at the selected percentage of gross (capped to the monthly portion of $30,000).',
     esopMatch: 'Employer ESOP match for the month (30% of your contribution) reduced by estimated tax on the match.',
     union: 'Estimated monthly union dues based on seat, aircraft, year and hours.',
-    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB is calculated from check-in/out based on the first/last active flights when boundary flights are canceled; manual overrides apply only when the boundaries are intact.',
+    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out based on the first/last active flights when boundary flights are canceled. Manual overrides apply only when the boundaries are intact.',
     marginalFed: 'Marginal federal tax rate based on annualized taxable income (gross minus pension).',
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
