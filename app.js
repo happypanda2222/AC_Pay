@@ -7248,7 +7248,7 @@ function updateCalendarTotals(year, month){
   if (tafbEl) tafbEl.textContent = formatDurationMinutes(dutyMinutes);
 }
 
-const CALENDAR_HOTEL_BAR_FONT_MAX = 9;
+const CALENDAR_HOTEL_BAR_FONT_MAX = 10;
 const CALENDAR_HOTEL_BAR_FONT_MIN = 7;
 
 function fitCalendarHotelBarText(container){
@@ -7258,11 +7258,9 @@ function fitCalendarHotelBarText(container){
     if (!bar.textContent?.trim()) return;
     let size = CALENDAR_HOTEL_BAR_FONT_MAX;
     bar.style.fontSize = `${size}px`;
-    let guard = 0;
-    while (bar.scrollWidth > bar.clientWidth && size > CALENDAR_HOTEL_BAR_FONT_MIN && guard < 10){
-      size = Math.max(CALENDAR_HOTEL_BAR_FONT_MIN, size - 0.5);
+    while (bar.scrollWidth > bar.clientWidth && size > CALENDAR_HOTEL_BAR_FONT_MIN){
+      size = Math.max(CALENDAR_HOTEL_BAR_FONT_MIN, size - 1);
       bar.style.fontSize = `${size}px`;
-      guard += 1;
     }
   });
 }
@@ -8386,6 +8384,12 @@ function requestCalendarOverwriteConfirm(){
 function initCalendar(){
   loadCalendarState();
   renderCalendar();
+  window.addEventListener('resize', () => {
+    const gridEl = document.getElementById('modern-calendar-grid');
+    if (gridEl){
+      requestAnimationFrame(() => fitCalendarHotelBarText(gridEl));
+    }
+  });
   setTimeout(() => {
     (async () => {
       const online = navigator?.onLine !== false;
