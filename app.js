@@ -7370,23 +7370,30 @@ function fitLabelToWidth(text, maxWidth, minFontPx, maxFontPx){
   return { fittedText: best.fittedText, nextStartIndex: best.nextStartIndex, fontSizePx: best.fontSizePx };
 }
 
-function fitCalendarHotelBarText(container){
-  if (!container) return;
-  const labels = container.querySelectorAll('.calendar-bar-label');
-  labels.forEach((label) => {
-    if (!label.textContent?.trim()) return;
-    let size = CALENDAR_HOTEL_BAR_FONT_MAX;
+function autoFitCalendarHotelLabel(label){
+  if (!label) return;
+  if (!label.textContent?.trim()) return;
+  const maxWidth = label.clientWidth;
+  if (!Number.isFinite(maxWidth) || maxWidth <= 0) return;
+  if (Number(label.dataset.autoFitWidth) === maxWidth) return;
+  label.dataset.autoFitWidth = String(maxWidth);
+  let size = CALENDAR_HOTEL_BAR_FONT_MAX;
+  label.style.fontSize = `${size}px`;
+  while (label.scrollWidth > maxWidth && size > CALENDAR_HOTEL_BAR_FONT_MIN){
+    size = Math.max(CALENDAR_HOTEL_BAR_FONT_MIN, size - 1);
     label.style.fontSize = `${size}px`;
-    while (label.scrollWidth > label.clientWidth && size > CALENDAR_HOTEL_BAR_FONT_MIN){
-      size = Math.max(CALENDAR_HOTEL_BAR_FONT_MIN, size - 1);
-      label.style.fontSize = `${size}px`;
-    }
-  });
+  }
+}
+
+function autoFitCalendarHotelLabels(container){
+  if (!container) return;
+  const labels = container.querySelectorAll('.calendar-hotel-label');
+  labels.forEach((label) => autoFitCalendarHotelLabel(label));
 }
 
 function renderCalendarHotelBarLabels(container, range){
   if (!container) return;
-  container.querySelectorAll('.calendar-bar-label').forEach((label) => label.remove());
+  container.querySelectorAll('.calendar-hotel-label').forEach((label) => label.remove());
   const labelRanges = buildCalendarHotelLabelRanges(range);
   if (!labelRanges.length) return;
   const rangesByHotel = new Map();
@@ -7438,7 +7445,7 @@ function renderCalendarHotelBarLabels(container, range){
       );
       if (!fit.fittedText) return;
       const label = document.createElement('div');
-      label.className = 'calendar-bar-label';
+      label.className = 'calendar-hotel-label';
       label.dataset.hotelId = hotelId;
       label.textContent = fit.fittedText;
       const leftOffset = Number.isFinite(startCellOffset)
@@ -7453,6 +7460,7 @@ function renderCalendarHotelBarLabels(container, range){
       remainingText = remainingText.slice(fit.nextStartIndex);
     });
   });
+  autoFitCalendarHotelLabels(container);
 }
 
 function getCalendarDisplayRange(year, month){
@@ -7693,7 +7701,6 @@ function renderCalendar(){
   }
   requestAnimationFrame(() => {
     renderCalendarHotelBarLabels(gridEl, displayRange);
-    fitCalendarHotelBarText(gridEl);
   });
   refreshCalendarDetail();
   refreshCalendarPairingDetail();
@@ -8672,7 +8679,6 @@ function initCalendar(){
       const displayRange = getCalendarDisplayRange(year, month);
       requestAnimationFrame(() => {
         renderCalendarHotelBarLabels(gridEl, displayRange);
-        fitCalendarHotelBarText(gridEl);
       });
     }
   });
