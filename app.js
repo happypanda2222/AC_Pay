@@ -5868,6 +5868,39 @@ function getCalendarCancellationClassForEvents(events){
   return '';
 }
 
+function getCalendarCancellationClassForDay(day, dateKey){
+  const dayEvents = Array.isArray(day?.events) ? day.events : [];
+  if (dayEvents.length){
+    return getCalendarCancellationClassForEvents(dayEvents);
+  }
+  const pairingId = String(day?.pairing?.pairingId || '').trim();
+  if (!pairingId) return '';
+  const pairingDays = getCalendarPairingDays(pairingId);
+  if (!pairingDays.length) return '';
+  const dayIndex = pairingDays.indexOf(dateKey);
+  if (dayIndex === -1) return '';
+  for (let offset = 1; dayIndex - offset >= 0 || dayIndex + offset < pairingDays.length; offset += 1){
+    const candidates = [];
+    if (dayIndex - offset >= 0) candidates.push(pairingDays[dayIndex - offset]);
+    if (dayIndex + offset < pairingDays.length) candidates.push(pairingDays[dayIndex + offset]);
+    const matching = candidates
+      .map(dayKey => calendarState.eventsByDate?.[dayKey])
+      .filter(Boolean)
+      .map(dayEntry => Array.isArray(dayEntry.events) ? dayEntry.events : [])
+      .filter(events => events.length);
+    if (matching.length){
+      if (matching.some(events => events.some(event => event?.cancellation === 'CNX PP'))){
+        return 'is-cnx-pp';
+      }
+      if (matching.some(events => events.some(event => event?.cancellation === 'CNX'))){
+        return 'is-cnx';
+      }
+      return '';
+    }
+  }
+  return '';
+}
+
 function getCalendarEventBlockGrowth(event){
   const growth = Number(event?.blockGrowthMinutes);
   return Number.isFinite(growth) ? growth : 0;
@@ -7510,7 +7543,7 @@ function renderCalendar(){
         eventBtn.type = 'button';
         eventBtn.className = 'calendar-event';
         if (isSingleDayPairing) eventBtn.classList.add('is-single-day');
-        const cancellationClass = getCalendarCancellationClassForEvents(dayEvents);
+        const cancellationClass = getCalendarCancellationClassForDay(dayData, dateKey);
         if (cancellationClass) eventBtn.classList.add(cancellationClass);
         if (dayEvents.some(event => isDeadheadEvent(event))) eventBtn.classList.add('is-deadhead');
         const title = document.createElement('div');
@@ -7751,6 +7784,8 @@ function renderCalendarPairingDetail(pairingId){
     dayRow.type = 'button';
     dayRow.className = 'calendar-pairing-day';
     dayRow.dataset.dateKey = dateKey;
+    const cancellationClass = getCalendarCancellationClassForDay(day, dateKey);
+    if (cancellationClass) dayRow.classList.add(cancellationClass);
     const header = document.createElement('div');
     header.className = 'calendar-pairing-day-header';
     const dayLabel = document.createElement('div');
@@ -7771,8 +7806,8 @@ function renderCalendarPairingDetail(pairingId){
         const flight = document.createElement('div');
         flight.className = 'calendar-pairing-flight';
         if (isDeadheadEvent(event)) flight.classList.add('is-deadhead');
-        const cancellationClass = getCalendarCancellationClass(event);
-        if (cancellationClass) flight.classList.add(cancellationClass);
+        const flightCancellationClass = getCalendarCancellationClass(event);
+        if (flightCancellationClass) flight.classList.add(flightCancellationClass);
         const route = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '';
         const label = event.label || event.identifiers?.join(', ') || 'Flight';
         flight.textContent = route ? `${label} · ${route}` : label;
@@ -7781,6 +7816,7 @@ function renderCalendarPairingDetail(pairingId){
     } else {
       const empty = document.createElement('div');
       empty.className = 'calendar-pairing-flight muted-note';
+      if (cancellationClass) empty.classList.add(cancellationClass);
       empty.textContent = 'No flights listed.';
       flights.appendChild(empty);
     }
