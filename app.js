@@ -4806,6 +4806,14 @@ function buildCalendarHotelBarMap(range){
   return map;
 }
 
+function getCalendarWeekIndex(dateKey, rangeStartKey){
+  const startMs = getDateKeyStartMs(rangeStartKey);
+  const dateMs = getDateKeyStartMs(dateKey);
+  if (!Number.isFinite(startMs) || !Number.isFinite(dateMs)) return 0;
+  const diffDays = Math.floor((dateMs - startMs) / 86400000);
+  return Math.floor(diffDays / 7);
+}
+
 function buildCalendarHotelLabelRanges(range){
   const ranges = [];
   if (!range) return ranges;
@@ -4815,7 +4823,37 @@ function buildCalendarHotelLabelRanges(range){
     if (hotelRange.endKey < range.startKey || hotelRange.startKey > range.endKey) return;
     const startKey = hotelRange.startKey < range.startKey ? range.startKey : hotelRange.startKey;
     const endKey = hotelRange.endKey > range.endKey ? range.endKey : hotelRange.endKey;
-    ranges.push({ hotelId: hotel.id, name: hotel.name, startKey, endKey });
+    const dateKeys = getCalendarDateKeysInRange(startKey, endKey);
+    if (!dateKeys.length) return;
+    let currentWeekIndex = null;
+    let segmentStartKey = null;
+    dateKeys.forEach((dateKey, index) => {
+      const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
+      if (currentWeekIndex === null){
+        currentWeekIndex = weekIndex;
+        segmentStartKey = dateKey;
+      }
+      if (weekIndex !== currentWeekIndex){
+        ranges.push({
+          hotelId: hotel.id,
+          name: hotel.name,
+          startKey: segmentStartKey,
+          endKey: dateKeys[index - 1],
+          weekIndex: currentWeekIndex
+        });
+        currentWeekIndex = weekIndex;
+        segmentStartKey = dateKey;
+      }
+    });
+    if (segmentStartKey !== null){
+      ranges.push({
+        hotelId: hotel.id,
+        name: hotel.name,
+        startKey: segmentStartKey,
+        endKey: dateKeys[dateKeys.length - 1],
+        weekIndex: currentWeekIndex
+      });
+    }
   });
   return ranges;
 }
@@ -7282,21 +7320,25 @@ function renderCalendarHotelBarLabels(container, range){
   container.querySelectorAll('.calendar-bar-label').forEach((label) => label.remove());
   const labelRanges = buildCalendarHotelLabelRanges(range);
   if (!labelRanges.length) return;
-  const gridRect = container.getBoundingClientRect();
-  labelRanges.forEach(({ hotelId, name, startKey, endKey }) => {
+  labelRanges.forEach(({ hotelId, name, startKey, endKey, weekIndex }) => {
     if (!name) return;
-    const startCell = container.querySelector(`.calendar-day[data-date-key="${startKey}"]`);
-    const endCell = container.querySelector(`.calendar-day[data-date-key="${endKey}"]`);
+    const row = container.querySelector(`.calendar-row[data-week-index="${weekIndex}"]`);
+    if (!row) return;
+    const labelContainer = row.querySelector('.calendar-row-labels');
+    if (!labelContainer) return;
+    const startCell = row.querySelector(`.calendar-day[data-date-key="${startKey}"]`);
+    const endCell = row.querySelector(`.calendar-day[data-date-key="${endKey}"]`);
     if (!startCell || !endCell) return;
     const startBar = startCell.querySelector(`.calendar-bar-hotel[data-hotel-id="${hotelId}"]`);
     const endBar = endCell.querySelector(`.calendar-bar-hotel[data-hotel-id="${hotelId}"]`);
     if (!startBar || !endBar) return;
     const startRect = startBar.getBoundingClientRect();
     const endRect = endBar.getBoundingClientRect();
-    const left = startRect.left - gridRect.left + container.scrollLeft;
-    const endPos = endRect.right - gridRect.left + container.scrollLeft;
-    const right = container.scrollWidth - endPos;
-    const top = startRect.top - gridRect.top + container.scrollTop;
+    const rowRect = row.getBoundingClientRect();
+    const left = startRect.left - rowRect.left;
+    const endPos = endRect.right - rowRect.left;
+    const right = row.scrollWidth - endPos;
+    const top = startRect.top - rowRect.top;
     const label = document.createElement('div');
     label.className = 'calendar-bar-label';
     label.dataset.hotelId = hotelId;
@@ -7305,7 +7347,7 @@ function renderCalendarHotelBarLabels(container, range){
     label.style.right = `${Math.max(0, right)}px`;
     label.style.top = `${top}px`;
     label.style.height = `${startRect.height}px`;
-    container.appendChild(label);
+    labelContainer.appendChild(label);
   });
 }
 
@@ -7396,7 +7438,19 @@ function renderCalendar(){
     label.textContent = weekday;
     gridEl.appendChild(label);
   });
-  for (let current = new Date(rangeStart); current <= rangeEnd; current.setDate(current.getDate() + 1)){
+  let currentRow = null;
+  let currentLabelContainer = null;
+  for (let current = new Date(rangeStart), dayIndex = 0; current <= rangeEnd; current.setDate(current.getDate() + 1), dayIndex++){
+    if (dayIndex % 7 === 0){
+      const weekIndex = Math.floor(dayIndex / 7);
+      currentRow = document.createElement('div');
+      currentRow.className = 'calendar-row';
+      currentRow.dataset.weekIndex = String(weekIndex);
+      currentLabelContainer = document.createElement('div');
+      currentLabelContainer.className = 'calendar-row-labels';
+      currentRow.appendChild(currentLabelContainer);
+      gridEl.appendChild(currentRow);
+    }
     const dateKey = buildCalendarDateKeyFromDate(current);
     const dayData = calendarState.eventsByDate?.[dateKey];
     const dayEvents = dayData?.events || [];
@@ -7531,7 +7585,7 @@ function renderCalendar(){
         dayCell.appendChild(wrapper);
       }
     }
-    gridEl.appendChild(dayCell);
+    currentRow.appendChild(dayCell);
   }
   requestAnimationFrame(() => {
     renderCalendarHotelBarLabels(gridEl, displayRange);
