@@ -8478,6 +8478,58 @@ function setCalendarEventCancellation(eventId, status){
   }
 }
 
+function setCalendarPairingCancellationFromEvent(eventId, status){
+  const entry = findCalendarEventById(eventId);
+  if (!entry || !status) return false;
+  const pairingId = getCalendarPairingIdForEvent(entry.event, entry.dateKey);
+  if (!pairingId) return false;
+  const pairingDays = getCalendarPairingDays(pairingId);
+  if (!pairingDays.length) return false;
+  const dayOrder = new Map(pairingDays.map((dateKey, index) => [dateKey, index]));
+  const pairingEvents = [];
+  pairingDays.forEach((dateKey, dayIndex) => {
+    const day = calendarState.eventsByDate?.[dateKey];
+    (day?.events || []).forEach((event, eventIndex) => {
+      pairingEvents.push({ event, dateKey, dayIndex, eventIndex });
+    });
+  });
+  if (!pairingEvents.length) return false;
+  pairingEvents.sort((a, b) => {
+    const timingA = getCalendarEventTiming(a.event, a.dateKey);
+    const timingB = getCalendarEventTiming(b.event, b.dateKey);
+    const hasTimingA = Number.isFinite(timingA?.startMs);
+    const hasTimingB = Number.isFinite(timingB?.startMs);
+    if (hasTimingA && hasTimingB && timingA.startMs !== timingB.startMs){
+      return timingA.startMs - timingB.startMs;
+    }
+    const dayCompare = (dayOrder.get(a.dateKey) ?? a.dayIndex) - (dayOrder.get(b.dateKey) ?? b.dayIndex);
+    if (dayCompare !== 0) return dayCompare;
+    return a.eventIndex - b.eventIndex;
+  });
+  const selectedIndex = pairingEvents.findIndex(item => item.event?.id === eventId);
+  if (selectedIndex < 0) return false;
+  let updated = false;
+  for (let i = selectedIndex; i < pairingEvents.length; i += 1){
+    const target = pairingEvents[i]?.event;
+    if (!target) continue;
+    if (target.cancellation !== status){
+      target.cancellation = status;
+      updated = true;
+    }
+  }
+  if (updated){
+    updateCalendarPairingMetrics(calendarState.eventsByDate);
+    saveCalendarState();
+    renderCalendar();
+    refreshCalendarDetail();
+    refreshCalendarPairingDetail();
+    refreshCalendarDayDetail();
+    refreshCalendarCreditDetail();
+    refreshCalendarTafbDetail();
+  }
+  return updated;
+}
+
 const CALENDAR_DELETE_MONTH_SKIP_KEY = 'acpay.calendar.deleteMonth.skipConfirm';
 const calendarDeleteMonthState = { monthKey: null };
 const calendarOverwriteConfirmState = { resolve: null };
@@ -9011,6 +9063,25 @@ function initCalendar(){
       if (status) setCalendarEventCancellation(calendarDetailEventId, status);
     });
   });
+  const cancelRestButton = document.querySelector('[data-calendar-cancel-rest]');
+  if (cancelRestButton){
+    cancelRestButton.addEventListener('click', () => {
+      if (!calendarDetailEventId) return;
+      const statusEl = document.getElementById('calendar-detail-status');
+      const entry = findCalendarEventById(calendarDetailEventId);
+      if (!entry){
+        if (statusEl) statusEl.textContent = 'Event not found.';
+        return;
+      }
+      const status = entry.event?.cancellation;
+      if (!status){
+        if (statusEl) statusEl.textContent = 'Select a cancellation status first.';
+        return;
+      }
+      setCalendarPairingCancellationFromEvent(calendarDetailEventId, status);
+      if (statusEl) statusEl.textContent = '';
+    });
+  }
   const growthSave = document.getElementById('calendar-block-growth-save');
   if (growthSave){
     growthSave.addEventListener('click', () => {
