@@ -8377,7 +8377,8 @@ function setCalendarPairingCancellationFromEvent(eventId, status){
     }
   }
   if (status === 'CNX'){
-    pairingDays.forEach((dateKey) => {
+    const thgPairingDays = getCalendarPairingDays(pairingId);
+    thgPairingDays.forEach((dateKey) => {
       const day = calendarState.eventsByDate?.[dateKey];
       if (!day) return;
       if (day.thgMinutes !== null){
