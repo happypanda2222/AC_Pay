@@ -4793,19 +4793,31 @@ function buildCalendarHotelBarMap(range){
     if (!dateKeys.length) return;
     const firstVisible = dateKeys[0];
     const lastVisible = dateKeys[dateKeys.length - 1];
-    const labelIndex = Math.floor((dateKeys.length - 1) / 2);
     dateKeys.forEach((dateKey) => {
       const isSingle = firstVisible === lastVisible;
       const segment = {
         type: 'hotel',
         hotelId: hotel.id,
-        label: dateKey === dateKeys[labelIndex] ? hotel.name : '',
         position: isSingle ? 'single' : (dateKey === firstVisible ? 'start' : (dateKey === lastVisible ? 'end' : 'middle'))
       };
       addCalendarBarSegment(map, dateKey, segment);
     });
   });
   return map;
+}
+
+function buildCalendarHotelLabelRanges(range){
+  const ranges = [];
+  if (!range) return ranges;
+  (calendarState.hotels || []).forEach((hotel) => {
+    const hotelRange = getCalendarHotelRange(hotel);
+    if (!hotelRange) return;
+    if (hotelRange.endKey < range.startKey || hotelRange.startKey > range.endKey) return;
+    const startKey = hotelRange.startKey < range.startKey ? range.startKey : hotelRange.startKey;
+    const endKey = hotelRange.endKey > range.endKey ? range.endKey : hotelRange.endKey;
+    ranges.push({ hotelId: hotel.id, name: hotel.name, startKey, endKey });
+  });
+  return ranges;
 }
 
 function inferCalendarDayPairing(day, dateKey){
@@ -7253,16 +7265,62 @@ const CALENDAR_HOTEL_BAR_FONT_MIN = 7;
 
 function fitCalendarHotelBarText(container){
   if (!container) return;
-  const bars = container.querySelectorAll('.calendar-bar-hotel');
-  bars.forEach((bar) => {
-    if (!bar.textContent?.trim()) return;
+  const labels = container.querySelectorAll('.calendar-bar-label');
+  labels.forEach((label) => {
+    if (!label.textContent?.trim()) return;
     let size = CALENDAR_HOTEL_BAR_FONT_MAX;
-    bar.style.fontSize = `${size}px`;
-    while (bar.scrollWidth > bar.clientWidth && size > CALENDAR_HOTEL_BAR_FONT_MIN){
+    label.style.fontSize = `${size}px`;
+    while (label.scrollWidth > label.clientWidth && size > CALENDAR_HOTEL_BAR_FONT_MIN){
       size = Math.max(CALENDAR_HOTEL_BAR_FONT_MIN, size - 1);
-      bar.style.fontSize = `${size}px`;
+      label.style.fontSize = `${size}px`;
     }
   });
+}
+
+function renderCalendarHotelBarLabels(container, range){
+  if (!container) return;
+  container.querySelectorAll('.calendar-bar-label').forEach((label) => label.remove());
+  const labelRanges = buildCalendarHotelLabelRanges(range);
+  if (!labelRanges.length) return;
+  const gridRect = container.getBoundingClientRect();
+  labelRanges.forEach(({ hotelId, name, startKey, endKey }) => {
+    if (!name) return;
+    const startCell = container.querySelector(`.calendar-day[data-date-key="${startKey}"]`);
+    const endCell = container.querySelector(`.calendar-day[data-date-key="${endKey}"]`);
+    if (!startCell || !endCell) return;
+    const startBar = startCell.querySelector(`.calendar-bar-hotel[data-hotel-id="${hotelId}"]`);
+    const endBar = endCell.querySelector(`.calendar-bar-hotel[data-hotel-id="${hotelId}"]`);
+    if (!startBar || !endBar) return;
+    const startRect = startBar.getBoundingClientRect();
+    const endRect = endBar.getBoundingClientRect();
+    const left = startRect.left - gridRect.left + container.scrollLeft;
+    const endPos = endRect.right - gridRect.left + container.scrollLeft;
+    const right = container.scrollWidth - endPos;
+    const top = startRect.top - gridRect.top + container.scrollTop;
+    const label = document.createElement('div');
+    label.className = 'calendar-bar-label';
+    label.dataset.hotelId = hotelId;
+    label.textContent = name;
+    label.style.left = `${left}px`;
+    label.style.right = `${Math.max(0, right)}px`;
+    label.style.top = `${top}px`;
+    label.style.height = `${startRect.height}px`;
+    container.appendChild(label);
+  });
+}
+
+function getCalendarDisplayRange(year, month){
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  const firstOfMonth = new Date(year, month - 1, 1);
+  const lastOfMonth = new Date(year, month, 0);
+  const rangeStart = new Date(firstOfMonth);
+  rangeStart.setDate(rangeStart.getDate() - 3);
+  const rangeEnd = new Date(lastOfMonth);
+  rangeEnd.setDate(rangeEnd.getDate() + 3);
+  return {
+    startKey: buildCalendarDateKeyFromDate(rangeStart),
+    endKey: buildCalendarDateKeyFromDate(rangeEnd)
+  };
 }
 
 function renderCalendar(){
@@ -7319,16 +7377,13 @@ function renderCalendar(){
   });
   updateCalendarTotals(year, month);
   setCalendarStatus(events.length ? '' : 'No schedule loaded.');
-  const firstOfMonth = new Date(year, month - 1, 1);
-  const lastOfMonth = new Date(year, month, 0);
-  const rangeStart = new Date(firstOfMonth);
-  rangeStart.setDate(rangeStart.getDate() - 3);
-  const rangeEnd = new Date(lastOfMonth);
-  rangeEnd.setDate(rangeEnd.getDate() + 3);
-  const displayRange = {
-    startKey: buildCalendarDateKeyFromDate(rangeStart),
-    endKey: buildCalendarDateKeyFromDate(rangeEnd)
-  };
+  const displayRange = getCalendarDisplayRange(year, month);
+  if (!displayRange){
+    gridEl.innerHTML = '';
+    return;
+  }
+  const rangeStart = new Date(`${displayRange.startKey}T00:00:00`);
+  const rangeEnd = new Date(`${displayRange.endKey}T00:00:00`);
   const showBarStyle = calendarPairingDisplayMode === 'bar';
   const pairingBarsByDate = showBarStyle ? buildCalendarPairingBarMap(displayRange) : new Map();
   const hotelBarsByDate = buildCalendarHotelBarMap(displayRange);
@@ -7402,8 +7457,9 @@ function renderCalendar(){
           }
           if (segment.type === 'hotel'){
             bar.dataset.hotelId = segment.hotelId;
+            bar.textContent = '';
           }
-          if (segment.label) bar.textContent = segment.label;
+          if (segment.label && segment.type !== 'hotel') bar.textContent = segment.label;
           bars.appendChild(bar);
         });
         dayCell.appendChild(bars);
@@ -7419,8 +7475,9 @@ function renderCalendar(){
           if (segment.position) bar.classList.add(`is-${segment.position}`);
           if (segment.type === 'hotel'){
             bar.dataset.hotelId = segment.hotelId;
+            bar.textContent = '';
           }
-          if (segment.label) bar.textContent = segment.label;
+          if (segment.label && segment.type !== 'hotel') bar.textContent = segment.label;
           bars.appendChild(bar);
         });
         dayCell.appendChild(bars);
@@ -7476,7 +7533,10 @@ function renderCalendar(){
     }
     gridEl.appendChild(dayCell);
   }
-  requestAnimationFrame(() => fitCalendarHotelBarText(gridEl));
+  requestAnimationFrame(() => {
+    renderCalendarHotelBarLabels(gridEl, displayRange);
+    fitCalendarHotelBarText(gridEl);
+  });
   refreshCalendarDetail();
   refreshCalendarPairingDetail();
   refreshCalendarDayDetail();
@@ -8387,7 +8447,12 @@ function initCalendar(){
   window.addEventListener('resize', () => {
     const gridEl = document.getElementById('modern-calendar-grid');
     if (gridEl){
-      requestAnimationFrame(() => fitCalendarHotelBarText(gridEl));
+      const [year, month] = (calendarState.selectedMonth || '').split('-').map(Number);
+      const displayRange = getCalendarDisplayRange(year, month);
+      requestAnimationFrame(() => {
+        renderCalendarHotelBarLabels(gridEl, displayRange);
+        fitCalendarHotelBarText(gridEl);
+      });
     }
   });
   setTimeout(() => {
