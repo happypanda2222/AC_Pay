@@ -4793,12 +4793,13 @@ function buildCalendarHotelBarMap(range){
     if (!dateKeys.length) return;
     const firstVisible = dateKeys[0];
     const lastVisible = dateKeys[dateKeys.length - 1];
+    const labelIndex = Math.floor((dateKeys.length - 1) / 2);
     dateKeys.forEach((dateKey) => {
       const isSingle = firstVisible === lastVisible;
       const segment = {
         type: 'hotel',
         hotelId: hotel.id,
-        label: dateKey === firstVisible ? hotel.name : '',
+        label: dateKey === dateKeys[labelIndex] ? hotel.name : '',
         position: isSingle ? 'single' : (dateKey === firstVisible ? 'start' : (dateKey === lastVisible ? 'end' : 'middle'))
       };
       addCalendarBarSegment(map, dateKey, segment);
@@ -7333,7 +7334,6 @@ function renderCalendar(){
   const showBarStyle = calendarPairingDisplayMode === 'bar';
   const pairingBarsByDate = showBarStyle ? buildCalendarPairingBarMap(displayRange) : new Map();
   const hotelBarsByDate = buildCalendarHotelBarMap(displayRange);
-  const hotelNameById = new Map((calendarState.hotels || []).map((hotel) => [hotel.id, hotel.name]));
   const hotelSelectionRange = calendarHotelSelecting ? getCalendarHotelSelectionRange() : null;
   const todayKey = buildCalendarDateKeyFromDate(new Date());
   gridEl.innerHTML = '';
@@ -7421,8 +7421,6 @@ function renderCalendar(){
           if (segment.position) bar.classList.add(`is-${segment.position}`);
           if (segment.type === 'hotel'){
             bar.dataset.hotelId = segment.hotelId;
-            const hotelName = hotelNameById.get(segment.hotelId);
-            if (!segment.label && hotelName) bar.textContent = hotelName;
           }
           if (segment.label) bar.textContent = segment.label;
           bars.appendChild(bar);
