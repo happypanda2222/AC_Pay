@@ -7336,13 +7336,15 @@ function renderCalendarHotelRowSegments(container, range){
     const endCell = row.querySelector(`.calendar-day[data-date-key="${segment.endKey}"]`);
     if (!startCell || !endCell) return;
     const rowRect = rowWrap.getBoundingClientRect();
-    const startCellOffset = startCell.offsetLeft;
-    const endCellOffset = endCell.offsetLeft + endCell.offsetWidth;
+    const startCellRect = startCell.getBoundingClientRect();
+    const endCellRect = endCell.getBoundingClientRect();
+    const startCellOffset = startCellRect.left - rowRect.left;
+    const endCellOffset = endCellRect.right - rowRect.left;
     let leftOffset = startCellOffset;
     let rightOffset = endCellOffset;
     if (segment.startKey !== segment.endKey){
-      leftOffset = startCellOffset + (startCell.offsetWidth / 2);
-      rightOffset = endCell.offsetLeft + (endCell.offsetWidth / 2);
+      leftOffset = startCellOffset + (startCellRect.width / 2);
+      rightOffset = (endCellRect.left - rowRect.left) + (endCellRect.width / 2);
     }
     const segmentWidth = rightOffset - leftOffset;
     if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
