@@ -7303,7 +7303,8 @@ function renderCalendar(){
   };
   const showBarStyle = calendarPairingDisplayMode === 'bar';
   const pairingBarsByDate = showBarStyle ? buildCalendarPairingBarMap(displayRange) : new Map();
-  const hotelBarsByDate = showBarStyle ? buildCalendarHotelBarMap(displayRange) : new Map();
+  const hotelBarsByDate = buildCalendarHotelBarMap(displayRange);
+  const hotelNameById = new Map((calendarState.hotels || []).map((hotel) => [hotel.id, hotel.name]));
   const hotelSelectionRange = calendarHotelSelecting ? getCalendarHotelSelectionRange() : null;
   const todayKey = buildCalendarDateKeyFromDate(new Date());
   gridEl.innerHTML = '';
@@ -7381,17 +7382,23 @@ function renderCalendar(){
         dayCell.appendChild(bars);
       }
     } else {
-      const hotelEntries = getCalendarHotelsForDate(dateKey);
-      if (hotelEntries.length){
-        const hotelList = document.createElement('div');
-        hotelList.className = 'calendar-hotel-list';
-        hotelEntries.forEach((hotel) => {
-          const chip = document.createElement('div');
-          chip.className = 'calendar-hotel-chip';
-          chip.textContent = hotel.name;
-          hotelList.appendChild(chip);
+      const hotelSegments = hotelBarsByDate.get(dateKey) || [];
+      if (hotelSegments.length){
+        const bars = document.createElement('div');
+        bars.className = 'calendar-day-bars';
+        hotelSegments.forEach((segment) => {
+          const bar = document.createElement('div');
+          bar.className = `calendar-bar calendar-bar-${segment.type}`;
+          if (segment.position) bar.classList.add(`is-${segment.position}`);
+          if (segment.type === 'hotel'){
+            bar.dataset.hotelId = segment.hotelId;
+            const hotelName = hotelNameById.get(segment.hotelId);
+            if (!segment.label && hotelName) bar.textContent = hotelName;
+          }
+          if (segment.label) bar.textContent = segment.label;
+          bars.appendChild(bar);
         });
-        dayCell.appendChild(hotelList);
+        dayCell.appendChild(bars);
       }
       if (dayEvents.length || dayData?.pairing?.pairingId){
         const wrapper = document.createElement('div');
