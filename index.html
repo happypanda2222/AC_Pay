@@ -460,7 +460,8 @@
     .calendar-grid{
       display:grid;
       grid-template-columns:repeat(7,minmax(48px,1fr));
-      gap:8px;
+      --calendar-gap:8px;
+      gap:var(--calendar-gap);
       margin-top:12px;
       overflow-x:auto;
       -webkit-overflow-scrolling:touch;
@@ -587,6 +588,9 @@
       flex-direction:column;
       gap:4px;
       margin-top:4px;
+      overflow:visible;
+      position:relative;
+      z-index:1;
     }
     .calendar-bar{
       display:flex;
@@ -640,7 +644,8 @@
     }
     .calendar-bar-hotel.is-start{
       margin-left:0;
-      width:100%;
+      width:calc(100% + var(--calendar-gap));
+      margin-right:calc(var(--calendar-gap) * -1);
       border-top-left-radius:999px;
       border-bottom-left-radius:999px;
       border-top-right-radius:0;
@@ -648,13 +653,17 @@
     }
     .calendar-bar-hotel.is-end{
       margin-right:0;
-      width:100%;
+      width:calc(100% + var(--calendar-gap));
+      margin-left:calc(var(--calendar-gap) * -1);
       border-top-left-radius:0;
       border-bottom-left-radius:0;
       border-top-right-radius:999px;
       border-bottom-right-radius:999px;
     }
     .calendar-bar-hotel.is-middle{
+      width:calc(100% + (var(--calendar-gap) * 2));
+      margin-left:calc(var(--calendar-gap) * -1);
+      margin-right:calc(var(--calendar-gap) * -1);
       border-radius:0;
     }
     .calendar-hotel-list{
@@ -1031,7 +1040,7 @@
       width:100%;
     }
     @media(max-width:600px){
-      .calendar-grid{grid-template-columns:repeat(7,minmax(64px,1fr));gap:6px}
+      .calendar-grid{grid-template-columns:repeat(7,minmax(64px,1fr));--calendar-gap:6px}
       .calendar-day{min-height:96px;padding:6px}
       .calendar-event{font-size:10px;padding:5px 6px}
       .calendar-event-meta{font-size:9px}
@@ -1040,7 +1049,7 @@
       .calendar-parse{justify-self:stretch}
     }
     @media(max-width:430px){
-      .calendar-grid{grid-template-columns:repeat(7,minmax(44px,1fr));gap:4px}
+      .calendar-grid{grid-template-columns:repeat(7,minmax(44px,1fr));--calendar-gap:4px}
       .calendar-day{min-height:86px;padding:5px}
       .calendar-day-number{font-size:11px}
       .calendar-event{font-size:9px;padding:4px 6px}
