@@ -4360,6 +4360,7 @@ let calendarState = {
   selectedMonth: null,
   blockMonthsByMonthKey: {},
   blockMonthRecurring: {},
+  hotels: [],
   updatedAt: 0
 };
 let calendarDetailEventId = null;
@@ -4371,6 +4372,9 @@ let calendarBlockGrowthDetailOpen = false;
 let calendarTafbDetailOpen = false;
 let calendarBlockMonthSelecting = false;
 let calendarBlockMonthDraft = null;
+let calendarHotelSelecting = false;
+let calendarHotelSelection = { startKey: null, endKey: null };
+let calendarPairingDisplayMode = 'classic';
 const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
 let calendarAutoSyncTimer = null;
 
@@ -4383,6 +4387,10 @@ function normalizeCalendarUpdatedAt(value){
   return 0;
 }
 
+function normalizeCalendarPairingDisplayMode(value){
+  return value === 'bar' ? 'bar' : 'classic';
+}
+
 function loadCalendarState(){
   try {
     const stored = JSON.parse(localStorage.getItem(CALENDAR_STORAGE_KEY) || '{}');
@@ -4393,6 +4401,7 @@ function loadCalendarState(){
       selectedMonth: stored.selectedMonth || null,
       blockMonthsByMonthKey: stored.blockMonthsByMonthKey || {},
       blockMonthRecurring: stored.blockMonthRecurring || {},
+      hotels: Array.isArray(stored.hotels) ? stored.hotels : [],
       updatedAt: normalizeCalendarUpdatedAt(stored.updatedAt)
     };
   } catch (err){
@@ -4408,6 +4417,9 @@ function loadCalendarState(){
     }
     if (prefs?.blockMonthRecurring && typeof prefs.blockMonthRecurring === 'object'){
       calendarState.blockMonthRecurring = prefs.blockMonthRecurring;
+    }
+    if (prefs?.pairingDisplayMode){
+      calendarPairingDisplayMode = normalizeCalendarPairingDisplayMode(prefs.pairingDisplayMode);
     }
     const startKey = normalizeCalendarDateKey(prefs?.blockMonthStartKey);
     const endKey = normalizeCalendarDateKey(prefs?.blockMonthEndKey);
@@ -4433,6 +4445,7 @@ function normalizeCalendarState(){
   calendarState.blockMonthRecurring = normalizeCalendarBlockMonthRecurring(
     calendarState.blockMonthRecurring
   );
+  calendarState.hotels = normalizeCalendarHotelEntries(calendarState.hotels);
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day || typeof day !== 'object') return;
     if (typeof day.sourceMonthKey !== 'string') day.sourceMonthKey = null;
@@ -4514,6 +4527,30 @@ function normalizeCalendarBlockMonthRecurring(value){
     };
   });
   return next;
+}
+
+function createCalendarHotelId(){
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'){
+    return crypto.randomUUID();
+  }
+  return `hotel-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeCalendarHotelEntries(entries){
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry) => {
+    if (!entry || typeof entry !== 'object') return null;
+    const startKey = normalizeCalendarDateKey(entry.startKey);
+    const endKey = normalizeCalendarDateKey(entry.endKey) || startKey;
+    if (!startKey) return null;
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    return {
+      id: typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : createCalendarHotelId(),
+      name,
+      startKey,
+      endKey
+    };
+  }).filter(Boolean);
 }
 
 function mergeCalendarBlockMonthsByMonthKey(existing, incoming){
@@ -4629,6 +4666,135 @@ function areDateKeysContiguous(previousKey, nextKey){
   const nextMs = getDateKeyStartMs(nextKey);
   if (!Number.isFinite(previousMs) || !Number.isFinite(nextMs)) return false;
   return nextMs - previousMs === 86400000;
+}
+
+function getCalendarDateKeysInRange(startKey, endKey){
+  const startMs = getDateKeyStartMs(startKey);
+  const endMs = getDateKeyStartMs(endKey);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
+  const fromMs = Math.min(startMs, endMs);
+  const toMs = Math.max(startMs, endMs);
+  const dateKeys = [];
+  for (let currentMs = fromMs; currentMs <= toMs; currentMs += 86400000){
+    dateKeys.push(buildCalendarDateKeyFromDate(new Date(currentMs)));
+  }
+  return dateKeys;
+}
+
+function getCalendarHotelSelectionRange(){
+  const startKey = normalizeCalendarDateKey(calendarHotelSelection.startKey);
+  const endKey = normalizeCalendarDateKey(calendarHotelSelection.endKey || startKey);
+  if (!startKey) return null;
+  const range = startKey <= endKey ? { startKey, endKey } : { startKey: endKey, endKey: startKey };
+  return range;
+}
+
+function getCalendarHotelsForDate(dateKey){
+  if (!dateKey) return [];
+  return (calendarState.hotels || []).filter((hotel) => {
+    if (!hotel?.startKey) return false;
+    const range = getCalendarHotelRange(hotel);
+    return range ? isCalendarDateKeyInRange(dateKey, range) : false;
+  });
+}
+
+function getCalendarHotelRange(hotel){
+  const startKey = normalizeCalendarDateKey(hotel?.startKey);
+  const endKey = normalizeCalendarDateKey(hotel?.endKey) || startKey;
+  if (!startKey) return null;
+  return startKey <= endKey ? { startKey, endKey } : { startKey: endKey, endKey: startKey };
+}
+
+function addCalendarHotelEntry({ startKey, endKey, name } = {}){
+  const normalizedStart = normalizeCalendarDateKey(startKey);
+  const normalizedEnd = normalizeCalendarDateKey(endKey) || normalizedStart;
+  const trimmedName = typeof name === 'string' ? name.trim() : '';
+  if (!normalizedStart || !trimmedName) return null;
+  const range = normalizedStart <= normalizedEnd
+    ? { startKey: normalizedStart, endKey: normalizedEnd }
+    : { startKey: normalizedEnd, endKey: normalizedStart };
+  const entry = {
+    id: createCalendarHotelId(),
+    name: trimmedName,
+    startKey: range.startKey,
+    endKey: range.endKey
+  };
+  if (!Array.isArray(calendarState.hotels)) calendarState.hotels = [];
+  calendarState.hotels.push(entry);
+  return entry;
+}
+
+function resetCalendarHotelSelection(){
+  calendarHotelSelection = { startKey: null, endKey: null };
+}
+
+function setCalendarHotelSelecting(shouldSelect){
+  calendarHotelSelecting = Boolean(shouldSelect);
+  if (!calendarHotelSelecting){
+    resetCalendarHotelSelection();
+  }
+}
+
+function getCalendarPairingBarLabel(pairing){
+  const pairingNumber = String(pairing?.pairingNumber || '').trim();
+  if (pairingNumber) return `Pairing ${pairingNumber}`;
+  return 'Pairing';
+}
+
+function addCalendarBarSegment(map, dateKey, segment){
+  if (!map.has(dateKey)) map.set(dateKey, []);
+  map.get(dateKey).push(segment);
+}
+
+function buildCalendarPairingBarMap(range){
+  const map = new Map();
+  if (!range) return map;
+  const pairingMap = buildCalendarPairingIndex();
+  pairingMap.forEach((pairing) => {
+    const visibleDays = pairing.days.filter((dateKey) => isCalendarDateKeyInRange(dateKey, range));
+    if (!visibleDays.length) return;
+    const firstVisible = visibleDays[0];
+    const lastVisible = visibleDays[visibleDays.length - 1];
+    const label = getCalendarPairingBarLabel(pairing);
+    visibleDays.forEach((dateKey) => {
+      const isSingle = firstVisible === lastVisible;
+      const segment = {
+        type: 'pairing',
+        pairingId: pairing.pairingId,
+        label: dateKey === firstVisible ? label : '',
+        position: isSingle ? 'single' : (dateKey === firstVisible ? 'start' : (dateKey === lastVisible ? 'end' : 'middle'))
+      };
+      addCalendarBarSegment(map, dateKey, segment);
+    });
+  });
+  return map;
+}
+
+function buildCalendarHotelBarMap(range){
+  const map = new Map();
+  if (!range) return map;
+  (calendarState.hotels || []).forEach((hotel) => {
+    const hotelRange = getCalendarHotelRange(hotel);
+    if (!hotelRange) return;
+    if (hotelRange.endKey < range.startKey || hotelRange.startKey > range.endKey) return;
+    const startKey = hotelRange.startKey < range.startKey ? range.startKey : hotelRange.startKey;
+    const endKey = hotelRange.endKey > range.endKey ? range.endKey : hotelRange.endKey;
+    const dateKeys = getCalendarDateKeysInRange(startKey, endKey);
+    if (!dateKeys.length) return;
+    const firstVisible = dateKeys[0];
+    const lastVisible = dateKeys[dateKeys.length - 1];
+    dateKeys.forEach((dateKey) => {
+      const isSingle = firstVisible === lastVisible;
+      const segment = {
+        type: 'hotel',
+        hotelId: hotel.id,
+        label: dateKey === firstVisible ? hotel.name : '',
+        position: isSingle ? 'single' : (dateKey === firstVisible ? 'start' : (dateKey === lastVisible ? 'end' : 'middle'))
+      };
+      addCalendarBarSegment(map, dateKey, segment);
+    });
+  });
+  return map;
 }
 
 function inferCalendarDayPairing(day, dateKey){
@@ -5032,6 +5198,7 @@ function saveCalendarState({ bumpUpdatedAt = true } = {}){
     selectedMonth: calendarState.selectedMonth,
     blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
     blockMonthRecurring: calendarState.blockMonthRecurring,
+    hotels: calendarState.hotels,
     updatedAt: calendarState.updatedAt
   };
   try {
@@ -5039,7 +5206,8 @@ function saveCalendarState({ bumpUpdatedAt = true } = {}){
     localStorage.setItem(CALENDAR_PREFS_KEY, JSON.stringify({
       selectedMonth: calendarState.selectedMonth,
       blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
-      blockMonthRecurring: calendarState.blockMonthRecurring
+      blockMonthRecurring: calendarState.blockMonthRecurring,
+      pairingDisplayMode: calendarPairingDisplayMode
     }));
   } catch (err){
     console.warn('Failed to save calendar schedule', err);
@@ -5192,14 +5360,29 @@ async function syncCalendarToCloud(){
     && !Array.isArray(calendarState.blockMonthRecurring)
     ? calendarState.blockMonthRecurring
     : {};
+  const hotels = Array.isArray(calendarState.hotels) ? calendarState.hotels : [];
   const payload = {
+    eventsByDate,
+    months,
+    selectedMonth,
+    blockMonthsByMonthKey,
+    blockMonthRecurring,
+    hotels
+  };
+  const payloadWithoutBlocks = {
+    eventsByDate,
+    months,
+    selectedMonth,
+    hotels
+  };
+  const payloadWithoutHotels = {
     eventsByDate,
     months,
     selectedMonth,
     blockMonthsByMonthKey,
     blockMonthRecurring
   };
-  const fallbackPayload = {
+  const payloadMinimal = {
     eventsByDate,
     months,
     selectedMonth
@@ -5229,18 +5412,32 @@ async function syncCalendarToCloud(){
     }
   };
   const shouldRetryPayload = (status, message) => {
-    if (status !== 400) return false;
-    if (!message || typeof message !== 'string') return false;
+    if (status !== 400) return null;
+    if (!message || typeof message !== 'string') return null;
     const lower = message.toLowerCase();
-    if (!lower.includes('unexpected')) return false;
-    return ['blockmonthsbymonthkey', 'blockmonthrecurring'].some((key) => lower.includes(key));
+    if (!lower.includes('unexpected')) return null;
+    const rejectBlocks = ['blockmonthsbymonthkey', 'blockmonthrecurring'].some((key) => lower.includes(key));
+    const rejectHotels = lower.includes('hotels');
+    if (!rejectBlocks && !rejectHotels) return null;
+    return { rejectBlocks, rejectHotels };
   };
   let response = await sendCalendarPayload(payload);
   if (!response.ok){
     const validationMessage = await readCalendarSyncMessage(response);
-    if (shouldRetryPayload(response.status, validationMessage)){
-      console.warn('Calendar sync rejected unexpected keys; retrying without block month payload.');
-      response = await sendCalendarPayload(fallbackPayload);
+    const retryInfo = shouldRetryPayload(response.status, validationMessage);
+    if (retryInfo){
+      let retryPayload = payload;
+      if (retryInfo.rejectBlocks && retryInfo.rejectHotels){
+        retryPayload = payloadMinimal;
+        console.warn('Calendar sync rejected block month + hotel keys; retrying with minimal payload.');
+      } else if (retryInfo.rejectBlocks){
+        retryPayload = payloadWithoutBlocks;
+        console.warn('Calendar sync rejected block month keys; retrying without block month payload.');
+      } else if (retryInfo.rejectHotels){
+        retryPayload = payloadWithoutHotels;
+        console.warn('Calendar sync rejected hotel keys; retrying without hotel payload.');
+      }
+      response = await sendCalendarPayload(retryPayload);
       if (!response.ok){
         const retryMessage = await readCalendarSyncMessage(response);
         const retrySuffix = retryMessage ? `: ${retryMessage}` : '';
@@ -5269,7 +5466,7 @@ async function syncCalendarToCloud(){
   return { queued: false };
 }
 
-async function loadCalendarFromCloud(){
+async function loadCalendarFromCloud({ skipConfirm = false } = {}){
   const token = getCalendarSyncToken();
   if (!token){
     throw new Error('Missing calendar sync token.');
@@ -5299,9 +5496,11 @@ async function loadCalendarFromCloud(){
   const localUpdatedAt = normalizeCalendarUpdatedAt(calendarState.updatedAt);
   let statusMessage = 'Pulled from cloud.';
   if (remoteUpdatedAt > localUpdatedAt){
-    const confirmOverwrite = await requestCalendarOverwriteConfirm();
-    if (!confirmOverwrite){
-      return { state: calendarState, statusMessage: 'Kept local schedule (cloud newer).' };
+    if (!skipConfirm){
+      const confirmOverwrite = await requestCalendarOverwriteConfirm();
+      if (!confirmOverwrite){
+        return { state: calendarState, statusMessage: 'Kept local schedule (cloud newer).' };
+      }
     }
     statusMessage = 'Overwrote local schedule with newer cloud copy.';
   } else if (localUpdatedAt > remoteUpdatedAt){
@@ -5331,6 +5530,7 @@ async function loadCalendarFromCloud(){
       calendarState.blockMonthRecurring,
       incomingBlockRecurring
     ),
+    hotels: Array.isArray(incomingState.hotels) ? incomingState.hotels : (calendarState.hotels || []),
     updatedAt: remoteUpdatedAt
   };
   normalizeCalendarState();
@@ -7043,6 +7243,8 @@ function renderCalendar(){
   const headerEl = document.getElementById('modern-calendar-summary-header');
   const gridEl = document.getElementById('modern-calendar-grid');
   const blockMonthButton = document.getElementById('modern-calendar-block-month');
+  const hotelButton = document.getElementById('modern-calendar-hotel');
+  const viewToggle = document.getElementById('modern-calendar-view-toggle');
   if (!monthSelect || !gridEl || !headerEl) return;
   calendarState.months = mergeCalendarMonths(calendarState.months, buildCalendarMonths(calendarState.eventsByDate));
   ensureCalendarSelection();
@@ -7060,6 +7262,16 @@ function renderCalendar(){
     blockMonthButton.classList.toggle('btn-primary', calendarBlockMonthSelecting);
     blockMonthButton.classList.toggle('btn-secondary', !calendarBlockMonthSelecting);
     blockMonthButton.setAttribute('aria-pressed', String(calendarBlockMonthSelecting));
+  }
+  if (hotelButton){
+    hotelButton.classList.toggle('btn-primary', calendarHotelSelecting);
+    hotelButton.classList.toggle('btn-secondary', !calendarHotelSelecting);
+    hotelButton.setAttribute('aria-pressed', String(calendarHotelSelecting));
+  }
+  if (viewToggle){
+    const isBarStyle = calendarPairingDisplayMode === 'bar';
+    viewToggle.classList.toggle('is-on', isBarStyle);
+    viewToggle.setAttribute('aria-checked', String(isBarStyle));
   }
   const [year, month] = (calendarState.selectedMonth || '').split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month)){
@@ -7086,6 +7298,14 @@ function renderCalendar(){
   rangeStart.setDate(rangeStart.getDate() - 3);
   const rangeEnd = new Date(lastOfMonth);
   rangeEnd.setDate(rangeEnd.getDate() + 3);
+  const displayRange = {
+    startKey: buildCalendarDateKeyFromDate(rangeStart),
+    endKey: buildCalendarDateKeyFromDate(rangeEnd)
+  };
+  const showBarStyle = calendarPairingDisplayMode === 'bar';
+  const pairingBarsByDate = showBarStyle ? buildCalendarPairingBarMap(displayRange) : new Map();
+  const hotelBarsByDate = showBarStyle ? buildCalendarHotelBarMap(displayRange) : new Map();
+  const hotelSelectionRange = calendarHotelSelecting ? getCalendarHotelSelectionRange() : null;
   const todayKey = buildCalendarDateKeyFromDate(new Date());
   gridEl.innerHTML = '';
   CALENDAR_WEEKDAYS.forEach((weekday) => {
@@ -7115,10 +7335,20 @@ function renderCalendar(){
       dayCell.setAttribute('role', 'button');
       dayCell.setAttribute('tabindex', '0');
     }
+    if (calendarHotelSelecting){
+      dayCell.classList.add('is-hotel-selectable');
+      dayCell.setAttribute('role', 'button');
+      dayCell.setAttribute('tabindex', '0');
+    }
     if (blockMonthRange && isCalendarDateKeyInRange(dateKey, blockMonthRange)){
       dayCell.classList.add('is-block-range');
       if (dateKey === blockMonthRange.startKey) dayCell.classList.add('is-block-start');
       if (dateKey === blockMonthRange.endKey) dayCell.classList.add('is-block-end');
+    }
+    if (hotelSelectionRange && isCalendarDateKeyInRange(dateKey, hotelSelectionRange)){
+      dayCell.classList.add('is-hotel-range');
+      if (dateKey === hotelSelectionRange.startKey) dayCell.classList.add('is-hotel-start');
+      if (dateKey === hotelSelectionRange.endKey) dayCell.classList.add('is-hotel-end');
     }
     if (current.getMonth() + 1 !== month){
       dayCell.classList.add('is-outside-month');
@@ -7130,53 +7360,88 @@ function renderCalendar(){
     dayNumber.className = 'calendar-day-number';
     dayNumber.textContent = String(current.getDate());
     dayCell.appendChild(dayNumber);
-    if (dayEvents.length || dayData?.pairing?.pairingId){
-      const wrapper = document.createElement('div');
-      wrapper.className = 'calendar-event-item';
-      if (dayData?.pairing?.pairingId) wrapper.dataset.pairingId = dayData.pairing.pairingId;
-      wrapper.dataset.dateKey = dateKey;
-      const pairingDays = getCalendarPairingDaysForDay(dayData);
-      const isSingleDayPairing = pairingDays.length === 1;
-      const eventBtn = document.createElement('button');
-      eventBtn.type = 'button';
-      eventBtn.className = 'calendar-event';
-      if (isSingleDayPairing) eventBtn.classList.add('is-single-day');
-      const cancellationClass = getCalendarCancellationClassForEvents(dayEvents);
-      if (cancellationClass) eventBtn.classList.add(cancellationClass);
-      if (dayEvents.some(event => isDeadheadEvent(event))) eventBtn.classList.add('is-deadhead');
-      const title = document.createElement('div');
-      title.className = 'calendar-event-title';
-      const labelParts = getCalendarPairingLabelParts(dayData, dateKey);
-      const primary = document.createElement('span');
-      primary.className = 'calendar-event-title-main';
-      primary.textContent = labelParts.primary;
-      if (labelParts.primaryType) primary.classList.add('calendar-event-title-checkpoint');
-      title.appendChild(primary);
-      if (labelParts.secondary){
-        const secondary = document.createElement('span');
-        secondary.className = 'calendar-event-title-sub';
-        secondary.textContent = labelParts.secondary;
-        if (labelParts.secondaryType) secondary.classList.add('calendar-event-title-checkpoint');
-        title.appendChild(secondary);
+    if (showBarStyle){
+      const hotelSegments = hotelBarsByDate.get(dateKey) || [];
+      const pairingSegments = pairingBarsByDate.get(dateKey) || [];
+      if (hotelSegments.length || pairingSegments.length){
+        const bars = document.createElement('div');
+        bars.className = 'calendar-day-bars';
+        [...hotelSegments, ...pairingSegments].forEach((segment) => {
+          const bar = document.createElement('div');
+          bar.className = `calendar-bar calendar-bar-${segment.type}`;
+          if (segment.position) bar.classList.add(`is-${segment.position}`);
+          if (segment.type === 'pairing'){
+            bar.dataset.pairingId = segment.pairingId;
+          }
+          if (segment.type === 'hotel'){
+            bar.dataset.hotelId = segment.hotelId;
+          }
+          if (segment.label) bar.textContent = segment.label;
+          bars.appendChild(bar);
+        });
+        dayCell.appendChild(bars);
       }
-      const meta = document.createElement('div');
-      meta.className = 'calendar-event-meta';
-      const parts = [];
-      const cancellations = dayEvents.map(event => event.cancellation).filter(Boolean);
-      if (cancellations.length) parts.push(`Status ${Array.from(new Set(cancellations)).join(', ')}`);
-      const identifiers = dayEvents.flatMap(event => event.identifiers || []).filter(Boolean);
-      if (identifiers.length) parts.push(identifiers.join(', '));
-      const legsLabel = dayEvents
-        .flatMap(event => event.legs || [])
-        .map(leg => `${leg.from}-${leg.to}`)
-        .filter(Boolean)
-        .join(' ');
-      if (legsLabel) parts.push(legsLabel);
-      meta.textContent = parts.join(' · ');
-      eventBtn.appendChild(title);
-      if (meta.textContent) eventBtn.appendChild(meta);
-      wrapper.appendChild(eventBtn);
-      dayCell.appendChild(wrapper);
+    } else {
+      const hotelEntries = getCalendarHotelsForDate(dateKey);
+      if (hotelEntries.length){
+        const hotelList = document.createElement('div');
+        hotelList.className = 'calendar-hotel-list';
+        hotelEntries.forEach((hotel) => {
+          const chip = document.createElement('div');
+          chip.className = 'calendar-hotel-chip';
+          chip.textContent = hotel.name;
+          hotelList.appendChild(chip);
+        });
+        dayCell.appendChild(hotelList);
+      }
+      if (dayEvents.length || dayData?.pairing?.pairingId){
+        const wrapper = document.createElement('div');
+        wrapper.className = 'calendar-event-item';
+        if (dayData?.pairing?.pairingId) wrapper.dataset.pairingId = dayData.pairing.pairingId;
+        wrapper.dataset.dateKey = dateKey;
+        const pairingDays = getCalendarPairingDaysForDay(dayData);
+        const isSingleDayPairing = pairingDays.length === 1;
+        const eventBtn = document.createElement('button');
+        eventBtn.type = 'button';
+        eventBtn.className = 'calendar-event';
+        if (isSingleDayPairing) eventBtn.classList.add('is-single-day');
+        const cancellationClass = getCalendarCancellationClassForEvents(dayEvents);
+        if (cancellationClass) eventBtn.classList.add(cancellationClass);
+        if (dayEvents.some(event => isDeadheadEvent(event))) eventBtn.classList.add('is-deadhead');
+        const title = document.createElement('div');
+        title.className = 'calendar-event-title';
+        const labelParts = getCalendarPairingLabelParts(dayData, dateKey);
+        const primary = document.createElement('span');
+        primary.className = 'calendar-event-title-main';
+        primary.textContent = labelParts.primary;
+        if (labelParts.primaryType) primary.classList.add('calendar-event-title-checkpoint');
+        title.appendChild(primary);
+        if (labelParts.secondary){
+          const secondary = document.createElement('span');
+          secondary.className = 'calendar-event-title-sub';
+          secondary.textContent = labelParts.secondary;
+          if (labelParts.secondaryType) secondary.classList.add('calendar-event-title-checkpoint');
+          title.appendChild(secondary);
+        }
+        const meta = document.createElement('div');
+        meta.className = 'calendar-event-meta';
+        const parts = [];
+        const cancellations = dayEvents.map(event => event.cancellation).filter(Boolean);
+        if (cancellations.length) parts.push(`Status ${Array.from(new Set(cancellations)).join(', ')}`);
+        const identifiers = dayEvents.flatMap(event => event.identifiers || []).filter(Boolean);
+        if (identifiers.length) parts.push(identifiers.join(', '));
+        const legsLabel = dayEvents
+          .flatMap(event => event.legs || [])
+          .map(leg => `${leg.from}-${leg.to}`)
+          .filter(Boolean)
+          .join(' ');
+        if (legsLabel) parts.push(legsLabel);
+        meta.textContent = parts.join(' · ');
+        eventBtn.appendChild(title);
+        if (meta.textContent) eventBtn.appendChild(meta);
+        wrapper.appendChild(eventBtn);
+        dayCell.appendChild(wrapper);
+      }
     }
     gridEl.appendChild(dayCell);
   }
@@ -8101,7 +8366,7 @@ function initCalendar(){
         return;
       }
       try {
-        const result = await loadCalendarFromCloud();
+        const result = await loadCalendarFromCloud({ skipConfirm: true });
         renderCalendar();
         setCalendarStatus(result?.statusMessage || 'Pulled from cloud.');
       } catch (err){
@@ -8127,6 +8392,9 @@ function initCalendar(){
   if (blockMonthButton){
     blockMonthButton.addEventListener('click', () => {
       const monthKey = normalizeCalendarMonthKey(calendarState.selectedMonth);
+      if (calendarHotelSelecting){
+        setCalendarHotelSelecting(false);
+      }
       if (calendarBlockMonthSelecting){
         calendarBlockMonthSelecting = false;
         if (calendarBlockMonthDraft?.monthKey){
@@ -8143,6 +8411,47 @@ function initCalendar(){
         ? { monthKey, startKey: existing.startKey, endKey: existing.endKey }
         : { monthKey, startKey: null, endKey: null };
       setCalendarBlockMonthEntry(monthKey, { startKey: null, endKey: null });
+      renderCalendar();
+    });
+  }
+  const hotelButton = document.getElementById('modern-calendar-hotel');
+  if (hotelButton){
+    hotelButton.addEventListener('click', () => {
+      if (calendarBlockMonthSelecting){
+        calendarBlockMonthSelecting = false;
+        calendarBlockMonthDraft = null;
+      }
+      setCalendarHotelSelecting(!calendarHotelSelecting);
+      renderCalendar();
+    });
+  }
+  const pastePanel = document.getElementById('modern-calendar-paste-panel');
+  const insertToggle = document.getElementById('modern-calendar-insert');
+  const setCalendarPastePanelOpen = (shouldOpen) => {
+    if (!pastePanel) return;
+    const isOpen = Boolean(shouldOpen);
+    pastePanel.classList.toggle('hidden', !isOpen);
+    pastePanel.setAttribute('aria-hidden', String(!isOpen));
+    if (insertToggle){
+      insertToggle.setAttribute('aria-pressed', String(isOpen));
+    }
+    if (isOpen){
+      document.getElementById('modern-calendar-text')?.focus();
+    }
+  };
+  if (insertToggle){
+    insertToggle.addEventListener('click', () => {
+      const isOpen = pastePanel && !pastePanel.classList.contains('hidden');
+      setCalendarPastePanelOpen(!isOpen);
+    });
+  }
+  const viewToggle = document.getElementById('modern-calendar-view-toggle');
+  if (viewToggle){
+    viewToggle.addEventListener('click', () => {
+      calendarPairingDisplayMode = normalizeCalendarPairingDisplayMode(
+        calendarPairingDisplayMode === 'bar' ? 'classic' : 'bar'
+      );
+      saveCalendarState({ bumpUpdatedAt: false });
       renderCalendar();
     });
   }
@@ -8182,6 +8491,7 @@ function initCalendar(){
         setCalendarStatus(err?.message || 'Schedule parse failed.');
       } finally {
         pasteInput.value = '';
+        setCalendarPastePanelOpen(false);
       }
     });
   }
@@ -8283,8 +8593,38 @@ function initCalendar(){
         renderCalendar();
       }
     };
+    const handleHotelSelection = (dateKey) => {
+      if (!dateKey) return;
+      if (!calendarHotelSelection.startKey || calendarHotelSelection.endKey){
+        calendarHotelSelection = { startKey: dateKey, endKey: null };
+        renderCalendar();
+        return;
+      }
+      calendarHotelSelection = { ...calendarHotelSelection, endKey: dateKey };
+      const range = getCalendarHotelSelectionRange();
+      const name = window.prompt('Hotel name?');
+      if (range && typeof name === 'string' && name.trim()){
+        addCalendarHotelEntry({ startKey: range.startKey, endKey: range.endKey, name });
+        saveCalendarState();
+        setCalendarStatus(`Added hotel ${name.trim()}.`);
+      } else {
+        setCalendarStatus('Hotel entry cancelled.');
+      }
+      setCalendarHotelSelecting(false);
+      renderCalendar();
+    };
     grid.addEventListener('click', (event) => {
       const target = event.target;
+      if (calendarHotelSelecting){
+        const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
+        handleHotelSelection(dayCell?.dataset?.dateKey);
+        return;
+      }
+      const bar = target instanceof Element ? target.closest('.calendar-bar') : null;
+      if (bar?.dataset?.pairingId){
+        openCalendarPairingDetail(bar.dataset.pairingId);
+        return;
+      }
       if (calendarBlockMonthSelecting){
         const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
         handleBlockMonthSelection(dayCell?.dataset?.dateKey);
@@ -8309,11 +8649,16 @@ function initCalendar(){
       }
     });
     grid.addEventListener('keydown', (event) => {
-      if (!calendarBlockMonthSelecting) return;
       if (event.key !== 'Enter' && event.key !== ' ') return;
       const target = event.target;
       const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
       if (!dayCell) return;
+      if (calendarHotelSelecting){
+        event.preventDefault();
+        handleHotelSelection(dayCell?.dataset?.dateKey);
+        return;
+      }
+      if (!calendarBlockMonthSelecting) return;
       event.preventDefault();
       handleBlockMonthSelection(dayCell?.dataset?.dateKey);
     });
@@ -12488,7 +12833,7 @@ function init(){
     'modern-duty-utc-clock',
     'modern-rest-utc-clock'
   ]);
-  setModernPrimaryTab('modern-pay');
+  setModernPrimaryTab('modern-calendar');
   setModernSubTab('modern-annual');
   setModernDutyTab('modern-duty');
   addTapListener(document.getElementById('tabbtn-modern-pay'), (e)=>{ hapticTap(e.currentTarget); setModernPrimaryTab('modern-pay'); });
@@ -12659,7 +13004,7 @@ function init(){
     });
   }
   // Tab defaults
-  setModernPrimaryTab('modern-pay');
+  setModernPrimaryTab('modern-calendar');
   setModernSubTab('modern-annual');
   setModernDutyTab('modern-duty');
   setModernFinTab(currentModernFinTab);

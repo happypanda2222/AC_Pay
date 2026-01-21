@@ -482,6 +482,7 @@
       display:flex;
       flex-direction:column;
       gap:8px;
+      position:relative;
     }
     .calendar-day.is-block-selectable{
       cursor:pointer;
@@ -503,6 +504,27 @@
     .calendar-day.is-block-end{
       border-color:#38bdf8;
       background:rgba(14, 116, 144, 0.22);
+    }
+    .calendar-day.is-hotel-selectable{
+      cursor:pointer;
+      border-color:#6b7280;
+    }
+    .calendar-day.is-hotel-selectable:hover{
+      border-color:#9ca3af;
+      background:rgba(148, 163, 184, 0.12);
+    }
+    .calendar-day.is-hotel-selectable:focus-visible{
+      outline:2px solid #9ca3af;
+      outline-offset:2px;
+    }
+    .calendar-day.is-hotel-range{
+      border-color:#9ca3af;
+      background:rgba(148, 163, 184, 0.14);
+    }
+    .calendar-day.is-hotel-start,
+    .calendar-day.is-hotel-end{
+      border-color:#cbd5f5;
+      background:rgba(148, 163, 184, 0.18);
     }
     .calendar-day.is-today{
       border-color:#a855f7;
@@ -559,6 +581,66 @@
       display:flex;
       flex-direction:column;
       gap:6px;
+    }
+    .calendar-day-bars{
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+      margin-top:4px;
+    }
+    .calendar-bar{
+      display:flex;
+      align-items:center;
+      height:16px;
+      border-radius:999px;
+      padding:0 6px;
+      font-size:9px;
+      font-weight:800;
+      letter-spacing:.2px;
+      overflow:hidden;
+      white-space:nowrap;
+      text-overflow:ellipsis;
+      width:100%;
+    }
+    .calendar-bar[data-pairing-id]{
+      cursor:pointer;
+    }
+    .calendar-bar-pairing{
+      background:#3b82f6;
+      color:#f8fafc;
+    }
+    .calendar-bar-hotel{
+      background:#9ca3af;
+      color:#0b0f1a;
+    }
+    .calendar-bar.is-start{
+      margin-left:50%;
+      width:50%;
+      border-top-left-radius:4px;
+      border-bottom-left-radius:4px;
+    }
+    .calendar-bar.is-end{
+      margin-right:50%;
+      width:50%;
+      border-top-right-radius:4px;
+      border-bottom-right-radius:4px;
+    }
+    .calendar-bar.is-single{
+      width:100%;
+    }
+    .calendar-hotel-list{
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+    .calendar-hotel-chip{
+      background:#9ca3af;
+      color:#0b0f1a;
+      border-radius:999px;
+      padding:4px 6px;
+      font-size:10px;
+      font-weight:800;
+      letter-spacing:.2px;
     }
     .calendar-event{
       width:100%;
@@ -811,6 +893,17 @@
       gap:10px;
       margin-top:12px;
     }
+    .calendar-input-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:12px;
+    }
+    .calendar-input-actions .btn{
+      flex:1 1 0;
+      min-width:0;
+      white-space:nowrap;
+    }
     .calendar-month-controls{
       display:flex;
       flex-direction:column;
@@ -840,6 +933,49 @@
     }
     .calendar-sync-footer .btn{
       width:100%;
+    }
+    .calendar-view-toggle{
+      margin-top:14px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .calendar-view-toggle-label{
+      font-size:12px;
+      color:var(--muted);
+      font-weight:700;
+      letter-spacing:.2px;
+      text-transform:uppercase;
+    }
+    .calendar-ios-toggle{
+      border:1px solid #2a2f3b;
+      background:#0f1218;
+      border-radius:999px;
+      padding:4px;
+      width:64px;
+      height:34px;
+      display:inline-flex;
+      align-items:center;
+      transition:background .2s ease,border-color .2s ease;
+      cursor:pointer;
+    }
+    .calendar-ios-toggle-thumb{
+      width:26px;
+      height:26px;
+      border-radius:50%;
+      background:#94a3b8;
+      box-shadow:0 4px 10px rgba(0,0,0,0.35);
+      transform:translateX(0);
+      transition:transform .2s ease, background .2s ease;
+    }
+    .calendar-ios-toggle.is-on{
+      background:#2563eb;
+      border-color:#2563eb;
+    }
+    .calendar-ios-toggle.is-on .calendar-ios-toggle-thumb{
+      transform:translateX(26px);
+      background:#f8fafc;
     }
     .calendar-sync-settings-panel{
       max-width:520px;
@@ -1546,7 +1682,11 @@
                 </div>
               </div>
               <div class="calendar-grid" id="modern-calendar-grid"></div>
-              <div class="calendar-post-actions">
+              <div class="calendar-input-actions">
+                <button id="modern-calendar-hotel" class="btn btn-secondary" type="button" aria-pressed="false">Hotel</button>
+                <button id="modern-calendar-insert" class="btn btn-secondary" type="button" aria-pressed="false">Insert</button>
+              </div>
+              <div class="calendar-post-actions hidden" id="modern-calendar-paste-panel" aria-hidden="true">
                 <div class="calendar-paste">
                   <label for="modern-calendar-text">Paste schedule</label>
                   <textarea id="modern-calendar-text" rows="6" placeholder="Paste schedule text"></textarea>
@@ -1565,6 +1705,12 @@
               </div>
               <div class="calendar-sync-footer">
                 <button id="modern-calendar-sync-settings-btn" class="btn btn-secondary" type="button">Sync settings</button>
+              </div>
+              <div class="calendar-view-toggle">
+                <div class="calendar-view-toggle-label">Pairing bars</div>
+                <button id="modern-calendar-view-toggle" class="calendar-ios-toggle" type="button" role="switch" aria-checked="false">
+                  <span class="calendar-ios-toggle-thumb"></span>
+                </button>
               </div>
             </div>
             <div id="modern-calendar-detail" class="hidden">
