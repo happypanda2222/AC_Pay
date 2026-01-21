@@ -7247,6 +7247,25 @@ function updateCalendarTotals(year, month){
   if (tafbEl) tafbEl.textContent = formatDurationMinutes(dutyMinutes);
 }
 
+const CALENDAR_HOTEL_BAR_FONT_MAX = 9;
+const CALENDAR_HOTEL_BAR_FONT_MIN = 7;
+
+function fitCalendarHotelBarText(container){
+  if (!container) return;
+  const bars = container.querySelectorAll('.calendar-bar-hotel');
+  bars.forEach((bar) => {
+    if (!bar.textContent?.trim()) return;
+    let size = CALENDAR_HOTEL_BAR_FONT_MAX;
+    bar.style.fontSize = `${size}px`;
+    let guard = 0;
+    while (bar.scrollWidth > bar.clientWidth && size > CALENDAR_HOTEL_BAR_FONT_MIN && guard < 10){
+      size = Math.max(CALENDAR_HOTEL_BAR_FONT_MIN, size - 0.5);
+      bar.style.fontSize = `${size}px`;
+      guard += 1;
+    }
+  });
+}
+
 function renderCalendar(){
   const monthSelect = document.getElementById('modern-calendar-month');
   const headerEl = document.getElementById('modern-calendar-summary-header');
@@ -7461,6 +7480,7 @@ function renderCalendar(){
     }
     gridEl.appendChild(dayCell);
   }
+  requestAnimationFrame(() => fitCalendarHotelBarText(gridEl));
   refreshCalendarDetail();
   refreshCalendarPairingDetail();
   refreshCalendarDayDetail();
