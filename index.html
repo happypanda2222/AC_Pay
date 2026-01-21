@@ -476,14 +476,13 @@
       grid-column:1 / -1;
       position:relative;
     }
-    .calendar-row-labels{
+    .calendar-row-hotel-bars{
       position:absolute;
       top:0;
       bottom:0;
       left:0;
       right:0;
       width:100%;
-      pointer-events:none;
       z-index:2;
     }
     .calendar-weekday{
@@ -650,20 +649,12 @@
       justify-content:center;
     }
     .calendar-hotel-label{
-      position:absolute;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding:0 6px;
-      font-size:9px;
-      font-weight:800;
-      letter-spacing:.2px;
-      color:#0b0f1a;
+      display:block;
+      width:100%;
+      text-align:center;
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
-      pointer-events:none;
-      z-index:2;
     }
     .calendar-bar.is-start{
       margin-left:50%;
@@ -687,28 +678,21 @@
     .calendar-bar.is-single{
       width:100%;
     }
-    .calendar-bar-hotel.is-start{
-      margin-left:50%;
-      width:calc(50% + var(--calendar-gap) + (var(--calendar-day-padding) * 2));
-      margin-right:calc((var(--calendar-gap) + (var(--calendar-day-padding) * 2)) * -1);
-      border-top-left-radius:999px;
-      border-bottom-left-radius:999px;
+    .calendar-row-hotel-segment{
+      position:absolute;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .calendar-row-hotel-segment.is-start{
       border-top-right-radius:0;
       border-bottom-right-radius:0;
     }
-    .calendar-bar-hotel.is-end{
-      margin-right:50%;
-      width:calc(50% + var(--calendar-gap) + (var(--calendar-day-padding) * 2));
-      margin-left:calc((var(--calendar-gap) + (var(--calendar-day-padding) * 2)) * -1);
+    .calendar-row-hotel-segment.is-end{
       border-top-left-radius:0;
       border-bottom-left-radius:0;
-      border-top-right-radius:999px;
-      border-bottom-right-radius:999px;
     }
-    .calendar-bar-hotel.is-middle{
-      width:calc(100% + (var(--calendar-gap) * 2) + (var(--calendar-day-padding) * 4));
-      margin-left:calc((var(--calendar-gap) + (var(--calendar-day-padding) * 2)) * -1);
-      margin-right:calc((var(--calendar-gap) + (var(--calendar-day-padding) * 2)) * -1);
+    .calendar-row-hotel-segment.is-middle{
       border-radius:0;
     }
     .calendar-hotel-list{
