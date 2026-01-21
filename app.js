@@ -5415,9 +5415,8 @@ async function syncCalendarToCloud(){
     if (status !== 400) return null;
     if (!message || typeof message !== 'string') return null;
     const lower = message.toLowerCase();
-    if (!lower.includes('unexpected')) return null;
     const rejectBlocks = ['blockmonthsbymonthkey', 'blockmonthrecurring'].some((key) => lower.includes(key));
-    const rejectHotels = lower.includes('hotels');
+    const rejectHotels = lower.includes('hotels') || lower.includes('hotel');
     if (!rejectBlocks && !rejectHotels) return null;
     return { rejectBlocks, rejectHotels };
   };
