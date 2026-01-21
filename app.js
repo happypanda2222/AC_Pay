@@ -6003,6 +6003,16 @@ function getCalendarPairingLayoverLabel(day, dateKey){
   return '';
 }
 
+function getCalendarPairingLabelType(label){
+  const trimmed = String(label || '').trim();
+  if (!trimmed) return '';
+  const lowered = trimmed.toLowerCase();
+  if (lowered === 'check in') return 'check-in';
+  if (lowered === 'check out') return 'check-out';
+  if (/^[A-Z]{3,4}$/.test(trimmed)) return 'airport';
+  return '';
+}
+
 function getCalendarPairingLabelParts(day, dateKey){
   const pairingDays = getCalendarPairingDaysForDay(day);
   const layoverLabel = getCalendarPairingLayoverLabel(day, dateKey);
@@ -6021,16 +6031,33 @@ function getCalendarPairingLabelParts(day, dateKey){
         endMinutes = Math.round((lastFlightMs - dayStartMs) / 60000);
       }
     }
+    const primary = Number.isFinite(endMinutes) ? formatMinutesToTime(endMinutes) : 'Check out';
     return {
-      primary: Number.isFinite(endMinutes) ? formatMinutesToTime(endMinutes) : 'Check out',
-      secondary: ''
+      primary,
+      secondary: '',
+      primaryType: getCalendarPairingLabelType(primary),
+      secondaryType: ''
     };
   }
   if (hasNextDayCheckoutPlaceholder){
     const departureLabel = getCalendarLastFlightDepartureCode(day, dateKey);
-    if (departureLabel) return { primary: departureLabel, secondary: '' };
-    if (layoverLabel) return { primary: layoverLabel, secondary: '' };
-    return { primary: '1 Day', secondary: '' };
+    if (departureLabel){
+      return {
+        primary: departureLabel,
+        secondary: '',
+        primaryType: getCalendarPairingLabelType(departureLabel),
+        secondaryType: ''
+      };
+    }
+    if (layoverLabel){
+      return {
+        primary: layoverLabel,
+        secondary: '',
+        primaryType: getCalendarPairingLabelType(layoverLabel),
+        secondaryType: ''
+      };
+    }
+    return { primary: '1 Day', secondary: '', primaryType: '', secondaryType: '' };
   }
   const isSingleDay = pairingDays.length === 1;
   if (isSingleDay && dateKey){
@@ -6059,7 +6086,12 @@ function getCalendarPairingLabelParts(day, dateKey){
       const checkOutLabel = Number.isFinite(endMinutes)
         ? formatMinutesToTime(endMinutes)
         : 'Check out';
-      return { primary: checkInLabel, secondary: checkOutLabel };
+      return {
+        primary: checkInLabel,
+        secondary: checkOutLabel,
+        primaryType: getCalendarPairingLabelType(checkInLabel),
+        secondaryType: getCalendarPairingLabelType(checkOutLabel)
+      };
     }
   }
   if (dateKey && pairingDays.length){
@@ -6074,9 +6106,12 @@ function getCalendarPairingLabelParts(day, dateKey){
           endMinutes = Math.round((lastFlightMs - dayStartMs) / 60000);
         }
       }
+      const primary = Number.isFinite(endMinutes) ? formatMinutesToTime(endMinutes) : 'Check out';
       return {
-        primary: Number.isFinite(endMinutes) ? formatMinutesToTime(endMinutes) : 'Check out',
-        secondary: ''
+        primary,
+        secondary: '',
+        primaryType: getCalendarPairingLabelType(primary),
+        secondaryType: ''
       };
     }
     if (dateKey === firstDay){
@@ -6092,11 +6127,23 @@ function getCalendarPairingLabelParts(day, dateKey){
       const timeLabel = Number.isFinite(checkInMinutes)
         ? formatMinutesToTime(checkInMinutes)
         : 'Check in';
-      return { primary: timeLabel, secondary: layoverLabel };
+      return {
+        primary: timeLabel,
+        secondary: layoverLabel,
+        primaryType: getCalendarPairingLabelType(timeLabel),
+        secondaryType: getCalendarPairingLabelType(layoverLabel)
+      };
     }
   }
-  if (layoverLabel) return { primary: layoverLabel, secondary: '' };
-  return { primary: '1 Day', secondary: '' };
+  if (layoverLabel){
+    return {
+      primary: layoverLabel,
+      secondary: '',
+      primaryType: getCalendarPairingLabelType(layoverLabel),
+      secondaryType: ''
+    };
+  }
+  return { primary: '1 Day', secondary: '', primaryType: '', secondaryType: '' };
 }
 
 function getCalendarPairingLabel(day, dateKey){
@@ -7039,6 +7086,7 @@ function renderCalendar(){
   rangeStart.setDate(rangeStart.getDate() - 3);
   const rangeEnd = new Date(lastOfMonth);
   rangeEnd.setDate(rangeEnd.getDate() + 3);
+  const todayKey = buildCalendarDateKeyFromDate(new Date());
   gridEl.innerHTML = '';
   CALENDAR_WEEKDAYS.forEach((weekday) => {
     const label = document.createElement('div');
@@ -7054,10 +7102,14 @@ function renderCalendar(){
       const cancellation = String(event?.cancellation || '').toUpperCase();
       return cancellation === 'CNX' || cancellation === 'CNX PP';
     });
+    const isToday = dateKey === todayKey;
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
     dayCell.dataset.dateKey = dateKey;
     if (isCnxDay) dayCell.classList.add('is-cnx-day');
+    if (isToday && (blockMonthRange || calendarBlockMonthSelecting)){
+      dayCell.classList.add('is-today');
+    }
     if (calendarBlockMonthSelecting){
       dayCell.classList.add('is-block-selectable');
       dayCell.setAttribute('role', 'button');
@@ -7098,11 +7150,13 @@ function renderCalendar(){
       const primary = document.createElement('span');
       primary.className = 'calendar-event-title-main';
       primary.textContent = labelParts.primary;
+      if (labelParts.primaryType) primary.classList.add('calendar-event-title-checkpoint');
       title.appendChild(primary);
       if (labelParts.secondary){
         const secondary = document.createElement('span');
         secondary.className = 'calendar-event-title-sub';
         secondary.textContent = labelParts.secondary;
+        if (labelParts.secondaryType) secondary.classList.add('calendar-event-title-checkpoint');
         title.appendChild(secondary);
       }
       const meta = document.createElement('div');

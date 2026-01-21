@@ -504,6 +504,16 @@
       border-color:#38bdf8;
       background:rgba(14, 116, 144, 0.22);
     }
+    .calendar-day.is-today{
+      border-color:#a855f7;
+      background:rgba(168, 85, 247, 0.18);
+    }
+    .calendar-day.is-today.is-block-range,
+    .calendar-day.is-today.is-block-start,
+    .calendar-day.is-today.is-block-end{
+      border-color:#a855f7;
+      background:rgba(168, 85, 247, 0.28);
+    }
     .calendar-day.is-outside-month{
       background:#0a0d16;
       border-color:#151b26;
@@ -531,11 +541,7 @@
     .calendar-day.has-detail{
       cursor:pointer;
     }
-    .calendar-day.is-cnx-day .calendar-day-number{
-      color:#f87171;
-    }
-    .calendar-day.is-cnx-day .calendar-event:not(.is-cnx):not(.is-cnx-pp) .calendar-event-title-main,
-    .calendar-day.is-cnx-day .calendar-event:not(.is-cnx):not(.is-cnx-pp) .calendar-event-title-sub{
+    .calendar-day.is-cnx-day .calendar-event-title-checkpoint{
       color:#f87171;
     }
     .calendar-day.is-empty{
