@@ -5954,11 +5954,13 @@ function getCalendarPairingIdForDay(dateKey){
 
 function getCalendarPairingDays(pairingId){
   if (!pairingId) return [];
-  const days = [];
+  const days = new Set();
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-    if (day?.pairing?.pairingId === pairingId) days.push(dateKey);
+    if (day?.pairing?.pairingId === pairingId) days.add(dateKey);
+    const dayEvents = day?.events || [];
+    if (dayEvents.some(event => event?.pairingId === pairingId)) days.add(dateKey);
   });
-  return days.sort();
+  return Array.from(days).sort();
 }
 
 function getCalendarPairingIdForEvent(event, dateKey){
