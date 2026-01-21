@@ -467,6 +467,19 @@
       -webkit-overflow-scrolling:touch;
       position:relative;
     }
+    .calendar-row{
+      grid-column:1 / -1;
+      display:grid;
+      grid-template-columns:repeat(7,minmax(48px,1fr));
+      gap:var(--calendar-gap);
+      position:relative;
+    }
+    .calendar-row-labels{
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+      z-index:2;
+    }
     .calendar-weekday{
       text-transform:uppercase;
       letter-spacing:.2px;
