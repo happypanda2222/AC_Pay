@@ -7417,13 +7417,17 @@ function renderCalendarHotelBarLabels(container, range){
       const dayKeys = getCalendarDateKeysInRange(startKey, endKey);
       if (!dayKeys.length) return;
       const startBarRect = startBar.getBoundingClientRect();
-      const endBarRect = endBar.getBoundingClientRect();
       const rowRect = row.getBoundingClientRect();
       const startCellRect = startCell.getBoundingClientRect();
-      const dayCellWidth = startCellRect.width;
-      const fallbackWidth = endBarRect.right - startBarRect.left;
-      const segmentWidth = Number.isFinite(dayCellWidth) && dayCellWidth > 0
+      const dayCellWidth = startCell.offsetWidth || startCellRect.width;
+      const startCellOffset = startCell.offsetLeft;
+      const endCellOffset = endCell.offsetLeft + endCell.offsetWidth;
+      const offsetWidth = endCellOffset - startCellOffset;
+      const fallbackWidth = Number.isFinite(dayCellWidth) && dayCellWidth > 0
         ? dayCellWidth * dayKeys.length
+        : 0;
+      const segmentWidth = Number.isFinite(offsetWidth) && offsetWidth > 0
+        ? offsetWidth
         : fallbackWidth;
       if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
       const fit = fitLabelToWidth(
@@ -7437,7 +7441,10 @@ function renderCalendarHotelBarLabels(container, range){
       label.className = 'calendar-bar-label';
       label.dataset.hotelId = hotelId;
       label.textContent = fit.fittedText;
-      label.style.left = `${startCellRect.left - rowRect.left}px`;
+      const leftOffset = Number.isFinite(startCellOffset)
+        ? startCellOffset
+        : startCellRect.left - rowRect.left;
+      label.style.left = `${leftOffset}px`;
       label.style.top = `${startBarRect.top - rowRect.top}px`;
       label.style.height = `${startBarRect.height}px`;
       label.style.width = `${segmentWidth}px`;
