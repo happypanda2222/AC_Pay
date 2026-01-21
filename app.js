@@ -4780,43 +4780,9 @@ function buildCalendarPairingBarMap(range){
   return map;
 }
 
-function buildCalendarHotelBarMap(range){
-  const map = new Map();
-  if (!range) return map;
-  (calendarState.hotels || []).forEach((hotel) => {
-    const hotelRange = getCalendarHotelRange(hotel);
-    if (!hotelRange) return;
-    if (hotelRange.endKey < range.startKey || hotelRange.startKey > range.endKey) return;
-    const startKey = hotelRange.startKey < range.startKey ? range.startKey : hotelRange.startKey;
-    const endKey = hotelRange.endKey > range.endKey ? range.endKey : hotelRange.endKey;
-    const dateKeys = getCalendarDateKeysInRange(startKey, endKey);
-    if (!dateKeys.length) return;
-    const firstVisible = dateKeys[0];
-    const lastVisible = dateKeys[dateKeys.length - 1];
-    dateKeys.forEach((dateKey) => {
-      const isSingle = firstVisible === lastVisible;
-      const segment = {
-        type: 'hotel',
-        hotelId: hotel.id,
-        position: isSingle ? 'single' : (dateKey === firstVisible ? 'start' : (dateKey === lastVisible ? 'end' : 'middle'))
-      };
-      addCalendarBarSegment(map, dateKey, segment);
-    });
-  });
-  return map;
-}
-
-function getCalendarWeekIndex(dateKey, rangeStartKey){
-  const startMs = getDateKeyStartMs(rangeStartKey);
-  const dateMs = getDateKeyStartMs(dateKey);
-  if (!Number.isFinite(startMs) || !Number.isFinite(dateMs)) return 0;
-  const diffDays = Math.floor((dateMs - startMs) / 86400000);
-  return Math.floor(diffDays / 7);
-}
-
-function buildCalendarHotelLabelRanges(range){
-  const ranges = [];
-  if (!range) return ranges;
+function buildCalendarHotelRowSegments(range){
+  const segments = [];
+  if (!range) return segments;
   (calendarState.hotels || []).forEach((hotel) => {
     const hotelRange = getCalendarHotelRange(hotel);
     if (!hotelRange) return;
@@ -4834,29 +4800,50 @@ function buildCalendarHotelLabelRanges(range){
         segmentStartKey = dateKey;
       }
       if (weekIndex !== currentWeekIndex){
-        ranges.push({
+        const segmentEndKey = dateKeys[index - 1];
+        const isSingle = segmentStartKey === segmentEndKey;
+        const isRangeStart = segmentStartKey === startKey;
+        const isRangeEnd = segmentEndKey === endKey;
+        const position = isSingle ? 'single' : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
+        segments.push({
           hotelId: hotel.id,
           name: hotel.name,
           startKey: segmentStartKey,
-          endKey: dateKeys[index - 1],
-          weekIndex: currentWeekIndex
+          endKey: segmentEndKey,
+          weekIndex: currentWeekIndex,
+          position
         });
         currentWeekIndex = weekIndex;
         segmentStartKey = dateKey;
       }
     });
     if (segmentStartKey !== null){
-      ranges.push({
+      const segmentEndKey = dateKeys[dateKeys.length - 1];
+      const isSingle = segmentStartKey === segmentEndKey;
+      const isRangeStart = segmentStartKey === startKey;
+      const isRangeEnd = segmentEndKey === endKey;
+      const position = isSingle ? 'single' : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
+      segments.push({
         hotelId: hotel.id,
         name: hotel.name,
         startKey: segmentStartKey,
-        endKey: dateKeys[dateKeys.length - 1],
-        weekIndex: currentWeekIndex
+        endKey: segmentEndKey,
+        weekIndex: currentWeekIndex,
+        position
       });
     }
   });
-  return ranges;
+  return segments;
 }
+
+function getCalendarWeekIndex(dateKey, rangeStartKey){
+  const startMs = getDateKeyStartMs(rangeStartKey);
+  const dateMs = getDateKeyStartMs(dateKey);
+  if (!Number.isFinite(startMs) || !Number.isFinite(dateMs)) return 0;
+  const diffDays = Math.floor((dateMs - startMs) / 86400000);
+  return Math.floor(diffDays / 7);
+}
+
 
 function inferCalendarDayPairing(day, dateKey){
   const identifiers = day?.events?.[0]?.identifiers || [];
@@ -7298,175 +7285,52 @@ function updateCalendarTotals(year, month){
   if (tafbEl) tafbEl.textContent = formatDurationMinutes(dutyMinutes);
 }
 
-const CALENDAR_HOTEL_BAR_FONT_MAX = 10;
-const CALENDAR_HOTEL_BAR_FONT_MIN = 7;
-let calendarLabelMeasureContext = null;
-let calendarLabelMeasureFontFamily = '';
-
-function getCalendarLabelMeasureContext(){
-  if (!calendarLabelMeasureContext){
-    const canvas = document.createElement('canvas');
-    calendarLabelMeasureContext = canvas.getContext('2d');
-  }
-  return calendarLabelMeasureContext;
-}
-
-function setCalendarLabelMeasureFontFamily(fontFamily){
-  calendarLabelMeasureFontFamily = fontFamily || '';
-}
-
-function measureCalendarLabelText(text, fontSizePx){
-  const context = getCalendarLabelMeasureContext();
-  if (!context) return 0;
-  const fontFamily = calendarLabelMeasureFontFamily
-    || getComputedStyle(document.body).fontFamily
-    || 'sans-serif';
-  context.font = `${fontSizePx}px ${fontFamily}`;
-  return context.measureText(text).width;
-}
-
-function getCalendarLabelFitLength(text, maxWidth, fontSizePx){
-  if (!text) return 0;
-  let low = 0;
-  let high = text.length;
-  while (low < high){
-    const mid = Math.ceil((low + high) / 2);
-    const width = measureCalendarLabelText(text.slice(0, mid), fontSizePx);
-    if (width <= maxWidth){
-      low = mid;
-    } else {
-      high = mid - 1;
-    }
-  }
-  return low;
-}
-
-function fitLabelToWidth(text, maxWidth, minFontPx, maxFontPx){
-  const sourceText = String(text ?? '');
-  if (!sourceText.trim()) return { fittedText: '', nextStartIndex: 0, fontSizePx: maxFontPx };
-  const width = Number(maxWidth);
-  if (!Number.isFinite(width) || width <= 0){
-    return { fittedText: '', nextStartIndex: 0, fontSizePx: maxFontPx };
-  }
-  const minSize = Number.isFinite(minFontPx) ? minFontPx : CALENDAR_HOTEL_BAR_FONT_MIN;
-  const maxSize = Number.isFinite(maxFontPx) ? maxFontPx : CALENDAR_HOTEL_BAR_FONT_MAX;
-  let best = { fittedText: '', nextStartIndex: 0, fontSizePx: minSize, fitLength: 0 };
-  for (let size = maxSize; size >= minSize; size -= 1){
-    const fitLength = getCalendarLabelFitLength(sourceText, width, size);
-    if (fitLength <= 0) continue;
-    if (fitLength > best.fitLength || (fitLength === best.fitLength && size > best.fontSizePx)){
-      best = {
-        fittedText: sourceText.slice(0, fitLength),
-        nextStartIndex: fitLength,
-        fontSizePx: size,
-        fitLength
-      };
-    }
-    if (fitLength === sourceText.length) break;
-  }
-  if (!best.fittedText){
-    return { fittedText: '', nextStartIndex: 0, fontSizePx: minSize };
-  }
-  return { fittedText: best.fittedText, nextStartIndex: best.nextStartIndex, fontSizePx: best.fontSizePx };
-}
-
-function autoFitCalendarHotelLabel(label){
-  if (!label) return;
-  if (!label.textContent?.trim()) return;
-  const maxWidth = label.clientWidth;
-  if (!Number.isFinite(maxWidth) || maxWidth <= 0) return;
-  if (Number(label.dataset.autoFitWidth) === maxWidth) return;
-  label.dataset.autoFitWidth = String(maxWidth);
-  let size = CALENDAR_HOTEL_BAR_FONT_MAX;
-  label.style.fontSize = `${size}px`;
-  while (label.scrollWidth > maxWidth && size > CALENDAR_HOTEL_BAR_FONT_MIN){
-    size = Math.max(CALENDAR_HOTEL_BAR_FONT_MIN, size - 1);
-    label.style.fontSize = `${size}px`;
-  }
-}
-
-function autoFitCalendarHotelLabels(container){
+function renderCalendarHotelRowSegments(container, range){
   if (!container) return;
-  const labels = container.querySelectorAll('.calendar-hotel-label');
-  labels.forEach((label) => autoFitCalendarHotelLabel(label));
-}
-
-function renderCalendarHotelBarLabels(container, range){
-  if (!container) return;
-  container.querySelectorAll('.calendar-hotel-label').forEach((label) => label.remove());
-  const labelRanges = buildCalendarHotelLabelRanges(range);
-  if (!labelRanges.length) return;
-  const rangesByHotel = new Map();
-  labelRanges.forEach((segment) => {
-    if (!rangesByHotel.has(segment.hotelId)) rangesByHotel.set(segment.hotelId, []);
-    rangesByHotel.get(segment.hotelId).push(segment);
+  container.querySelectorAll('.calendar-row-hotel-segment').forEach((segment) => segment.remove());
+  const rowSegments = buildCalendarHotelRowSegments(range);
+  if (!rowSegments.length) return;
+  rowSegments.forEach((segment) => {
+    const rowWrap = container.querySelector(`.calendar-row-wrap[data-week-index="${segment.weekIndex}"]`);
+    if (!rowWrap) return;
+    const row = rowWrap.querySelector('.calendar-row');
+    if (!row) return;
+    const barsContainer = rowWrap.querySelector('.calendar-row-hotel-bars');
+    if (!barsContainer) return;
+    const startCell = row.querySelector(`.calendar-day[data-date-key="${segment.startKey}"]`);
+    const endCell = row.querySelector(`.calendar-day[data-date-key="${segment.endKey}"]`);
+    if (!startCell || !endCell) return;
+    const rowRect = rowWrap.getBoundingClientRect();
+    const startCellOffset = startCell.offsetLeft;
+    const endCellOffset = endCell.offsetLeft + endCell.offsetWidth;
+    let leftOffset = startCellOffset;
+    let rightOffset = endCellOffset;
+    if (segment.startKey !== segment.endKey){
+      leftOffset = startCellOffset + (startCell.offsetWidth / 2);
+      rightOffset = endCell.offsetLeft + (endCell.offsetWidth / 2);
+    }
+    const segmentWidth = rightOffset - leftOffset;
+    if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
+    const dayNumber = startCell.querySelector('.calendar-day-number');
+    const dayNumberRect = dayNumber ? dayNumber.getBoundingClientRect() : null;
+    const dayStyle = getComputedStyle(startCell);
+    const gapValue = parseFloat(dayStyle.rowGap || dayStyle.gap || '0') || 0;
+    const topOffset = dayNumberRect
+      ? dayNumberRect.bottom - rowRect.top + gapValue
+      : startCell.getBoundingClientRect().top - rowRect.top + gapValue;
+    const bar = document.createElement('div');
+    bar.className = 'calendar-bar calendar-bar-hotel calendar-row-hotel-segment';
+    if (segment.position) bar.classList.add(`is-${segment.position}`);
+    bar.dataset.hotelId = segment.hotelId;
+    bar.style.left = `${leftOffset}px`;
+    bar.style.top = `${topOffset}px`;
+    bar.style.width = `${segmentWidth}px`;
+    const label = document.createElement('span');
+    label.className = 'calendar-hotel-label';
+    label.textContent = segment.name || '';
+    bar.appendChild(label);
+    barsContainer.appendChild(bar);
   });
-  rangesByHotel.forEach((segments, hotelId) => {
-    if (!segments.length) return;
-    const sortedSegments = [...segments].sort((a, b) => {
-      if (a.weekIndex !== b.weekIndex) return a.weekIndex - b.weekIndex;
-      return a.startKey.localeCompare(b.startKey);
-    });
-    let remainingText = sortedSegments[0]?.name || '';
-    sortedSegments.forEach(({ startKey, endKey, weekIndex }) => {
-      if (!remainingText) return;
-      const rowWrap = container.querySelector(`.calendar-row-wrap[data-week-index="${weekIndex}"]`);
-      if (!rowWrap) return;
-      const row = rowWrap.querySelector('.calendar-row');
-      if (!row) return;
-      const labelContainer = rowWrap.querySelector('.calendar-row-labels');
-      if (!labelContainer) return;
-      setCalendarLabelMeasureFontFamily(getComputedStyle(labelContainer).fontFamily);
-      const startCell = row.querySelector(`.calendar-day[data-date-key="${startKey}"]`);
-      const endCell = row.querySelector(`.calendar-day[data-date-key="${endKey}"]`);
-      if (!startCell || !endCell) return;
-      const startBar = startCell.querySelector(`.calendar-bar-hotel[data-hotel-id="${hotelId}"]`);
-      const endBar = endCell.querySelector(`.calendar-bar-hotel[data-hotel-id="${hotelId}"]`);
-      if (!startBar || !endBar) return;
-      const dayKeys = getCalendarDateKeysInRange(startKey, endKey);
-      if (!dayKeys.length) return;
-      const startBarRect = startBar.getBoundingClientRect();
-      const rowRect = rowWrap.getBoundingClientRect();
-      const startCellRect = startCell.getBoundingClientRect();
-      const dayCellWidth = startCell.offsetWidth || startCellRect.width;
-      const startCellOffset = startCell.offsetLeft;
-      const endCellOffset = endCell.offsetLeft + endCell.offsetWidth;
-      const offsetWidth = endCellOffset - startCellOffset;
-      const fallbackWidth = Number.isFinite(dayCellWidth) && dayCellWidth > 0
-        ? dayCellWidth * dayKeys.length
-        : 0;
-      let segmentWidth = Number.isFinite(offsetWidth) && offsetWidth > 0
-        ? offsetWidth
-        : fallbackWidth;
-      const rowWidth = row.offsetWidth || rowRect.width;
-      if (!Number.isFinite(segmentWidth) || segmentWidth <= 0 || !Number.isFinite(rowWidth) || rowWidth <= 0) return;
-      const maxWidth = Math.max(0, rowWidth - startCellOffset);
-      segmentWidth = Math.min(segmentWidth, maxWidth);
-      if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
-      const fit = fitLabelToWidth(
-        remainingText,
-        segmentWidth,
-        CALENDAR_HOTEL_BAR_FONT_MIN,
-        CALENDAR_HOTEL_BAR_FONT_MAX
-      );
-      if (!fit.fittedText) return;
-      const label = document.createElement('div');
-      label.className = 'calendar-hotel-label';
-      label.dataset.hotelId = hotelId;
-      label.textContent = fit.fittedText;
-      const leftOffset = Number.isFinite(startCellOffset)
-        ? startCellOffset
-        : startCellRect.left - rowRect.left;
-      label.style.left = `${leftOffset}px`;
-      label.style.top = `${startBarRect.top - rowRect.top}px`;
-      label.style.height = `${startBarRect.height}px`;
-      label.style.width = `${segmentWidth}px`;
-      label.style.fontSize = `${fit.fontSizePx}px`;
-      labelContainer.appendChild(label);
-      remainingText = remainingText.slice(fit.nextStartIndex);
-    });
-  });
-  autoFitCalendarHotelLabels(container);
 }
 
 function getCalendarDisplayRange(year, month){
@@ -7546,7 +7410,6 @@ function renderCalendar(){
   const rangeEnd = new Date(`${displayRange.endKey}T00:00:00`);
   const showBarStyle = calendarPairingDisplayMode === 'bar';
   const pairingBarsByDate = showBarStyle ? buildCalendarPairingBarMap(displayRange) : new Map();
-  const hotelBarsByDate = buildCalendarHotelBarMap(displayRange);
   const hotelSelectionRange = calendarHotelSelecting ? getCalendarHotelSelectionRange() : null;
   const todayKey = buildCalendarDateKeyFromDate(new Date());
   gridEl.innerHTML = '';
@@ -7557,7 +7420,6 @@ function renderCalendar(){
     gridEl.appendChild(label);
   });
   let currentRow = null;
-  let currentLabelContainer = null;
   for (let current = new Date(rangeStart), dayIndex = 0; current <= rangeEnd; current.setDate(current.getDate() + 1), dayIndex++){
     if (dayIndex % 7 === 0){
       const weekIndex = Math.floor(dayIndex / 7);
@@ -7566,10 +7428,10 @@ function renderCalendar(){
       currentRowWrap.dataset.weekIndex = String(weekIndex);
       currentRow = document.createElement('div');
       currentRow.className = 'calendar-row';
-      currentLabelContainer = document.createElement('div');
-      currentLabelContainer.className = 'calendar-row-labels';
       currentRowWrap.appendChild(currentRow);
-      currentRowWrap.appendChild(currentLabelContainer);
+      const currentHotelBarContainer = document.createElement('div');
+      currentHotelBarContainer.className = 'calendar-row-hotel-bars';
+      currentRowWrap.appendChild(currentHotelBarContainer);
       gridEl.appendChild(currentRowWrap);
     }
     const dateKey = buildCalendarDateKeyFromDate(current);
@@ -7618,21 +7480,16 @@ function renderCalendar(){
     dayNumber.textContent = String(current.getDate());
     dayCell.appendChild(dayNumber);
     if (showBarStyle){
-      const hotelSegments = hotelBarsByDate.get(dateKey) || [];
       const pairingSegments = pairingBarsByDate.get(dateKey) || [];
-      if (hotelSegments.length || pairingSegments.length){
+      if (pairingSegments.length){
         const bars = document.createElement('div');
         bars.className = 'calendar-day-bars';
-        [...hotelSegments, ...pairingSegments].forEach((segment) => {
+        pairingSegments.forEach((segment) => {
           const bar = document.createElement('div');
           bar.className = `calendar-bar calendar-bar-${segment.type}`;
           if (segment.position) bar.classList.add(`is-${segment.position}`);
           if (segment.type === 'pairing'){
             bar.dataset.pairingId = segment.pairingId;
-          }
-          if (segment.type === 'hotel'){
-            bar.dataset.hotelId = segment.hotelId;
-            bar.textContent = '';
           }
           if (segment.label && segment.type !== 'hotel') bar.textContent = segment.label;
           bars.appendChild(bar);
@@ -7640,23 +7497,6 @@ function renderCalendar(){
         dayCell.appendChild(bars);
       }
     } else {
-      const hotelSegments = hotelBarsByDate.get(dateKey) || [];
-      if (hotelSegments.length){
-        const bars = document.createElement('div');
-        bars.className = 'calendar-day-bars';
-        hotelSegments.forEach((segment) => {
-          const bar = document.createElement('div');
-          bar.className = `calendar-bar calendar-bar-${segment.type}`;
-          if (segment.position) bar.classList.add(`is-${segment.position}`);
-          if (segment.type === 'hotel'){
-            bar.dataset.hotelId = segment.hotelId;
-            bar.textContent = '';
-          }
-          if (segment.label && segment.type !== 'hotel') bar.textContent = segment.label;
-          bars.appendChild(bar);
-        });
-        dayCell.appendChild(bars);
-      }
       if (dayEvents.length || dayData?.pairing?.pairingId){
         const wrapper = document.createElement('div');
         wrapper.className = 'calendar-event-item';
@@ -7709,7 +7549,7 @@ function renderCalendar(){
     currentRow.appendChild(dayCell);
   }
   requestAnimationFrame(() => {
-    renderCalendarHotelBarLabels(gridEl, displayRange);
+    renderCalendarHotelRowSegments(gridEl, displayRange);
   });
   refreshCalendarDetail();
   refreshCalendarPairingDetail();
