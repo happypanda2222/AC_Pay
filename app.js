@@ -8509,6 +8509,7 @@ function setCalendarPairingCancellationFromEvent(eventId, status){
   const selectedIndex = pairingEvents.findIndex(item => item.event?.id === eventId);
   if (selectedIndex < 0) return false;
   let updated = false;
+  let thgReset = false;
   for (let i = selectedIndex; i < pairingEvents.length; i += 1){
     const target = pairingEvents[i]?.event;
     if (!target) continue;
@@ -8517,7 +8518,17 @@ function setCalendarPairingCancellationFromEvent(eventId, status){
       updated = true;
     }
   }
-  if (updated){
+  if (status === 'CNX'){
+    pairingDays.forEach((dateKey) => {
+      const day = calendarState.eventsByDate?.[dateKey];
+      if (!day) return;
+      if (day.thgMinutes !== null){
+        day.thgMinutes = null;
+        thgReset = true;
+      }
+    });
+  }
+  if (updated || thgReset){
     updateCalendarPairingMetrics(calendarState.eventsByDate);
     saveCalendarState();
     renderCalendar();
