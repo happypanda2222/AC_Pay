@@ -468,15 +468,21 @@
       position:relative;
     }
     .calendar-row{
-      grid-column:1 / -1;
       display:grid;
       grid-template-columns:repeat(7,minmax(48px,1fr));
       gap:var(--calendar-gap);
+    }
+    .calendar-row-wrap{
+      grid-column:1 / -1;
       position:relative;
     }
     .calendar-row-labels{
       position:absolute;
-      inset:0;
+      top:0;
+      bottom:0;
+      left:0;
+      right:0;
+      width:100%;
       pointer-events:none;
       z-index:2;
     }

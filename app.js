@@ -7410,9 +7410,11 @@ function renderCalendarHotelBarLabels(container, range){
     let remainingText = sortedSegments[0]?.name || '';
     sortedSegments.forEach(({ startKey, endKey, weekIndex }) => {
       if (!remainingText) return;
-      const row = container.querySelector(`.calendar-row[data-week-index="${weekIndex}"]`);
+      const rowWrap = container.querySelector(`.calendar-row-wrap[data-week-index="${weekIndex}"]`);
+      if (!rowWrap) return;
+      const row = rowWrap.querySelector('.calendar-row');
       if (!row) return;
-      const labelContainer = row.querySelector('.calendar-row-labels');
+      const labelContainer = rowWrap.querySelector('.calendar-row-labels');
       if (!labelContainer) return;
       setCalendarLabelMeasureFontFamily(getComputedStyle(labelContainer).fontFamily);
       const startCell = row.querySelector(`.calendar-day[data-date-key="${startKey}"]`);
@@ -7424,7 +7426,7 @@ function renderCalendarHotelBarLabels(container, range){
       const dayKeys = getCalendarDateKeysInRange(startKey, endKey);
       if (!dayKeys.length) return;
       const startBarRect = startBar.getBoundingClientRect();
-      const rowRect = row.getBoundingClientRect();
+      const rowRect = rowWrap.getBoundingClientRect();
       const startCellRect = startCell.getBoundingClientRect();
       const dayCellWidth = startCell.offsetWidth || startCellRect.width;
       const startCellOffset = startCell.offsetLeft;
@@ -7433,9 +7435,13 @@ function renderCalendarHotelBarLabels(container, range){
       const fallbackWidth = Number.isFinite(dayCellWidth) && dayCellWidth > 0
         ? dayCellWidth * dayKeys.length
         : 0;
-      const segmentWidth = Number.isFinite(offsetWidth) && offsetWidth > 0
+      let segmentWidth = Number.isFinite(offsetWidth) && offsetWidth > 0
         ? offsetWidth
         : fallbackWidth;
+      const rowWidth = row.offsetWidth || rowRect.width;
+      if (!Number.isFinite(segmentWidth) || segmentWidth <= 0 || !Number.isFinite(rowWidth) || rowWidth <= 0) return;
+      const maxWidth = Math.max(0, rowWidth - startCellOffset);
+      segmentWidth = Math.min(segmentWidth, maxWidth);
       if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
       const fit = fitLabelToWidth(
         remainingText,
@@ -7555,13 +7561,16 @@ function renderCalendar(){
   for (let current = new Date(rangeStart), dayIndex = 0; current <= rangeEnd; current.setDate(current.getDate() + 1), dayIndex++){
     if (dayIndex % 7 === 0){
       const weekIndex = Math.floor(dayIndex / 7);
+      const currentRowWrap = document.createElement('div');
+      currentRowWrap.className = 'calendar-row-wrap';
+      currentRowWrap.dataset.weekIndex = String(weekIndex);
       currentRow = document.createElement('div');
       currentRow.className = 'calendar-row';
-      currentRow.dataset.weekIndex = String(weekIndex);
       currentLabelContainer = document.createElement('div');
       currentLabelContainer.className = 'calendar-row-labels';
-      currentRow.appendChild(currentLabelContainer);
-      gridEl.appendChild(currentRow);
+      currentRowWrap.appendChild(currentRow);
+      currentRowWrap.appendChild(currentLabelContainer);
+      gridEl.appendChild(currentRowWrap);
     }
     const dateKey = buildCalendarDateKeyFromDate(current);
     const dayData = calendarState.eventsByDate?.[dateKey];
