@@ -8941,7 +8941,12 @@ function initCalendar(){
         if (statusEl) statusEl.textContent = 'Event not found.';
         return;
       }
-      const status = entry.event?.cancellation;
+      let status = entry.event?.cancellation;
+      if (!status){
+        const activeButton = document.querySelector('[data-calendar-cancel].btn-primary');
+        const inferredStatus = activeButton?.getAttribute('data-calendar-cancel');
+        if (inferredStatus) status = inferredStatus;
+      }
       if (!status){
         if (statusEl) statusEl.textContent = 'Select a cancellation status first.';
         return;
