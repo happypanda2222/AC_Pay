@@ -467,10 +467,20 @@
       -webkit-overflow-scrolling:touch;
       position:relative;
     }
+    #modern-calendar .calendar-grid{
+      overflow-x:hidden;
+      max-width:100%;
+      width:100%;
+      margin:0 auto;
+      grid-template-columns:repeat(7,minmax(0,1fr));
+    }
     .calendar-row{
       display:grid;
       grid-template-columns:repeat(7,minmax(48px,1fr));
       gap:var(--calendar-gap);
+    }
+    #modern-calendar .calendar-row{
+      grid-template-columns:repeat(7,minmax(0,1fr));
     }
     .calendar-row-wrap{
       grid-column:1 / -1;
