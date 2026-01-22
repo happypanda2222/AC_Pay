@@ -496,7 +496,7 @@
       left:0;
       right:0;
       width:100%;
-      z-index:40;
+      z-index:50;
       pointer-events:none;
     }
     .calendar-weekday{
@@ -520,7 +520,6 @@
       flex-direction:column;
       gap:8px;
       position:relative;
-      z-index:0;
     }
     .calendar-day.is-block-selectable{
       cursor:pointer;
@@ -621,7 +620,6 @@
       gap:6px;
       margin-top:var(--calendar-hotel-slot-height);
       position:relative;
-      z-index:0;
     }
     .calendar-day-bars{
       display:flex;
@@ -633,7 +631,6 @@
       width:calc(100% + (var(--calendar-day-padding) * 2));
       overflow:visible;
       position:relative;
-      z-index:0;
     }
     .calendar-day-bars .calendar-bar:not(.calendar-row-hotel-segment){
       display:flex;
