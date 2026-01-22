@@ -4791,34 +4791,7 @@ function buildCalendarHotelRowSegments(range){
     const endKey = hotelRange.endKey > range.endKey ? range.endKey : hotelRange.endKey;
     const dateKeys = getCalendarDateKeysInRange(startKey, endKey);
     if (!dateKeys.length) return;
-    let currentWeekIndex = null;
-    let segmentStartKey = null;
-    dateKeys.forEach((dateKey, index) => {
-      const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
-      if (currentWeekIndex === null){
-        currentWeekIndex = weekIndex;
-        segmentStartKey = dateKey;
-      }
-      if (weekIndex !== currentWeekIndex){
-        const segmentEndKey = dateKeys[index - 1];
-        const isSingle = segmentStartKey === segmentEndKey;
-        const isRangeStart = segmentStartKey === startKey;
-        const isRangeEnd = segmentEndKey === endKey;
-        const position = isSingle ? 'single' : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
-        segments.push({
-          hotelId: hotel.id,
-          name: hotel.name,
-          startKey: segmentStartKey,
-          endKey: segmentEndKey,
-          weekIndex: currentWeekIndex,
-          position
-        });
-        currentWeekIndex = weekIndex;
-        segmentStartKey = dateKey;
-      }
-    });
-    if (segmentStartKey !== null){
-      const segmentEndKey = dateKeys[dateKeys.length - 1];
+    const pushSegment = (segmentStartKey, segmentEndKey, weekIndex) => {
       const isSingle = segmentStartKey === segmentEndKey;
       const isRangeStart = segmentStartKey === startKey;
       const isRangeEnd = segmentEndKey === endKey;
@@ -4828,10 +4801,23 @@ function buildCalendarHotelRowSegments(range){
         name: hotel.name,
         startKey: segmentStartKey,
         endKey: segmentEndKey,
-        weekIndex: currentWeekIndex,
+        weekIndex,
         position
       });
+    };
+    let currentWeekIndex = getCalendarWeekIndex(dateKeys[0], range.startKey);
+    let segmentStartKey = dateKeys[0];
+    for (let index = 1; index < dateKeys.length; index += 1){
+      const dateKey = dateKeys[index];
+      const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
+      if (weekIndex !== currentWeekIndex){
+        const segmentEndKey = dateKeys[index - 1];
+        pushSegment(segmentStartKey, segmentEndKey, currentWeekIndex);
+        currentWeekIndex = weekIndex;
+        segmentStartKey = dateKey;
+      }
     }
+    pushSegment(segmentStartKey, dateKeys[dateKeys.length - 1], currentWeekIndex);
   });
   return segments;
 }
@@ -7339,19 +7325,12 @@ function renderCalendarHotelRowSegments(container, range){
     const startCellRect = startCell.getBoundingClientRect();
     const endCellRect = endCell.getBoundingClientRect();
     const startCellStyle = getComputedStyle(startCell);
-    let leftOffset = 0;
-    let rightOffset = 0;
-    if (segment.startKey !== segment.endKey){
-      leftOffset = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
-      rightOffset = endCellRect.left + (endCellRect.width / 2) - rowRect.left;
-    } else {
-      const midpoint = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
-      const minWidth = startCellRect.width / 2;
-      leftOffset = midpoint - (minWidth / 2);
-      rightOffset = midpoint + (minWidth / 2);
-    }
+    const startMidpoint = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
+    const endMidpoint = endCellRect.left + (endCellRect.width / 2) - rowRect.left;
+    const leftOffset = Math.min(startMidpoint, endMidpoint);
+    const rightOffset = Math.max(startMidpoint, endMidpoint);
     const segmentWidth = rightOffset - leftOffset;
-    if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
+    if (!Number.isFinite(segmentWidth) || segmentWidth < 0) return;
     const dayNumber = startCell.querySelector('.calendar-day-number');
     const dayNumberRect = dayNumber ? dayNumber.getBoundingClientRect() : null;
     const gapValue = parseFloat(startCellStyle.rowGap || startCellStyle.gap || '0') || 0;
