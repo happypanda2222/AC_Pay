@@ -7422,20 +7422,20 @@ function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = n
 function fitCalendarHotelBarLabel(bar, label){
   if (!bar || !label) return;
   const labelStyle = getComputedStyle(label);
-  const barStyle = getComputedStyle(bar);
   const computedFontSize = parseFloat(labelStyle.fontSize);
-  const computedBarFontSize = parseFloat(barStyle.fontSize);
+  const fallbackFontSize = parseFloat(getComputedStyle(bar).fontSize);
   const baseFontSize = Number.isFinite(computedFontSize)
     ? computedFontSize
-    : (Number.isFinite(computedBarFontSize) ? computedBarFontSize : 10);
+    : (Number.isFinite(fallbackFontSize) ? fallbackFontSize : NaN);
+  if (!Number.isFinite(baseFontSize)) return;
   const minFontSize = Math.max(5, Math.floor(baseFontSize * 0.5));
   const applySizing = () => {
+    const barStyle = getComputedStyle(bar);
     label.style.fontSize = `${baseFontSize}px`;
     label.style.lineHeight = `${baseFontSize}px`;
     const paddingLeft = parseFloat(barStyle.paddingLeft) || 0;
     const paddingRight = parseFloat(barStyle.paddingRight) || 0;
-    const barWidth = bar.clientWidth;
-    const availableWidth = barWidth - paddingLeft - paddingRight;
+    const availableWidth = bar.clientWidth - (paddingLeft + paddingRight);
     if (!Number.isFinite(availableWidth) || availableWidth <= 0) return false;
     let fontSize = baseFontSize;
     while (label.scrollWidth > availableWidth && fontSize > minFontSize){
@@ -7682,6 +7682,9 @@ function renderCalendar(){
   requestAnimationFrame(() => {
     calendarState.hotelOffsetsByDate = buildCalendarHotelOffsetMap(gridEl);
     renderCalendarHotelRowSegments(gridEl, displayRange, calendarState.hotelOffsetsByDate);
+    requestAnimationFrame(() => {
+      renderCalendarHotelBarLabels(gridEl);
+    });
   });
   refreshCalendarDetail();
   refreshCalendarPairingDetail();
