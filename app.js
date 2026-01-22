@@ -7340,18 +7340,21 @@ function renderCalendarHotelRowSegments(container, range){
     const endCellRect = endCell.getBoundingClientRect();
     const startCellOffset = startCellRect.left - rowRect.left;
     const endCellOffset = endCellRect.right - rowRect.left;
+    const startCellStyle = getComputedStyle(startCell);
+    const endCellStyle = startCell === endCell ? startCellStyle : getComputedStyle(endCell);
+    const startPaddingLeft = parseFloat(startCellStyle.paddingLeft || '0') || 0;
+    const endPaddingRight = parseFloat(endCellStyle.paddingRight || '0') || 0;
     let leftOffset = startCellOffset;
     let rightOffset = endCellOffset;
     if (segment.startKey !== segment.endKey){
-      leftOffset = startCellOffset + (startCellRect.width / 2);
-      rightOffset = (endCellRect.left - rowRect.left) + (endCellRect.width / 2);
+      leftOffset += startPaddingLeft;
+      rightOffset -= endPaddingRight;
     }
     const segmentWidth = rightOffset - leftOffset;
     if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
     const dayNumber = startCell.querySelector('.calendar-day-number');
     const dayNumberRect = dayNumber ? dayNumber.getBoundingClientRect() : null;
-    const dayStyle = getComputedStyle(startCell);
-    const gapValue = parseFloat(dayStyle.rowGap || dayStyle.gap || '0') || 0;
+    const gapValue = parseFloat(startCellStyle.rowGap || startCellStyle.gap || '0') || 0;
     const topOffset = dayNumberRect
       ? dayNumberRect.bottom - rowRect.top + gapValue
       : startCell.getBoundingClientRect().top - rowRect.top + gapValue;
