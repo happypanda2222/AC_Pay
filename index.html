@@ -660,6 +660,23 @@
       text-align:center;
       justify-content:center;
     }
+    .calendar-hotel-segment{
+      display:flex;
+      align-items:center;
+      height:16px;
+      border-radius:999px;
+      padding:0 6px;
+      font-size:9px;
+      font-weight:800;
+      letter-spacing:.2px;
+      overflow:hidden;
+      white-space:nowrap;
+      text-overflow:ellipsis;
+      background:#9ca3af;
+      color:#0b0f1a;
+      text-align:center;
+      justify-content:center;
+    }
     .calendar-hotel-label{
       display:block;
       width:100%;
@@ -697,18 +714,17 @@
       text-overflow:ellipsis;
       white-space:nowrap;
       pointer-events:auto;
-      width:auto;
       z-index:6;
     }
-    .calendar-row-hotel-segment.is-start{
+    .calendar-hotel-segment.is-start{
       border-top-right-radius:0;
       border-bottom-right-radius:0;
     }
-    .calendar-row-hotel-segment.is-end{
+    .calendar-hotel-segment.is-end{
       border-top-left-radius:0;
       border-bottom-left-radius:0;
     }
-    .calendar-row-hotel-segment.is-middle{
+    .calendar-hotel-segment.is-middle{
       border-radius:0;
     }
     .calendar-hotel-list{

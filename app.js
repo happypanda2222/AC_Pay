@@ -7357,12 +7357,12 @@ function renderCalendarHotelRowSegments(container, range){
     const startMidpoint = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
     const endMidpoint = endCellRect.left + (endCellRect.width / 2) - rowRect.left;
     const isSingle = segment.startKey === segment.endKey;
-    const halfWidth = isSingle ? (startCellRect.width * 0.3) : 0;
+    const midpointBuffer = isSingle ? (startCellRect.width * 0.3) : 0;
     const leftOffset = isSingle
-      ? startMidpoint - halfWidth
+      ? startMidpoint - midpointBuffer
       : Math.min(startMidpoint, endMidpoint);
     const rightOffset = isSingle
-      ? startMidpoint + halfWidth
+      ? startMidpoint + midpointBuffer
       : Math.max(startMidpoint, endMidpoint);
     const segmentWidth = rightOffset - leftOffset;
     if (!Number.isFinite(segmentWidth) || segmentWidth < 0) return;
@@ -7373,7 +7373,7 @@ function renderCalendarHotelRowSegments(container, range){
       ? dayNumberRect.bottom - rowRect.top + gapValue
       : startCell.getBoundingClientRect().top - rowRect.top + gapValue;
     const bar = document.createElement('div');
-    bar.className = 'calendar-bar calendar-bar-hotel calendar-row-hotel-segment';
+    bar.className = 'calendar-hotel-segment calendar-row-hotel-segment';
     if (segment.position) bar.classList.add(`is-${segment.position}`);
     bar.dataset.hotelId = segment.hotelId;
     bar.style.left = `${leftOffset}px`;
@@ -8858,8 +8858,10 @@ function initCalendar(){
         return;
       }
       const bar = target instanceof Element ? target.closest('.calendar-bar') : null;
-      if (bar?.dataset?.hotelId){
-        const hotelId = bar.dataset.hotelId;
+      const hotelBar = target instanceof Element ? target.closest('.calendar-hotel-segment') : null;
+      const hotelTarget = hotelBar || bar;
+      if (hotelTarget?.dataset?.hotelId){
+        const hotelId = hotelTarget.dataset.hotelId;
         const hotelName = (calendarState.hotels || []).find((hotel) => hotel?.id === hotelId)?.name;
         const shouldDelete = window.confirm(`Delete hotel${hotelName ? ` "${hotelName}"` : ''}?`);
         if (shouldDelete){
