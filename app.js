@@ -7349,14 +7349,8 @@ function renderCalendarHotelRowSegments(container, range){
     const startCellStyle = getComputedStyle(startCell);
     const startMidpoint = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
     const endMidpoint = endCellRect.left + (endCellRect.width / 2) - rowRect.left;
-    const isSingle = segment.startKey === segment.endKey;
-    const midpointBuffer = isSingle ? (startCellRect.width * 0.3) : 0;
-    const leftOffset = isSingle
-      ? startMidpoint - midpointBuffer
-      : Math.min(startMidpoint, endMidpoint);
-    const rightOffset = isSingle
-      ? startMidpoint + midpointBuffer
-      : Math.max(startMidpoint, endMidpoint);
+    const leftOffset = Math.min(startMidpoint, endMidpoint);
+    const rightOffset = Math.max(startMidpoint, endMidpoint);
     const segmentWidth = rightOffset - leftOffset;
     if (!Number.isFinite(segmentWidth) || segmentWidth < 0) return;
     const dayNumber = startCell.querySelector('.calendar-day-number');
