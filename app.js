@@ -4813,13 +4813,19 @@ function buildCalendarHotelRowSegments(range){
       const isRangeEnd = segmentEndKey === endKey;
       const position = isSingle ? 'single' : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
       const { rowStartKey, rowEndKey } = getRowBoundaryKeys(weekIndex);
+      const clampedMidpointStartKey = spansMultipleRows
+        ? (segmentStartKey > rowStartKey ? segmentStartKey : rowStartKey)
+        : segmentStartKey;
+      const clampedMidpointEndKey = spansMultipleRows
+        ? (segmentEndKey < rowEndKey ? segmentEndKey : rowEndKey)
+        : segmentEndKey;
       segments.push({
         hotelId: hotel.id,
         name: hotel.name,
         startKey: segmentStartKey,
         endKey: segmentEndKey,
-        midpointStartKey: spansMultipleRows ? rowStartKey : segmentStartKey,
-        midpointEndKey: spansMultipleRows ? rowEndKey : segmentEndKey,
+        midpointStartKey: clampedMidpointStartKey,
+        midpointEndKey: clampedMidpointEndKey,
         weekIndex,
         position
       });
