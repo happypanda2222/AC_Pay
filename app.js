@@ -7372,7 +7372,13 @@ function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = n
     const dayCellRect = startCell.getBoundingClientRect();
     const startMidpoint = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
     const endMidpoint = endCellRect.left + (endCellRect.width / 2) - rowRect.left;
-    const leftOffset = Math.min(startMidpoint, endMidpoint);
+    const firstDayCell = row.querySelector('.calendar-day');
+    const isRowStartContinuation = segment.position !== 'start'
+      && segment.position !== 'single'
+      && firstDayCell === startCell;
+    const leftOffset = isRowStartContinuation
+      ? (startCellRect.left - rowRect.left)
+      : Math.min(startMidpoint, endMidpoint);
     let rightOffset = Math.max(startMidpoint, endMidpoint);
     if (segment.lineBreakEnd){
       const endEdgeOffset = endCellRect.right - rowRect.left;
