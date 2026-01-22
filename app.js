@@ -7371,7 +7371,28 @@ function renderCalendarHotelRowSegments(container, range){
     label.textContent = segment.name || '';
     bar.appendChild(label);
     barsContainer.appendChild(bar);
+    fitCalendarHotelBarLabel(bar, label);
   });
+}
+
+function fitCalendarHotelBarLabel(bar, label){
+  if (!bar || !label) return;
+  const barWidth = bar.clientWidth;
+  if (!Number.isFinite(barWidth) || barWidth <= 0) return;
+  const barStyle = getComputedStyle(bar);
+  const paddingLeft = parseFloat(barStyle.paddingLeft) || 0;
+  const paddingRight = parseFloat(barStyle.paddingRight) || 0;
+  const availableWidth = Math.max(0, barWidth - paddingLeft - paddingRight);
+  if (!availableWidth) return;
+  const labelStyle = getComputedStyle(label);
+  const minFontSize = 8;
+  let fontSize = parseFloat(labelStyle.fontSize) || 9;
+  let guard = 0;
+  while (label.scrollWidth > availableWidth && fontSize > minFontSize && guard < 20){
+    fontSize = Math.max(minFontSize, fontSize - 0.5);
+    label.style.fontSize = `${fontSize}px`;
+    guard += 1;
+  }
 }
 
 function getCalendarDisplayRange(year, month){
