@@ -8931,38 +8931,24 @@ function initCalendar(){
       }
     });
   }
-  const syncNowButton = document.getElementById('modern-calendar-sync-now');
-  if (syncNowButton){
-    syncNowButton.addEventListener('click', async () => {
-      syncNowButton.disabled = true;
-      setCalendarStatus('Syncing to cloud…');
+  const syncButton = document.getElementById('modern-calendar-sync');
+  if (syncButton){
+    syncButton.addEventListener('click', async () => {
+      syncButton.disabled = true;
+      setCalendarStatus('Syncing…');
       try {
         const result = await syncCalendarToCloud();
         if (result?.queued){
           setCalendarStatus('Offline. Sync queued.');
-        } else {
-          setCalendarStatus('Synced to cloud.');
+          return;
         }
+        const pullResult = await loadCalendarFromCloud();
+        renderCalendar();
+        setCalendarStatus(pullResult?.statusMessage || 'Synced.');
       } catch (err){
         setCalendarStatus(`Sync error: ${err?.message || 'Sync failed.'}`);
       } finally {
-        syncNowButton.disabled = false;
-      }
-    });
-  }
-  const pullButton = document.getElementById('modern-calendar-pull');
-  if (pullButton){
-    pullButton.addEventListener('click', async () => {
-      pullButton.disabled = true;
-      setCalendarStatus('Pulling from cloud…');
-      try {
-        const result = await loadCalendarFromCloud();
-        renderCalendar();
-        setCalendarStatus(result?.statusMessage || 'Pulled from cloud.');
-      } catch (err){
-        setCalendarStatus(`Sync error: ${err?.message || 'Pull failed.'}`);
-      } finally {
-        pullButton.disabled = false;
+        syncButton.disabled = false;
       }
     });
   }
