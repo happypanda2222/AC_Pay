@@ -7385,13 +7385,13 @@ function renderCalendarHotelRowSegments(container, range){
 
 function fitCalendarHotelBarLabel(bar, label){
   if (!bar || !label) return;
-  label.style.fontSize = '';
-  label.style.lineHeight = '';
+  const baseFontSize = 10;
+  label.style.fontSize = `${baseFontSize}px`;
+  label.style.lineHeight = `${baseFontSize}px`;
   const barWidth = bar.clientWidth;
   if (!Number.isFinite(barWidth) || barWidth <= 0) return;
-  const labelStyle = getComputedStyle(label);
   const minFontSize = 8;
-  let fontSize = parseFloat(labelStyle.fontSize) || 9;
+  let fontSize = baseFontSize;
   let guard = 0;
   const maxSteps = 8;
   while (label.scrollWidth > barWidth && fontSize > minFontSize && guard < maxSteps){
