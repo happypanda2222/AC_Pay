@@ -4795,7 +4795,7 @@ function buildCalendarHotelRowSegments(range){
     const dateKeys = getCalendarDateKeysInRange(visibleStartKey, visibleEndKey);
     if (!dateKeys.length) return;
     const hotelSegments = [];
-    const pushSegment = (segmentStartKey, segmentEndKey, weekIndex, lineBreakEnd = false) => {
+    const pushSegment = (segmentStartKey, segmentEndKey, weekIndex, lineBreakEnd = false, lineBreakStart = false) => {
       const isRangeStart = segmentStartKey === fullRangeStartKey;
       const isRangeEnd = segmentEndKey === fullRangeEndKey;
       const position = isRangeStart && isRangeEnd
@@ -4810,24 +4810,27 @@ function buildCalendarHotelRowSegments(range){
         midpointEndKey: segmentEndKey,
         weekIndex,
         position,
-        lineBreakEnd
+        lineBreakEnd,
+        lineBreakStart: lineBreakStart && !isRangeStart
       };
       segments.push(segment);
       hotelSegments.push(segment);
     };
     let currentWeekIndex = getCalendarWeekIndex(dateKeys[0], range.startKey);
     let segmentStartKey = dateKeys[0];
+    let segmentLineBreakStart = false;
     for (let index = 1; index < dateKeys.length; index += 1){
       const dateKey = dateKeys[index];
       const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
       if (weekIndex !== currentWeekIndex){
         const segmentEndKey = dateKeys[index - 1];
-        pushSegment(segmentStartKey, segmentEndKey, currentWeekIndex, true);
+        pushSegment(segmentStartKey, segmentEndKey, currentWeekIndex, true, segmentLineBreakStart);
         currentWeekIndex = weekIndex;
         segmentStartKey = dateKey;
+        segmentLineBreakStart = true;
       }
     }
-    pushSegment(segmentStartKey, dateKeys[dateKeys.length - 1], currentWeekIndex);
+    pushSegment(segmentStartKey, dateKeys[dateKeys.length - 1], currentWeekIndex, false, segmentLineBreakStart);
     console.debug('[calendar] hotel row segments', {
       hotelId: hotel.id,
       rangeStartKey: fullRangeStartKey,
@@ -7376,9 +7379,15 @@ function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = n
     const isRowStartContinuation = segment.position !== 'start'
       && segment.position !== 'single'
       && firstDayCell === startCell;
-    const leftOffset = isRowStartContinuation
+    let leftOffset = isRowStartContinuation
       ? (startCellRect.left - rowRect.left)
       : Math.min(startMidpoint, endMidpoint);
+    if (segment.lineBreakStart){
+      const startEdgeOffset = startCellRect.left - rowRect.left;
+      if (Number.isFinite(startEdgeOffset) && startEdgeOffset < leftOffset){
+        leftOffset = startEdgeOffset;
+      }
+    }
     let rightOffset = Math.max(startMidpoint, endMidpoint);
     if (segment.lineBreakEnd){
       const endEdgeOffset = endCellRect.right - rowRect.left;
