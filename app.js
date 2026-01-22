@@ -7164,7 +7164,7 @@ function advanceCalendarMonth(direction){
   if (monthSelect){
     monthSelect.value = nextMonth;
   }
-  saveCalendarState();
+  saveCalendarState({ bumpUpdatedAt: false });
   renderCalendar();
   return true;
 }
