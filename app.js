@@ -4783,8 +4783,6 @@ function buildCalendarPairingBarMap(range){
 function buildCalendarHotelRowSegments(range){
   const segments = [];
   if (!range) return segments;
-  const rangeStartMs = getDateKeyStartMs(range.startKey);
-  const rangeEndMs = getDateKeyStartMs(range.endKey);
   (calendarState.hotels || []).forEach((hotel) => {
     const hotelRange = getCalendarHotelRange(hotel);
     if (!hotelRange) return;
@@ -4795,37 +4793,18 @@ function buildCalendarHotelRowSegments(range){
     if (!dateKeys.length) return;
     const startWeekIndex = getCalendarWeekIndex(startKey, range.startKey);
     const endWeekIndex = getCalendarWeekIndex(endKey, range.startKey);
-    const spansMultipleRows = startWeekIndex !== endWeekIndex;
-    const getRowBoundaryKeys = (weekIndex) => {
-      if (!Number.isFinite(rangeStartMs)) return { rowStartKey: startKey, rowEndKey: endKey };
-      const rowStartMs = rangeStartMs + (weekIndex * 7 * 86400000);
-      const rowEndMs = Number.isFinite(rangeEndMs)
-        ? Math.min(rangeEndMs, rowStartMs + (6 * 86400000))
-        : rowStartMs + (6 * 86400000);
-      return {
-        rowStartKey: buildCalendarDateKeyFromDate(new Date(rowStartMs)),
-        rowEndKey: buildCalendarDateKeyFromDate(new Date(rowEndMs))
-      };
-    };
     const pushSegment = (segmentStartKey, segmentEndKey, weekIndex) => {
       const isSingle = segmentStartKey === segmentEndKey;
       const isRangeStart = segmentStartKey === startKey;
       const isRangeEnd = segmentEndKey === endKey;
       const position = isSingle ? 'single' : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
-      const { rowStartKey, rowEndKey } = getRowBoundaryKeys(weekIndex);
-      const clampedMidpointStartKey = spansMultipleRows
-        ? (segmentStartKey > rowStartKey ? segmentStartKey : rowStartKey)
-        : segmentStartKey;
-      const clampedMidpointEndKey = spansMultipleRows
-        ? (segmentEndKey < rowEndKey ? segmentEndKey : rowEndKey)
-        : segmentEndKey;
       segments.push({
         hotelId: hotel.id,
         name: hotel.name,
         startKey: segmentStartKey,
         endKey: segmentEndKey,
-        midpointStartKey: clampedMidpointStartKey,
-        midpointEndKey: clampedMidpointEndKey,
+        midpointStartKey: segmentStartKey,
+        midpointEndKey: segmentEndKey,
         weekIndex,
         position
       });
