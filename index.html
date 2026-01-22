@@ -1159,7 +1159,8 @@
       .calendar-event{font-size:10px;padding:5px 6px}
       .calendar-event-meta{font-size:9px}
       .calendar-month-actions{flex-direction:column;align-items:stretch}
-      .calendar-sync-actions{flex-direction:row;align-items:center;gap:6px}
+      .calendar-sync-actions{flex-direction:column;align-items:stretch;gap:6px}
+      .calendar-sync-actions .btn{width:100%}
       .calendar-parse{justify-self:stretch}
       .calendar-grid,
       .calendar-row,
@@ -1851,7 +1852,7 @@
                 </div>
               </div>
               <div class="calendar-sync-actions">
-                <button id="modern-calendar-sync" class="btn" type="button">Sync</button>
+                <button id="modern-calendar-sync" class="btn btn-primary" type="button">Sync</button>
               </div>
               <div class="calendar-delete-actions">
                 <button id="modern-calendar-block-month" class="btn btn-secondary" type="button">Config Block Month</button>
