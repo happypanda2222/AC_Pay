@@ -7428,7 +7428,7 @@ function fitCalendarHotelBarLabel(bar, label){
     ? computedFontSize
     : (Number.isFinite(fallbackFontSize) ? fallbackFontSize : NaN);
   if (!Number.isFinite(baseFontSize)) return;
-  const minFontSize = Math.max(6, Math.floor(baseFontSize * 0.5));
+  const minFontSize = Math.max(7, Math.floor(baseFontSize * 0.5));
   const applySizing = () => {
     const barStyle = getComputedStyle(bar);
     label.style.fontSize = `${baseFontSize}px`;
