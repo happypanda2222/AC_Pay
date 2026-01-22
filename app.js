@@ -4783,6 +4783,8 @@ function buildCalendarPairingBarMap(range){
 function buildCalendarHotelRowSegments(range){
   const segments = [];
   if (!range) return segments;
+  const rangeStartMs = getDateKeyStartMs(range.startKey);
+  const rangeEndMs = getDateKeyStartMs(range.endKey);
   (calendarState.hotels || []).forEach((hotel) => {
     const hotelRange = getCalendarHotelRange(hotel);
     if (!hotelRange) return;
@@ -4791,16 +4793,33 @@ function buildCalendarHotelRowSegments(range){
     const endKey = hotelRange.endKey > range.endKey ? range.endKey : hotelRange.endKey;
     const dateKeys = getCalendarDateKeysInRange(startKey, endKey);
     if (!dateKeys.length) return;
+    const startWeekIndex = getCalendarWeekIndex(startKey, range.startKey);
+    const endWeekIndex = getCalendarWeekIndex(endKey, range.startKey);
+    const spansMultipleRows = startWeekIndex !== endWeekIndex;
+    const getRowBoundaryKeys = (weekIndex) => {
+      if (!Number.isFinite(rangeStartMs)) return { rowStartKey: startKey, rowEndKey: endKey };
+      const rowStartMs = rangeStartMs + (weekIndex * 7 * 86400000);
+      const rowEndMs = Number.isFinite(rangeEndMs)
+        ? Math.min(rangeEndMs, rowStartMs + (6 * 86400000))
+        : rowStartMs + (6 * 86400000);
+      return {
+        rowStartKey: buildCalendarDateKeyFromDate(new Date(rowStartMs)),
+        rowEndKey: buildCalendarDateKeyFromDate(new Date(rowEndMs))
+      };
+    };
     const pushSegment = (segmentStartKey, segmentEndKey, weekIndex) => {
       const isSingle = segmentStartKey === segmentEndKey;
       const isRangeStart = segmentStartKey === startKey;
       const isRangeEnd = segmentEndKey === endKey;
       const position = isSingle ? 'single' : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
+      const { rowStartKey, rowEndKey } = getRowBoundaryKeys(weekIndex);
       segments.push({
         hotelId: hotel.id,
         name: hotel.name,
         startKey: segmentStartKey,
         endKey: segmentEndKey,
+        midpointStartKey: spansMultipleRows ? rowStartKey : segmentStartKey,
+        midpointEndKey: spansMultipleRows ? rowEndKey : segmentEndKey,
         weekIndex,
         position
       });
@@ -7318,17 +7337,27 @@ function renderCalendarHotelRowSegments(container, range){
     if (!row) return;
     const barsContainer = rowWrap.querySelector('.calendar-row-hotel-bars');
     if (!barsContainer) return;
+    const midpointStartKey = segment.midpointStartKey || segment.startKey;
+    const midpointEndKey = segment.midpointEndKey || segment.endKey;
     const startCell = row.querySelector(`.calendar-day[data-date-key="${segment.startKey}"]`);
     const endCell = row.querySelector(`.calendar-day[data-date-key="${segment.endKey}"]`);
-    if (!startCell || !endCell) return;
+    const midpointStartCell = row.querySelector(`.calendar-day[data-date-key="${midpointStartKey}"]`) || startCell;
+    const midpointEndCell = row.querySelector(`.calendar-day[data-date-key="${midpointEndKey}"]`) || endCell;
+    if (!startCell || !endCell || !midpointStartCell || !midpointEndCell) return;
     const rowRect = rowWrap.getBoundingClientRect();
-    const startCellRect = startCell.getBoundingClientRect();
-    const endCellRect = endCell.getBoundingClientRect();
+    const startCellRect = midpointStartCell.getBoundingClientRect();
+    const endCellRect = midpointEndCell.getBoundingClientRect();
     const startCellStyle = getComputedStyle(startCell);
     const startMidpoint = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
     const endMidpoint = endCellRect.left + (endCellRect.width / 2) - rowRect.left;
-    const leftOffset = Math.min(startMidpoint, endMidpoint);
-    const rightOffset = Math.max(startMidpoint, endMidpoint);
+    const isSingle = segment.startKey === segment.endKey;
+    const halfWidth = isSingle ? (startCellRect.width * 0.3) : 0;
+    const leftOffset = isSingle
+      ? startMidpoint - halfWidth
+      : Math.min(startMidpoint, endMidpoint);
+    const rightOffset = isSingle
+      ? startMidpoint + halfWidth
+      : Math.max(startMidpoint, endMidpoint);
     const segmentWidth = rightOffset - leftOffset;
     if (!Number.isFinite(segmentWidth) || segmentWidth < 0) return;
     const dayNumber = startCell.querySelector('.calendar-day-number');
