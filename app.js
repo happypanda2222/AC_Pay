@@ -4795,7 +4795,7 @@ function buildCalendarHotelRowSegments(range){
     const dateKeys = getCalendarDateKeysInRange(visibleStartKey, visibleEndKey);
     if (!dateKeys.length) return;
     const hotelSegments = [];
-    const pushSegment = (segmentStartKey, segmentEndKey, weekIndex) => {
+    const pushSegment = (segmentStartKey, segmentEndKey, weekIndex, lineBreakEnd = false) => {
       const isRangeStart = segmentStartKey === fullRangeStartKey;
       const isRangeEnd = segmentEndKey === fullRangeEndKey;
       const position = isRangeStart && isRangeEnd
@@ -4809,7 +4809,8 @@ function buildCalendarHotelRowSegments(range){
         midpointStartKey: segmentStartKey,
         midpointEndKey: segmentEndKey,
         weekIndex,
-        position
+        position,
+        lineBreakEnd
       };
       segments.push(segment);
       hotelSegments.push(segment);
@@ -4821,7 +4822,7 @@ function buildCalendarHotelRowSegments(range){
       const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
       if (weekIndex !== currentWeekIndex){
         const segmentEndKey = dateKeys[index - 1];
-        pushSegment(segmentStartKey, segmentEndKey, currentWeekIndex);
+        pushSegment(segmentStartKey, segmentEndKey, currentWeekIndex, true);
         currentWeekIndex = weekIndex;
         segmentStartKey = dateKey;
       }
@@ -7372,7 +7373,13 @@ function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = n
     const startMidpoint = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
     const endMidpoint = endCellRect.left + (endCellRect.width / 2) - rowRect.left;
     const leftOffset = Math.min(startMidpoint, endMidpoint);
-    const rightOffset = Math.max(startMidpoint, endMidpoint);
+    let rightOffset = Math.max(startMidpoint, endMidpoint);
+    if (segment.lineBreakEnd){
+      const endEdgeOffset = endCellRect.right - rowRect.left;
+      if (Number.isFinite(endEdgeOffset) && endEdgeOffset > rightOffset){
+        rightOffset = endEdgeOffset;
+      }
+    }
     const segmentWidth = rightOffset - leftOffset;
     if (!Number.isFinite(segmentWidth) || segmentWidth < 0) return;
     const startCellStyle = getComputedStyle(startCell);
