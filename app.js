@@ -8937,12 +8937,12 @@ function initCalendar(){
       syncButton.disabled = true;
       setCalendarStatus('Syncing…');
       try {
-        const result = await syncCalendarToCloud();
-        if (result?.queued){
+        if (navigator?.onLine === false){
+          queueCalendarSyncRetry();
           setCalendarStatus('Offline. Sync queued.');
           return;
         }
-        const pullResult = await loadCalendarFromCloud();
+        const pullResult = await loadCalendarFromCloud({ skipConfirm: true });
         renderCalendar();
         setCalendarStatus(pullResult?.statusMessage || 'Synced.');
       } catch (err){
