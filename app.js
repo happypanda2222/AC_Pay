@@ -4787,18 +4787,19 @@ function buildCalendarHotelRowSegments(range){
     const hotelRange = getCalendarHotelRange(hotel);
     if (!hotelRange) return;
     if (hotelRange.endKey < range.startKey || hotelRange.startKey > range.endKey) return;
-    const startKey = hotelRange.startKey < range.startKey ? range.startKey : hotelRange.startKey;
-    const endKey = hotelRange.endKey > range.endKey ? range.endKey : hotelRange.endKey;
-    const dateKeys = getCalendarDateKeysInRange(startKey, endKey);
+    const fullRangeStartKey = hotelRange.startKey;
+    const fullRangeEndKey = hotelRange.endKey;
+    const visibleStartKey = fullRangeStartKey < range.startKey ? range.startKey : fullRangeStartKey;
+    const visibleEndKey = fullRangeEndKey > range.endKey ? range.endKey : fullRangeEndKey;
+    const dateKeys = getCalendarDateKeysInRange(visibleStartKey, visibleEndKey);
     if (!dateKeys.length) return;
-    const startWeekIndex = getCalendarWeekIndex(startKey, range.startKey);
-    const endWeekIndex = getCalendarWeekIndex(endKey, range.startKey);
+    const hotelSegments = [];
     const pushSegment = (segmentStartKey, segmentEndKey, weekIndex) => {
       const isSingle = segmentStartKey === segmentEndKey;
-      const isRangeStart = segmentStartKey === startKey;
-      const isRangeEnd = segmentEndKey === endKey;
+      const isRangeStart = segmentStartKey === fullRangeStartKey;
+      const isRangeEnd = segmentEndKey === fullRangeEndKey;
       const position = isSingle ? 'single' : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
-      segments.push({
+      const segment = {
         hotelId: hotel.id,
         name: hotel.name,
         startKey: segmentStartKey,
@@ -4807,7 +4808,9 @@ function buildCalendarHotelRowSegments(range){
         midpointEndKey: segmentEndKey,
         weekIndex,
         position
-      });
+      };
+      segments.push(segment);
+      hotelSegments.push(segment);
     };
     let currentWeekIndex = getCalendarWeekIndex(dateKeys[0], range.startKey);
     let segmentStartKey = dateKeys[0];
@@ -4822,6 +4825,17 @@ function buildCalendarHotelRowSegments(range){
       }
     }
     pushSegment(segmentStartKey, dateKeys[dateKeys.length - 1], currentWeekIndex);
+    console.debug('[calendar] hotel row segments', {
+      hotelId: hotel.id,
+      rangeStartKey: fullRangeStartKey,
+      rangeEndKey: fullRangeEndKey,
+      segments: hotelSegments.map(({ startKey, endKey, position, weekIndex }) => ({
+        startKey,
+        endKey,
+        position,
+        weekIndex
+      }))
+    });
   });
   return segments;
 }
