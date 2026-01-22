@@ -7325,7 +7325,27 @@ function updateCalendarTotals(year, month){
   if (tafbEl) tafbEl.textContent = formatDurationMinutes(dutyMinutes);
 }
 
-function renderCalendarHotelRowSegments(container, range){
+function buildCalendarHotelOffsetMap(container){
+  const offsets = new Map();
+  if (!container) return offsets;
+  const gap = 4;
+  container.querySelectorAll('.calendar-day.has-hotel').forEach((dayCell) => {
+    const dateKey = dayCell.dataset.dateKey;
+    if (!dateKey) return;
+    const dayNumber = dayCell.querySelector('.calendar-day-number');
+    const rowWrap = dayCell.closest('.calendar-row-wrap');
+    if (!dayNumber || !rowWrap) return;
+    const rowRect = rowWrap.getBoundingClientRect();
+    const dayNumberRect = dayNumber.getBoundingClientRect();
+    const topOffset = dayNumberRect.bottom + gap - rowRect.top;
+    if (Number.isFinite(topOffset)){
+      offsets.set(dateKey, topOffset);
+    }
+  });
+  return offsets;
+}
+
+function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = new Map()){
   if (!container) return;
   container.querySelectorAll('.calendar-row-hotel-segment').forEach((segment) => segment.remove());
   const rowSegments = buildCalendarHotelRowSegments(range);
@@ -7364,7 +7384,22 @@ function renderCalendarHotelRowSegments(container, range){
     const normalizedSlotHeight = Number.isFinite(slotHeight) ? slotHeight : dayCellRect.height * targetRatio;
     const normalizedBarHeight = Number.isFinite(barHeight) ? barHeight : 16;
     const slotOffset = Math.max(0, (normalizedSlotHeight - normalizedBarHeight) / 2);
-    const topOffset = dayCellRect.top + normalizedDayPadding + slotOffset - rowRect.top;
+    let topOffset = dayCellRect.top + normalizedDayPadding + slotOffset - rowRect.top;
+    if (hotelOffsetsByDate instanceof Map && hotelOffsetsByDate.size){
+      let targetOffsetKey = null;
+      if (hotelOffsetsByDate.has(segment.startKey)){
+        targetOffsetKey = segment.startKey;
+      } else {
+        const coveredKeys = getCalendarDateKeysInRange(segment.startKey, segment.endKey);
+        targetOffsetKey = coveredKeys.find(dateKey => hotelOffsetsByDate.has(dateKey)) || null;
+      }
+      if (targetOffsetKey){
+        const mappedOffset = hotelOffsetsByDate.get(targetOffsetKey);
+        if (Number.isFinite(mappedOffset)){
+          topOffset = mappedOffset;
+        }
+      }
+    }
     const bar = document.createElement('div');
     bar.className = 'calendar-hotel-segment calendar-row-hotel-segment';
     if (segment.position === 'start') bar.classList.add('is-start');
@@ -7620,7 +7655,8 @@ function renderCalendar(){
     currentRow.appendChild(dayCell);
   }
   requestAnimationFrame(() => {
-    renderCalendarHotelRowSegments(gridEl, displayRange);
+    calendarState.hotelOffsetsByDate = buildCalendarHotelOffsetMap(gridEl);
+    renderCalendarHotelRowSegments(gridEl, displayRange, calendarState.hotelOffsetsByDate);
   });
   refreshCalendarDetail();
   refreshCalendarPairingDetail();
