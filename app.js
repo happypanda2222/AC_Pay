@@ -7357,9 +7357,13 @@ function renderCalendarHotelRowSegments(container, range){
     const dayNumber = startCell.querySelector('.calendar-day-number');
     const dayNumberRect = dayNumber ? dayNumber.getBoundingClientRect() : null;
     const gapValue = parseFloat(startCellStyle.rowGap || startCellStyle.gap || '0') || 0;
-    const topOffset = dayNumberRect
-      ? dayNumberRect.bottom - rowRect.top + gapValue
-      : startCell.getBoundingClientRect().top - rowRect.top + gapValue;
+    const slotHeight = parseFloat(startCellStyle.getPropertyValue('--calendar-hotel-slot-height')) || 0;
+    const barHeight = parseFloat(startCellStyle.getPropertyValue('--calendar-hotel-bar-height')) || 16;
+    const slotOffset = Math.max(0, slotHeight - barHeight) / 2;
+    const baseTop = dayNumberRect
+      ? dayNumberRect.bottom - rowRect.top
+      : startCell.getBoundingClientRect().top - rowRect.top;
+    const topOffset = baseTop + gapValue + slotOffset;
     const bar = document.createElement('div');
     bar.className = 'calendar-hotel-segment calendar-row-hotel-segment';
     if (segment.position === 'start') bar.classList.add('is-start');
