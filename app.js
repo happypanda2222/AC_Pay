@@ -4370,6 +4370,7 @@ let calendarDayDetailDateKey = null;
 let calendarCreditDetailOpen = false;
 let calendarBlockGrowthDetailOpen = false;
 let calendarTafbDetailOpen = false;
+let calendarSwipeIgnoreClickUntil = 0;
 let calendarBlockMonthSelecting = false;
 let calendarBlockMonthDraft = null;
 let calendarHotelSelecting = false;
@@ -7115,6 +7116,21 @@ function ensureCalendarSelection(){
   }
 }
 
+function advanceCalendarMonth(direction){
+  const months = getCalendarMonthCandidates();
+  if (!months.length) return false;
+  ensureCalendarSelection();
+  const current = calendarState.selectedMonth;
+  const currentIndex = months.indexOf(current);
+  if (currentIndex < 0) return false;
+  const nextIndex = currentIndex + direction;
+  if (nextIndex < 0 || nextIndex >= months.length) return false;
+  calendarState.selectedMonth = months[nextIndex];
+  saveCalendarState();
+  renderCalendar();
+  return true;
+}
+
 function normalizeCalendarDateKey(value){
   const trimmed = String(value || '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
@@ -7952,6 +7968,25 @@ function renderCalendarPairingDetail(pairingId){
     }
   });
   if (statusEl) statusEl.textContent = '';
+}
+
+function isModernCalendarDetailVisible(){
+  if (calendarDetailEventId || calendarPairingId || calendarDayDetailDateKey) return true;
+  if (calendarCreditDetailOpen || calendarBlockGrowthDetailOpen || calendarTafbDetailOpen) return true;
+  const detailPanels = [
+    document.getElementById('modern-calendar-detail'),
+    document.getElementById('modern-calendar-pairing-detail'),
+    document.getElementById('modern-calendar-day-detail'),
+    document.getElementById('modern-calendar-credit-detail'),
+    document.getElementById('modern-calendar-tafb-detail'),
+    document.getElementById('modern-calendar-block-growth-detail')
+  ];
+  return detailPanels.some((panel) => panel && !panel.classList.contains('hidden'));
+}
+
+function isCalendarSwipeBlocked(){
+  if (calendarBlockMonthSelecting || calendarHotelSelecting) return true;
+  return isModernCalendarDetailVisible();
 }
 
 function openCalendarDetail(eventId, source = 'main'){
@@ -8917,6 +8952,48 @@ function initCalendar(){
     });
   }
   const grid = document.getElementById('modern-calendar-grid');
+  const swipeTarget = grid || document.getElementById('modern-calendar-main');
+  const { isIos: isCalendarIos } = detectClientPlatform();
+  if (swipeTarget && isCalendarIos){
+    const swipeThreshold = 50;
+    let touchStart = null;
+    let touchEnd = null;
+    const resetSwipe = () => {
+      touchStart = null;
+      touchEnd = null;
+    };
+    swipeTarget.addEventListener('touchstart', (event) => {
+      if (event.touches.length !== 1) return;
+      if (isCalendarSwipeBlocked()) return;
+      const touch = event.touches[0];
+      touchStart = { x: touch.clientX, y: touch.clientY };
+      touchEnd = null;
+    }, { passive: true });
+    swipeTarget.addEventListener('touchmove', (event) => {
+      if (!touchStart) return;
+      const touch = event.touches[0];
+      touchEnd = { x: touch.clientX, y: touch.clientY };
+    }, { passive: true });
+    swipeTarget.addEventListener('touchend', () => {
+      if (!touchStart) return;
+      if (isCalendarSwipeBlocked()){
+        resetSwipe();
+        return;
+      }
+      const end = touchEnd || touchStart;
+      const deltaX = end.x - touchStart.x;
+      const deltaY = end.y - touchStart.y;
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      resetSwipe();
+      if (absX < swipeThreshold || absY > absX) return;
+      const direction = deltaX < 0 ? 1 : -1;
+      if (advanceCalendarMonth(direction)){
+        calendarSwipeIgnoreClickUntil = Date.now() + 400;
+      }
+    }, { passive: true });
+    swipeTarget.addEventListener('touchcancel', resetSwipe, { passive: true });
+  }
   if (grid){
     const handleBlockMonthSelection = (dateKey) => {
       if (!dateKey) return;
@@ -8964,6 +9041,7 @@ function initCalendar(){
       renderCalendar();
     };
     grid.addEventListener('click', (event) => {
+      if (Date.now() < calendarSwipeIgnoreClickUntil) return;
       const target = event.target;
       if (calendarHotelSelecting){
         const dayCell = target instanceof Element ? target.closest('.calendar-day') : null;
