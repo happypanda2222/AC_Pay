@@ -5276,6 +5276,29 @@ function saveCalendarState({ bumpUpdatedAt = true } = {}){
   }
 }
 
+function saveCalendarPrefsOnly(){
+  const payload = {
+    eventsByDate: calendarState.eventsByDate,
+    months: calendarState.months,
+    selectedMonth: calendarState.selectedMonth,
+    blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
+    blockMonthRecurring: calendarState.blockMonthRecurring,
+    hotels: calendarState.hotels,
+    updatedAt: calendarState.updatedAt
+  };
+  try {
+    localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(payload));
+    localStorage.setItem(CALENDAR_PREFS_KEY, JSON.stringify({
+      selectedMonth: calendarState.selectedMonth,
+      blockMonthsByMonthKey: calendarState.blockMonthsByMonthKey,
+      blockMonthRecurring: calendarState.blockMonthRecurring,
+      pairingDisplayMode: calendarPairingDisplayMode
+    }));
+  } catch (err){
+    console.warn('Failed to save calendar prefs', err);
+  }
+}
+
 function queueCalendarSyncRetry(){
   try {
     localStorage.setItem(CALENDAR_SYNC_PENDING_KEY, String(Date.now()));
@@ -8899,7 +8922,7 @@ function initCalendar(){
   if (monthSelect){
     monthSelect.addEventListener('change', () => {
       calendarState.selectedMonth = monthSelect.value;
-      saveCalendarState();
+      saveCalendarPrefsOnly();
       renderCalendar();
     });
   }
