@@ -7421,19 +7421,24 @@ function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = n
 function fitCalendarHotelBarLabel(bar, label){
   if (!bar || !label) return;
   const baseFontSize = 10;
-  label.style.fontSize = `${baseFontSize}px`;
-  label.style.lineHeight = `${baseFontSize}px`;
-  const barWidth = bar.clientWidth;
-  if (!Number.isFinite(barWidth) || barWidth <= 0) return;
   const minFontSize = 8;
-  let fontSize = baseFontSize;
-  let guard = 0;
-  const maxSteps = 8;
-  while (label.scrollWidth > barWidth && fontSize > minFontSize && guard < maxSteps){
-    fontSize = Math.max(minFontSize, fontSize - 1);
-    label.style.fontSize = `${fontSize}px`;
-    label.style.lineHeight = `${fontSize}px`;
-    guard += 1;
+  const applySizing = () => {
+    label.style.fontSize = `${baseFontSize}px`;
+    label.style.lineHeight = `${baseFontSize}px`;
+    const barWidth = bar.clientWidth;
+    if (!Number.isFinite(barWidth) || barWidth <= 0) return false;
+    let fontSize = baseFontSize;
+    while (label.scrollWidth > barWidth && fontSize > minFontSize){
+      fontSize = Math.max(minFontSize, fontSize - 1);
+      label.style.fontSize = `${fontSize}px`;
+      label.style.lineHeight = `${fontSize}px`;
+    }
+    return true;
+  };
+  if (!applySizing()){
+    requestAnimationFrame(() => {
+      applySizing();
+    });
   }
 }
 
