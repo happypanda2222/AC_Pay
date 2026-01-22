@@ -7357,7 +7357,14 @@ function renderCalendarHotelRowSegments(container, range){
     const startCellStyle = getComputedStyle(startCell);
     const hotelSlotRatio = parseFloat(startCellStyle.getPropertyValue('--calendar-hotel-slot'));
     const targetRatio = Number.isFinite(hotelSlotRatio) ? hotelSlotRatio : 0.41;
-    const topOffset = dayCellRect.top + (dayCellRect.height * targetRatio) - rowRect.top;
+    const dayPadding = parseFloat(startCellStyle.getPropertyValue('--calendar-day-padding'));
+    const slotHeight = parseFloat(startCellStyle.getPropertyValue('--calendar-hotel-slot-height'));
+    const barHeight = parseFloat(startCellStyle.getPropertyValue('--calendar-hotel-bar-height'));
+    const normalizedDayPadding = Number.isFinite(dayPadding) ? dayPadding : 0;
+    const normalizedSlotHeight = Number.isFinite(slotHeight) ? slotHeight : dayCellRect.height * targetRatio;
+    const normalizedBarHeight = Number.isFinite(barHeight) ? barHeight : 16;
+    const slotOffset = Math.max(0, (normalizedSlotHeight - normalizedBarHeight) / 2);
+    const topOffset = dayCellRect.top + normalizedDayPadding + slotOffset - rowRect.top;
     const bar = document.createElement('div');
     bar.className = 'calendar-hotel-segment calendar-row-hotel-segment';
     if (segment.position === 'start') bar.classList.add('is-start');

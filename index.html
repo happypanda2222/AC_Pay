@@ -516,6 +516,7 @@
       --calendar-hotel-slot-height:18px;
       --calendar-hotel-bar-height:16px;
       padding:var(--calendar-day-padding);
+      padding-top:calc(var(--calendar-day-padding) + var(--calendar-hotel-slot-height));
       min-height:110px;
       display:flex;
       flex-direction:column;
@@ -619,14 +620,12 @@
       display:flex;
       flex-direction:column;
       gap:6px;
-      margin-top:var(--calendar-hotel-slot-height);
       position:relative;
     }
     .calendar-day-bars{
       display:flex;
       flex-direction:column;
       gap:4px;
-      margin-top:var(--calendar-hotel-slot-height);
       margin-left:calc(var(--calendar-day-padding) * -1);
       margin-right:calc(var(--calendar-day-padding) * -1);
       width:calc(100% + (var(--calendar-day-padding) * 2));
