@@ -668,7 +668,7 @@
       text-overflow:ellipsis;
       white-space:nowrap;
     }
-    .calendar-day-bars .calendar-bar.is-start{
+    .calendar-day-bars > .calendar-bar.is-start{
       margin-left:50%;
       width:50%;
       border-top-left-radius:999px;
@@ -676,7 +676,7 @@
       border-top-right-radius:0;
       border-bottom-right-radius:0;
     }
-    .calendar-day-bars .calendar-bar.is-end{
+    .calendar-day-bars > .calendar-bar.is-end{
       margin-right:50%;
       width:50%;
       border-top-left-radius:0;
@@ -684,18 +684,20 @@
       border-top-right-radius:999px;
       border-bottom-right-radius:999px;
     }
-    .calendar-day-bars .calendar-bar.is-middle{
+    .calendar-day-bars > .calendar-bar.is-middle{
       border-radius:0;
     }
     .calendar-bar.is-single{
       width:100%;
     }
     .calendar-row-hotel-segment{
+      margin:0;
       position:absolute;
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
       pointer-events:auto;
+      width:auto;
       z-index:3;
     }
     .calendar-row-hotel-segment.is-start{
