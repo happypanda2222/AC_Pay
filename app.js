@@ -7421,7 +7421,7 @@ function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = n
 function fitCalendarHotelBarLabel(bar, label){
   if (!bar || !label) return;
   const baseFontSize = 10;
-  const minFontSize = 8;
+  const minFontSize = 5;
   const applySizing = () => {
     label.style.fontSize = `${baseFontSize}px`;
     label.style.lineHeight = `${baseFontSize}px`;
