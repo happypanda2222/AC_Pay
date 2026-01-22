@@ -479,6 +479,8 @@
       display:grid;
       grid-template-columns:repeat(7,minmax(48px,1fr));
       gap:var(--calendar-gap);
+      position:relative;
+      z-index:1;
     }
     #modern-calendar .calendar-row{
       grid-template-columns:repeat(7,minmax(0,1fr));
@@ -494,7 +496,7 @@
       left:0;
       right:0;
       width:100%;
-      z-index:30;
+      z-index:60;
       pointer-events:none;
     }
     .calendar-weekday{
