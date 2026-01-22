@@ -7084,6 +7084,13 @@ function getCalendarMonthCandidates(){
   const months = new Set(calendarState.months);
   months.add(getCalendarMonthKey(now));
   months.add(getCalendarMonthKey(nextMonth));
+  const selectedMonth = normalizeCalendarMonthKey(calendarState.selectedMonth);
+  if (selectedMonth){
+    const [year, month] = selectedMonth.split('-').map(Number);
+    const previousMonth = new Date(year, month - 2, 1);
+    months.add(selectedMonth);
+    months.add(getCalendarMonthKey(previousMonth));
+  }
   return Array.from(months).sort();
 }
 
@@ -7117,15 +7124,23 @@ function ensureCalendarSelection(){
 }
 
 function advanceCalendarMonth(direction){
-  const months = getCalendarMonthCandidates();
+  let months = getCalendarMonthCandidates();
   if (!months.length) return false;
-  ensureCalendarSelection();
+  if (!calendarState.selectedMonth || !months.includes(calendarState.selectedMonth)){
+    ensureCalendarSelection();
+    months = getCalendarMonthCandidates();
+  }
   const current = calendarState.selectedMonth;
   const currentIndex = months.indexOf(current);
   if (currentIndex < 0) return false;
   const nextIndex = currentIndex + direction;
   if (nextIndex < 0 || nextIndex >= months.length) return false;
-  calendarState.selectedMonth = months[nextIndex];
+  const nextMonth = months[nextIndex];
+  calendarState.selectedMonth = nextMonth;
+  const monthSelect = document.getElementById('modern-calendar-month');
+  if (monthSelect){
+    monthSelect.value = nextMonth;
+  }
   saveCalendarState();
   renderCalendar();
   return true;
