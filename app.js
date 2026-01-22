@@ -4795,10 +4795,11 @@ function buildCalendarHotelRowSegments(range){
     if (!dateKeys.length) return;
     const hotelSegments = [];
     const pushSegment = (segmentStartKey, segmentEndKey, weekIndex) => {
-      const isSingle = segmentStartKey === segmentEndKey;
       const isRangeStart = segmentStartKey === fullRangeStartKey;
       const isRangeEnd = segmentEndKey === fullRangeEndKey;
-      const position = isSingle ? 'single' : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
+      const position = isRangeStart && isRangeEnd
+        ? 'single'
+        : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
       const segment = {
         hotelId: hotel.id,
         name: hotel.name,
@@ -7361,7 +7362,9 @@ function renderCalendarHotelRowSegments(container, range){
       : startCell.getBoundingClientRect().top - rowRect.top + gapValue;
     const bar = document.createElement('div');
     bar.className = 'calendar-hotel-segment calendar-row-hotel-segment';
-    if (segment.position) bar.classList.add(`is-${segment.position}`);
+    if (segment.position === 'start') bar.classList.add('is-start');
+    if (segment.position === 'end') bar.classList.add('is-end');
+    if (segment.position === 'middle') bar.classList.add('is-middle');
     bar.dataset.hotelId = segment.hotelId;
     bar.style.left = `${leftOffset}px`;
     bar.style.top = `${topOffset}px`;
