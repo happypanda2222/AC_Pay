@@ -7338,17 +7338,17 @@ function renderCalendarHotelRowSegments(container, range){
     const rowRect = rowWrap.getBoundingClientRect();
     const startCellRect = startCell.getBoundingClientRect();
     const endCellRect = endCell.getBoundingClientRect();
-    const startCellOffset = startCellRect.left - rowRect.left;
-    const endCellOffset = endCellRect.right - rowRect.left;
     const startCellStyle = getComputedStyle(startCell);
-    const endCellStyle = startCell === endCell ? startCellStyle : getComputedStyle(endCell);
-    const startPaddingLeft = parseFloat(startCellStyle.paddingLeft || '0') || 0;
-    const endPaddingRight = parseFloat(endCellStyle.paddingRight || '0') || 0;
-    let leftOffset = startCellOffset;
-    let rightOffset = endCellOffset;
+    let leftOffset = 0;
+    let rightOffset = 0;
     if (segment.startKey !== segment.endKey){
-      leftOffset += startPaddingLeft;
-      rightOffset -= endPaddingRight;
+      leftOffset = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
+      rightOffset = endCellRect.left + (endCellRect.width / 2) - rowRect.left;
+    } else {
+      const midpoint = startCellRect.left + (startCellRect.width / 2) - rowRect.left;
+      const minWidth = startCellRect.width / 2;
+      leftOffset = midpoint - (minWidth / 2);
+      rightOffset = midpoint + (minWidth / 2);
     }
     const segmentWidth = rightOffset - leftOffset;
     if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
