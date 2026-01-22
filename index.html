@@ -516,12 +516,16 @@
       --calendar-hotel-slot-height:18px;
       --calendar-hotel-bar-height:16px;
       padding:var(--calendar-day-padding);
-      padding-top:calc(var(--calendar-day-padding) + var(--calendar-hotel-slot-height));
+      padding-top:var(--calendar-day-padding);
       min-height:110px;
       display:flex;
       flex-direction:column;
       gap:8px;
       position:relative;
+    }
+    .calendar-day.has-hotel .calendar-day-bars,
+    .calendar-day.has-hotel .calendar-event-item{
+      margin-top:var(--calendar-hotel-slot-height);
     }
     .calendar-day.is-block-selectable{
       cursor:pointer;

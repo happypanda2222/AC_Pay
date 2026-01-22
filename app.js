@@ -7506,6 +7506,7 @@ function renderCalendar(){
     const dateKey = buildCalendarDateKeyFromDate(current);
     const dayData = calendarState.eventsByDate?.[dateKey];
     const dayEvents = dayData?.events || [];
+    const hasHotel = getCalendarHotelsForDate(dateKey).length > 0;
     const isCnxDay = dayEvents.some(event => {
       const cancellation = String(event?.cancellation || '').toUpperCase();
       return cancellation === 'CNX' || cancellation === 'CNX PP';
@@ -7514,6 +7515,7 @@ function renderCalendar(){
     const dayCell = document.createElement('div');
     dayCell.className = 'calendar-day';
     dayCell.dataset.dateKey = dateKey;
+    if (hasHotel) dayCell.classList.add('has-hotel');
     if (isCnxDay) dayCell.classList.add('is-cnx-day');
     if (isToday && (blockMonthRange || calendarBlockMonthSelecting)){
       dayCell.classList.add('is-today');
