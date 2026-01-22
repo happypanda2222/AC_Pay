@@ -4377,6 +4377,7 @@ let calendarHotelSelection = { startKey: null, endKey: null };
 let calendarPairingDisplayMode = 'classic';
 const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
 let calendarAutoSyncTimer = null;
+let calendarHotelBarResizeObserver = null;
 
 function normalizeCalendarUpdatedAt(value){
   if (Number.isFinite(value)) return value;
@@ -7420,15 +7421,24 @@ function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = n
 
 function fitCalendarHotelBarLabel(bar, label){
   if (!bar || !label) return;
-  const baseFontSize = 10;
-  const minFontSize = 5;
+  const labelStyle = getComputedStyle(label);
+  const barStyle = getComputedStyle(bar);
+  const computedFontSize = parseFloat(labelStyle.fontSize);
+  const computedBarFontSize = parseFloat(barStyle.fontSize);
+  const baseFontSize = Number.isFinite(computedFontSize)
+    ? computedFontSize
+    : (Number.isFinite(computedBarFontSize) ? computedBarFontSize : 10);
+  const minFontSize = Math.max(5, Math.floor(baseFontSize * 0.5));
   const applySizing = () => {
     label.style.fontSize = `${baseFontSize}px`;
     label.style.lineHeight = `${baseFontSize}px`;
+    const paddingLeft = parseFloat(barStyle.paddingLeft) || 0;
+    const paddingRight = parseFloat(barStyle.paddingRight) || 0;
     const barWidth = bar.clientWidth;
-    if (!Number.isFinite(barWidth) || barWidth <= 0) return false;
+    const availableWidth = barWidth - paddingLeft - paddingRight;
+    if (!Number.isFinite(availableWidth) || availableWidth <= 0) return false;
     let fontSize = baseFontSize;
-    while (label.scrollWidth > barWidth && fontSize > minFontSize){
+    while (label.scrollWidth > availableWidth && fontSize > minFontSize){
       fontSize = Math.max(minFontSize, fontSize - 1);
       label.style.fontSize = `${fontSize}px`;
       label.style.lineHeight = `${fontSize}px`;
@@ -7440,6 +7450,16 @@ function fitCalendarHotelBarLabel(bar, label){
       applySizing();
     });
   }
+}
+
+function renderCalendarHotelBarLabels(container){
+  if (!container) return;
+  container.querySelectorAll('.calendar-row-hotel-segment').forEach((bar) => {
+    const label = bar.querySelector('.calendar-hotel-label');
+    if (label){
+      fitCalendarHotelBarLabel(bar, label);
+    }
+  });
 }
 
 function getCalendarDisplayRange(year, month){
@@ -8640,13 +8660,23 @@ function initCalendar(){
   window.addEventListener('resize', () => {
     const gridEl = document.getElementById('modern-calendar-grid');
     if (gridEl){
-      const [year, month] = (calendarState.selectedMonth || '').split('-').map(Number);
-      const displayRange = getCalendarDisplayRange(year, month);
       requestAnimationFrame(() => {
-        renderCalendarHotelBarLabels(gridEl, displayRange);
+        renderCalendarHotelBarLabels(gridEl);
       });
     }
   });
+  const gridEl = document.getElementById('modern-calendar-grid');
+  if (gridEl && 'ResizeObserver' in window){
+    if (calendarHotelBarResizeObserver){
+      calendarHotelBarResizeObserver.disconnect();
+    }
+    calendarHotelBarResizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        renderCalendarHotelBarLabels(gridEl);
+      });
+    });
+    calendarHotelBarResizeObserver.observe(gridEl);
+  }
   setTimeout(() => {
     (async () => {
       const online = navigator?.onLine !== false;
