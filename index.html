@@ -243,6 +243,12 @@
     .modern-panel{background:var(--card);border:1px solid #1f2633;border-radius:14px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.32)}
     .modern-panel h3{margin:0 0 12px 0;font-size:16px;letter-spacing:.2px}
     #modern-calendar > .modern-panel{border:none;box-shadow:none;padding:10px 12px}
+    @media (max-width: 430px){
+      #modern-calendar > .modern-panel{
+        padding-left: calc(8px + env(safe-area-inset-left));
+        padding-right: calc(8px + env(safe-area-inset-right));
+      }
+    }
     .stacked-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
     .weather-brief-fields{gap:12px}
     .modern-controls{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
