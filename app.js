@@ -5538,17 +5538,11 @@ async function syncCalendarToCloud(){
     selectedMonth,
     hotels
   };
-  const payloadWithoutHotels = {
-    eventsByDate,
-    months,
-    selectedMonth,
-    blockMonthsByMonthKey,
-    blockMonthRecurring
-  };
   const payloadMinimal = {
     eventsByDate,
     months,
-    selectedMonth
+    selectedMonth,
+    hotels
   };
   const sendCalendarPayload = async (bodyPayload) => {
     try {
@@ -5579,9 +5573,8 @@ async function syncCalendarToCloud(){
     if (!message || typeof message !== 'string') return null;
     const lower = message.toLowerCase();
     const rejectBlocks = ['blockmonthsbymonthkey', 'blockmonthrecurring'].some((key) => lower.includes(key));
-    const rejectHotels = lower.includes('hotels') || lower.includes('hotel');
-    if (!rejectBlocks && !rejectHotels) return null;
-    return { rejectBlocks, rejectHotels };
+    if (!rejectBlocks) return null;
+    return { rejectBlocks };
   };
   let response = await sendCalendarPayload(payload);
   if (!response.ok){
@@ -5589,15 +5582,9 @@ async function syncCalendarToCloud(){
     const retryInfo = shouldRetryPayload(response.status, validationMessage);
     if (retryInfo){
       let retryPayload = payload;
-      if (retryInfo.rejectBlocks && retryInfo.rejectHotels){
-        retryPayload = payloadMinimal;
-        console.warn('Calendar sync rejected block month + hotel keys; retrying with minimal payload.');
-      } else if (retryInfo.rejectBlocks){
+      if (retryInfo.rejectBlocks){
         retryPayload = payloadWithoutBlocks;
         console.warn('Calendar sync rejected block month keys; retrying without block month payload.');
-      } else if (retryInfo.rejectHotels){
-        retryPayload = payloadWithoutHotels;
-        console.warn('Calendar sync rejected hotel keys; retrying without hotel payload.');
       }
       response = await sendCalendarPayload(retryPayload);
       if (!response.ok){
@@ -5675,6 +5662,9 @@ async function loadCalendarFromCloud({ skipConfirm = false } = {}){
   const incomingBlockRecurring = normalizeCalendarBlockMonthRecurring(
     incomingState.blockMonthRecurring || {}
   );
+  const incomingHotels = Array.isArray(incomingState.hotels)
+    ? normalizeCalendarHotelEntries(incomingState.hotels)
+    : [];
   calendarState = {
     eventsByDate: incomingState.eventsByDate && typeof incomingState.eventsByDate === 'object'
       ? incomingState.eventsByDate
@@ -5692,7 +5682,7 @@ async function loadCalendarFromCloud({ skipConfirm = false } = {}){
       calendarState.blockMonthRecurring,
       incomingBlockRecurring
     ),
-    hotels: Array.isArray(incomingState.hotels) ? incomingState.hotels : (calendarState.hotels || []),
+    hotels: incomingHotels,
     updatedAt: remoteUpdatedAt
   };
   normalizeCalendarState();
@@ -9217,20 +9207,18 @@ function initCalendar(){
         renderCalendar();
         return;
       }
-      if (!entry.endKey){
-        setCalendarBlockMonthEntry(monthKey, { startKey: entry.startKey, endKey: dateKey });
-        const range = getCalendarBlockMonthRangeForMonth(monthKey);
-        if (!range){
-          setCalendarBlockMonthEntry(monthKey, { startKey: dateKey, endKey: null });
-          renderCalendar();
-          return;
-        }
-        setCalendarBlockMonthRecurringEntry(monthKey, range);
-        calendarBlockMonthSelecting = false;
-        calendarBlockMonthDraft = null;
-        saveCalendarState();
+      setCalendarBlockMonthEntry(monthKey, { startKey: entry.startKey, endKey: dateKey });
+      const range = getCalendarBlockMonthRangeForMonth(monthKey);
+      if (!range){
+        setCalendarBlockMonthEntry(monthKey, { startKey: dateKey, endKey: null });
         renderCalendar();
+        return;
       }
+      setCalendarBlockMonthRecurringEntry(monthKey, range);
+      calendarBlockMonthSelecting = false;
+      calendarBlockMonthDraft = null;
+      saveCalendarState();
+      renderCalendar();
     };
     const handleHotelSelection = (dateKey) => {
       if (!dateKey) return;
