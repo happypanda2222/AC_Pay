@@ -7912,9 +7912,10 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
       const overlay = document.createElement('div');
       overlay.className = 'calendar-bar calendar-bar-cnx';
       overlay.classList.add(cnxSegment.cancellation === 'CNX PP' ? 'is-cnx-pp' : 'is-cnx');
-      overlay.style.left = `${clippedLeft - leftOffset}px`;
+      overlay.style.left = `${clippedLeft}px`;
+      overlay.style.top = `${topOffset}px`;
       overlay.style.width = `${overlayWidth}px`;
-      bar.appendChild(overlay);
+      barsContainer.appendChild(overlay);
     });
     if (segment.label){
       const label = document.createElement('span');
