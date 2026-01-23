@@ -79,6 +79,22 @@ function validatePayload(payload) {
       return { ok: false, message: 'blockMonthRecurring endDay must be a number or null.' };
     }
   }
+  if ('hotels' in payload) {
+    if (!Array.isArray(payload.hotels)) {
+      return { ok: false, message: 'hotels must be an array.' };
+    }
+    for (const entry of payload.hotels) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return { ok: false, message: 'hotels entries must be objects.' };
+      }
+      if (typeof entry.startKey !== 'string' || !entry.startKey.trim()) {
+        return { ok: false, message: 'hotels entries must include startKey.' };
+      }
+      if ('endKey' in entry && entry.endKey !== null && typeof entry.endKey !== 'string') {
+        return { ok: false, message: 'hotels endKey must be a string or null.' };
+      }
+    }
+  }
   return { ok: true };
 }
 
@@ -98,6 +114,7 @@ async function handleGet(env, origin) {
     selectedMonth: null,
     blockMonthsByMonthKey: {},
     blockMonthRecurring: {},
+    hotels: [],
     updatedAt: null,
     etag: null
   };
@@ -106,7 +123,8 @@ async function handleGet(env, origin) {
       ...defaultPayload,
       ...stored,
       blockMonthsByMonthKey: stored.blockMonthsByMonthKey || {},
-      blockMonthRecurring: stored.blockMonthRecurring || {}
+      blockMonthRecurring: stored.blockMonthRecurring || {},
+      hotels: Array.isArray(stored.hotels) ? stored.hotels : []
     }
     : defaultPayload;
   const headers = withCors({ ETag: payload.etag || '' }, origin);
@@ -117,6 +135,7 @@ async function handleGet(env, origin) {
       selectedMonth: payload.selectedMonth,
       blockMonthsByMonthKey: payload.blockMonthsByMonthKey,
       blockMonthRecurring: payload.blockMonthRecurring,
+      hotels: payload.hotels,
       updatedAt: payload.updatedAt,
       etag: payload.etag
     },
@@ -141,12 +160,14 @@ async function handlePut(request, env, origin) {
   const updatedAt = new Date().toISOString();
   const blockMonthsByMonthKey = payload.blockMonthsByMonthKey || {};
   const blockMonthRecurring = payload.blockMonthRecurring || {};
+  const hotels = Array.isArray(payload.hotels) ? payload.hotels : [];
   const etag = await computeEtag({
     eventsByDate: payload.eventsByDate,
     months: payload.months,
     selectedMonth: payload.selectedMonth,
     blockMonthsByMonthKey,
-    blockMonthRecurring
+    blockMonthRecurring,
+    hotels
   });
   const record = {
     eventsByDate: payload.eventsByDate,
@@ -154,6 +175,7 @@ async function handlePut(request, env, origin) {
     selectedMonth: payload.selectedMonth,
     blockMonthsByMonthKey,
     blockMonthRecurring,
+    hotels,
     updatedAt,
     etag
   };
