@@ -7521,7 +7521,15 @@ function buildCalendarPairingOffsetMap(container){
     if (!dayNumber || !rowWrap) return;
     const rowRect = rowWrap.getBoundingClientRect();
     const dayNumberRect = dayNumber.getBoundingClientRect();
-    const topOffset = dayNumberRect.bottom + gap - rowRect.top;
+    let topOffset = dayNumberRect.bottom + gap - rowRect.top;
+    if (dayCell.classList.contains('has-hotel')){
+      const slotHeight = parseFloat(
+        getComputedStyle(dayCell).getPropertyValue('--calendar-hotel-slot-height')
+      );
+      if (Number.isFinite(slotHeight)){
+        topOffset += slotHeight;
+      }
+    }
     if (Number.isFinite(topOffset)){
       offsets.set(dateKey, topOffset);
     }
