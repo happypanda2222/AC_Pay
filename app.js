@@ -8455,7 +8455,17 @@ function isCalendarSwipeBlocked(){
   return isModernCalendarDetailVisible();
 }
 
-function renderCalendarIfNeeded(){
+function renderCalendarIfVisible(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  if (mainEl && !mainEl.classList.contains('hidden')){
+    calendarNeedsRender = false;
+    renderCalendar();
+  } else {
+    calendarNeedsRender = true;
+  }
+}
+
+function flushCalendarRenderIfNeeded(){
   const mainEl = document.getElementById('modern-calendar-main');
   if (calendarNeedsRender && mainEl && !mainEl.classList.contains('hidden')){
     renderCalendar();
@@ -8496,7 +8506,7 @@ function closeCalendarDetail(){
   if (detailEl) detailEl.classList.add('hidden');
   calendarDetailEventId = null;
   calendarDetailSource = 'main';
-  renderCalendarIfNeeded();
+  flushCalendarRenderIfNeeded();
 }
 
 function refreshCalendarDetail(){
@@ -8586,7 +8596,7 @@ function closeCalendarPairingDetail(){
   if (mainEl) mainEl.classList.remove('hidden');
   if (detailEl) detailEl.classList.add('hidden');
   calendarPairingId = null;
-  renderCalendarIfNeeded();
+  flushCalendarRenderIfNeeded();
 }
 
 function refreshCalendarPairingDetail(){
@@ -8621,7 +8631,7 @@ function closeCalendarDayDetail(){
     document.getElementById('modern-calendar-main')?.classList.remove('hidden');
   }
   calendarDayDetailDateKey = null;
-  renderCalendarIfNeeded();
+  flushCalendarRenderIfNeeded();
 }
 
 function refreshCalendarDayDetail(){
@@ -8915,7 +8925,7 @@ function closeCalendarCreditDetail(){
   calendarCreditDetailOpen = false;
   calendarBlockGrowthDetailOpen = false;
   document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
-  renderCalendarIfNeeded();
+  flushCalendarRenderIfNeeded();
 }
 
 function refreshCalendarCreditDetail(){
@@ -8946,7 +8956,7 @@ function closeCalendarTafbDetail(){
   if (mainEl) mainEl.classList.remove('hidden');
   if (detailEl) detailEl.classList.add('hidden');
   calendarTafbDetailOpen = false;
-  renderCalendarIfNeeded();
+  flushCalendarRenderIfNeeded();
 }
 
 function refreshCalendarTafbDetail(){
@@ -8979,7 +8989,7 @@ function closeCalendarBlockGrowthDetail(){
   } else {
     document.getElementById('modern-calendar-main')?.classList.remove('hidden');
   }
-  renderCalendarIfNeeded();
+  flushCalendarRenderIfNeeded();
 }
 
 function refreshCalendarBlockGrowthDetail(){
@@ -9000,14 +9010,7 @@ function setCalendarEventCancellation(eventId, status){
   if (updated){
     updateCalendarPairingMetrics(calendarState.eventsByDate);
     saveCalendarState();
-    const mainEl = document.getElementById('modern-calendar-main');
-    const isMainHidden = mainEl?.classList.contains('hidden');
-    if (isMainHidden){
-      calendarNeedsRender = true;
-    } else {
-      calendarNeedsRender = false;
-      renderCalendar();
-    }
+    renderCalendarIfVisible();
     refreshCalendarDetail();
     refreshCalendarPairingDetail();
     refreshCalendarDayDetail();
@@ -9069,14 +9072,7 @@ function setCalendarPairingCancellationFromEvent(eventId, status, options = {}){
   if (updated || thgReset){
     updateCalendarPairingMetrics(calendarState.eventsByDate);
     saveCalendarState();
-    const mainEl = document.getElementById('modern-calendar-main');
-    const isMainHidden = mainEl?.classList.contains('hidden');
-    if (isMainHidden){
-      calendarNeedsRender = true;
-    } else {
-      calendarNeedsRender = false;
-      renderCalendar();
-    }
+    renderCalendarIfVisible();
     refreshCalendarDetail();
     refreshCalendarPairingDetail();
     refreshCalendarDayDetail();
