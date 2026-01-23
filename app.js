@@ -8081,9 +8081,9 @@ function getCalendarDisplayRange(year, month){
   const firstOfMonth = new Date(year, month - 1, 1);
   const lastOfMonth = new Date(year, month, 0);
   const rangeStart = new Date(firstOfMonth);
-  rangeStart.setDate(rangeStart.getDate() - 3);
+  rangeStart.setDate(rangeStart.getDate() - rangeStart.getDay());
   const rangeEnd = new Date(lastOfMonth);
-  rangeEnd.setDate(rangeEnd.getDate() + 3);
+  rangeEnd.setDate(rangeEnd.getDate() + (6 - rangeEnd.getDay()));
   return {
     startKey: buildCalendarDateKeyFromDate(rangeStart),
     endKey: buildCalendarDateKeyFromDate(rangeEnd)
