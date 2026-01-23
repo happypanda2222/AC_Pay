@@ -5576,13 +5576,9 @@ async function syncCalendarToCloud(){
     const parsed = Number.parseInt(headerValue, 10);
     return Number.isFinite(parsed) ? parsed : null;
   };
-  const isSchemaOutdated = (schemaVersion, message) => {
-    if (!message || typeof message !== 'string') return false;
-    const lower = message.toLowerCase();
-    if (!lower.includes('hotels')) return false;
-    if (schemaVersion === null) return true;
-    return schemaVersion < CALENDAR_SYNC_SCHEMA_VERSION;
-  };
+  const isSchemaOutdated = (schemaVersion) => (
+    schemaVersion !== null && schemaVersion < CALENDAR_SYNC_SCHEMA_VERSION
+  );
   const formatSchemaOutdatedMessage = (schemaVersion) => {
     const versionLabel = Number.isFinite(schemaVersion) ? `v${schemaVersion}` : 'unknown version';
     return `sync worker ${versionLabel} is outdated; update to v${CALENDAR_SYNC_SCHEMA_VERSION}+ to sync hotels.`;
@@ -5592,8 +5588,8 @@ async function syncCalendarToCloud(){
     if (!message || typeof message !== 'string') return null;
     const lower = message.toLowerCase();
     const rejectBlocks = ['blockmonthsbymonthkey', 'blockmonthrecurring'].some((key) => lower.includes(key));
-    const schemaOutdated = isSchemaOutdated(schemaVersion, message);
-    const rejectHotels = schemaOutdated && lower.includes('unexpected keys') && lower.includes('hotels');
+    const schemaOutdated = isSchemaOutdated(schemaVersion);
+    const rejectHotels = lower.includes('unexpected keys') && lower.includes('hotels');
     if (!rejectBlocks && !rejectHotels) return null;
     return { rejectBlocks, rejectHotels, schemaOutdated };
   };
@@ -5629,7 +5625,7 @@ async function syncCalendarToCloud(){
       }
     } else {
       const suffix = validationMessage ? `: ${validationMessage}` : '';
-      if (isSchemaOutdated(schemaVersion, validationMessage)){
+      if (isSchemaOutdated(schemaVersion)){
         throw new Error(formatSchemaOutdatedMessage(schemaVersion));
       }
       throw new Error(`Calendar sync failed (${response.status})${suffix}`);
