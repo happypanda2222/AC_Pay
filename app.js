@@ -8992,7 +8992,7 @@ function initCalendar(){
         return;
       }
       if (!monthKey) return;
-      const existing = getCalendarBlockMonthEntry(monthKey);
+      const existing = getCalendarBlockMonthEntry(monthKey, { includeRecurring: false });
       calendarBlockMonthSelecting = true;
       calendarBlockMonthDraft = existing
         ? { monthKey, startKey: existing.startKey, endKey: existing.endKey }
@@ -9187,8 +9187,8 @@ function initCalendar(){
       if (!dateKey) return;
       const monthKey = normalizeCalendarMonthKey(calendarState.selectedMonth);
       if (!monthKey) return;
-      const entry = getCalendarBlockMonthEntry(monthKey);
-      if (!entry){
+      const entry = getCalendarBlockMonthEntry(monthKey, { includeRecurring: false });
+      if (!entry || entry.endKey){
         setCalendarBlockMonthEntry(monthKey, { startKey: dateKey, endKey: null });
         renderCalendar();
         return;
