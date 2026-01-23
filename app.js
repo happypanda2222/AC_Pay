@@ -4864,6 +4864,57 @@ function buildCalendarPairingRowSegments(range){
   return segments;
 }
 
+function buildCalendarPairingCancellationSegments(range){
+  const segments = [];
+  if (!range) return segments;
+  const pairingMap = buildCalendarPairingIndex();
+  const segmentMap = new Map();
+  pairingMap.forEach((pairing) => {
+    const pairingDays = pairing.days;
+    if (!pairingDays.length) return;
+    const visibleDays = pairingDays.filter((dateKey) => isCalendarDateKeyInRange(dateKey, range));
+    if (!visibleDays.length) return;
+    visibleDays.forEach((dateKey) => {
+      const day = calendarState.eventsByDate?.[dateKey];
+      const dayEvents = Array.isArray(day?.events) ? day.events : [];
+      if (!dayEvents.length) return;
+      const dayStartMs = getDateKeyStartMs(dateKey);
+      if (!Number.isFinite(dayStartMs)) return;
+      const dayEndMs = dayStartMs + 86400000;
+      const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
+      dayEvents.forEach((event) => {
+        const cancellation = String(event?.cancellation || '').toUpperCase();
+        if (cancellation !== 'CNX' && cancellation !== 'CNX PP') return;
+        const timing = getCalendarEventTiming(event, dateKey);
+        if (!timing) return;
+        const startMs = Math.max(timing.startMs, dayStartMs);
+        const endMs = Math.min(timing.endMs, dayEndMs);
+        const startOffsetMinutes = Math.max(0, Math.min(1440, Math.round((startMs - dayStartMs) / 60000)));
+        const endOffsetMinutes = Math.max(0, Math.min(1440, Math.round((endMs - dayStartMs) / 60000)));
+        if (!Number.isFinite(startOffsetMinutes) || !Number.isFinite(endOffsetMinutes)) return;
+        if (endOffsetMinutes <= startOffsetMinutes) return;
+        const key = `${pairing.pairingId}|${weekIndex}|${dateKey}|${cancellation}`;
+        if (!segmentMap.has(key)){
+          segmentMap.set(key, {
+            pairingId: pairing.pairingId,
+            weekIndex,
+            dateKey,
+            cancellation,
+            startOffsetMinutes,
+            endOffsetMinutes
+          });
+        } else {
+          const existing = segmentMap.get(key);
+          existing.startOffsetMinutes = Math.min(existing.startOffsetMinutes, startOffsetMinutes);
+          existing.endOffsetMinutes = Math.max(existing.endOffsetMinutes, endOffsetMinutes);
+        }
+      });
+    });
+  });
+  segmentMap.forEach((segment) => segments.push(segment));
+  return segments;
+}
+
 function buildCalendarHotelRowSegments(range){
   const segments = [];
   if (!range) return segments;
@@ -7633,6 +7684,13 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
   if (!container) return;
   container.querySelectorAll('.calendar-row-pairing-segment').forEach((segment) => segment.remove());
   const rowSegments = buildCalendarPairingRowSegments(range);
+  const cancellationSegments = buildCalendarPairingCancellationSegments(range);
+  const cancellationSegmentsByRow = new Map();
+  cancellationSegments.forEach((segment) => {
+    const key = `${segment.pairingId}|${segment.weekIndex}`;
+    if (!cancellationSegmentsByRow.has(key)) cancellationSegmentsByRow.set(key, []);
+    cancellationSegmentsByRow.get(key).push(segment);
+  });
   if (!rowSegments.length) return;
   rowSegments.forEach((segment) => {
     const rowWrap = container.querySelector(`.calendar-row-wrap[data-week-index="${segment.weekIndex}"]`);
@@ -7696,7 +7754,41 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
     bar.style.left = `${leftOffset}px`;
     bar.style.top = `${topOffset}px`;
     bar.style.width = `${segmentWidth}px`;
-    if (segment.label) bar.textContent = segment.label;
+    const cancellationKey = `${segment.pairingId}|${segment.weekIndex}`;
+    const rowCancellationSegments = cancellationSegmentsByRow.get(cancellationKey) || [];
+    rowCancellationSegments.forEach((cnxSegment) => {
+      if (cnxSegment.dateKey < segment.startKey || cnxSegment.dateKey > segment.endKey) return;
+      const dayCell = row.querySelector(`.calendar-day[data-date-key="${cnxSegment.dateKey}"]`);
+      if (!dayCell) return;
+      const dayCellRect = dayCell.getBoundingClientRect();
+      const dayWidth = dayCellRect.width;
+      let overlayLeft = dayCellRect.left - rowRect.left;
+      let overlayRight = dayCellRect.right - rowRect.left;
+      if (Number.isFinite(cnxSegment.startOffsetMinutes) && Number.isFinite(dayWidth) && dayWidth > 0){
+        const minuteOffset = Math.max(0, Math.min(1440, cnxSegment.startOffsetMinutes));
+        overlayLeft = dayCellRect.left - rowRect.left + ((minuteOffset / 1440) * dayWidth);
+      }
+      if (Number.isFinite(cnxSegment.endOffsetMinutes) && Number.isFinite(dayWidth) && dayWidth > 0){
+        const minuteOffset = Math.max(0, Math.min(1440, cnxSegment.endOffsetMinutes));
+        overlayRight = dayCellRect.left - rowRect.left + ((minuteOffset / 1440) * dayWidth);
+      }
+      const clippedLeft = Math.max(leftOffset, overlayLeft);
+      const clippedRight = Math.min(rightOffset, overlayRight);
+      const overlayWidth = clippedRight - clippedLeft;
+      if (!Number.isFinite(overlayWidth) || overlayWidth <= 0) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'calendar-bar calendar-bar-cnx';
+      overlay.classList.add(cnxSegment.cancellation === 'CNX PP' ? 'is-cnx-pp' : 'is-cnx');
+      overlay.style.left = `${clippedLeft - leftOffset}px`;
+      overlay.style.width = `${overlayWidth}px`;
+      bar.appendChild(overlay);
+    });
+    if (segment.label){
+      const label = document.createElement('span');
+      label.className = 'calendar-bar-label';
+      label.textContent = segment.label;
+      bar.appendChild(label);
+    }
     barsContainer.appendChild(bar);
   });
 }

@@ -777,6 +777,23 @@
       background:#3b82f6;
       color:#f8fafc;
     }
+    .calendar-row-pairing-segment .calendar-bar-cnx{
+      position:absolute;
+      top:0;
+      bottom:0;
+      border-radius:999px;
+      pointer-events:none;
+      z-index:1;
+      box-sizing:border-box;
+    }
+    .calendar-row-pairing-segment .calendar-bar-label{
+      position:relative;
+      z-index:2;
+      display:block;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
     .calendar-row-pairing-segment.is-start{
       border-top-right-radius:0;
       border-bottom-right-radius:0;
@@ -839,6 +856,11 @@
       background:repeating-linear-gradient(135deg, #b91c1c 0 10px, #f8fafc 10px 16px);
       color:#0b0f1a;
     }
+    .calendar-bar.is-cnx{
+      border:1px solid #fecaca;
+      background:repeating-linear-gradient(135deg, #b91c1c 0 10px, #f8fafc 10px 16px);
+      color:#0b0f1a;
+    }
     .calendar-event.is-cnx .calendar-event-title-main,
     .calendar-event.is-cnx .calendar-event-title-sub,
     .calendar-event.is-cnx .calendar-event-meta{
@@ -848,6 +870,11 @@
     .calendar-day-flight.is-cnx-pp,
     .calendar-pairing-flight.is-cnx-pp{
       border-color:#fecaca;
+      background:#b91c1c;
+      color:#f8fafc;
+    }
+    .calendar-bar.is-cnx-pp{
+      border:1px solid #fecaca;
       background:#b91c1c;
       color:#f8fafc;
     }
