@@ -1,4 +1,5 @@
 const CALENDAR_KEY = 'calendar:default';
+const CALENDAR_SCHEMA_VERSION = 2;
 
 function jsonResponse(body, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -11,13 +12,14 @@ function jsonResponse(body, options = {}) {
 
 function withCors(headers, origin) {
   const next = new Headers(headers || {});
+  next.set('X-AC-Pay-Schema', String(CALENDAR_SCHEMA_VERSION));
   if (origin) {
     next.set('Access-Control-Allow-Origin', origin);
     next.set('Vary', 'Origin');
   }
   next.set('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
   next.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-None-Match');
-  next.set('Access-Control-Expose-Headers', 'ETag');
+  next.set('Access-Control-Expose-Headers', 'ETag, X-AC-Pay-Schema');
   return next;
 }
 
