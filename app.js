@@ -7991,6 +7991,11 @@ function renderCalendarDetail(event, dateKey){
     button.classList.toggle('btn-primary', active);
     button.classList.toggle('btn-secondary', !active);
   });
+  const cancelRestButton = document.querySelector('[data-calendar-cancel-rest]');
+  if (cancelRestButton){
+    const matchState = getCalendarPairingCancellationMatchState(event?.id, event?.cancellation);
+    cancelRestButton.classList.toggle('is-active', matchState.matches);
+  }
   if (statusEl) statusEl.textContent = '';
 }
 
@@ -8731,13 +8736,13 @@ function setCalendarEventCancellation(eventId, status){
   }
 }
 
-function setCalendarPairingCancellationFromEvent(eventId, status){
+function getCalendarPairingEventSequence(eventId){
   const entry = findCalendarEventById(eventId);
-  if (!entry || !status) return false;
+  if (!entry) return null;
   const pairingId = getCalendarPairingIdForEvent(entry.event, entry.dateKey);
-  if (!pairingId) return false;
+  if (!pairingId) return null;
   const pairingDays = getCalendarPairingDays(pairingId);
-  if (!pairingDays.length) return false;
+  if (!pairingDays.length) return null;
   const dayOrder = new Map(pairingDays.map((dateKey, index) => [dateKey, index]));
   const pairingEvents = [];
   pairingDays.forEach((dateKey, dayIndex) => {
@@ -8760,18 +8765,37 @@ function setCalendarPairingCancellationFromEvent(eventId, status){
     return a.eventIndex - b.eventIndex;
   });
   const selectedIndex = pairingEvents.findIndex(item => item.event?.id === eventId);
-  if (selectedIndex < 0) return false;
+  if (selectedIndex < 0) return null;
+  return { entry, pairingId, pairingEvents, selectedIndex };
+}
+
+function getCalendarPairingCancellationMatchState(eventId, status){
+  if (!eventId || !status) return { matches: false, sequence: null };
+  const sequence = getCalendarPairingEventSequence(eventId);
+  if (!sequence) return { matches: false, sequence: null };
+  const remainingEvents = sequence.pairingEvents.slice(sequence.selectedIndex);
+  const matches = remainingEvents.length > 0
+    && remainingEvents.every(item => item.event?.cancellation === status);
+  return { matches, sequence };
+}
+
+function setCalendarPairingCancellationFromEvent(eventId, status, options = {}){
+  const sequence = getCalendarPairingEventSequence(eventId);
+  const shouldClear = options.clear || status === null;
+  if (!sequence || (!status && !shouldClear)) return false;
+  const { pairingId, pairingEvents, selectedIndex } = sequence;
+  const nextStatus = shouldClear ? null : status;
   let updated = false;
   let thgReset = false;
   for (let i = selectedIndex; i < pairingEvents.length; i += 1){
     const target = pairingEvents[i]?.event;
     if (!target) continue;
-    if (target.cancellation !== status){
-      target.cancellation = status;
+    if (target.cancellation !== nextStatus){
+      target.cancellation = nextStatus;
       updated = true;
     }
   }
-  if (status === 'CNX'){
+  if (nextStatus === 'CNX'){
     const thgPairingDays = getCalendarPairingDays(pairingId);
     thgPairingDays.forEach((dateKey) => {
       const day = calendarState.eventsByDate?.[dateKey];
@@ -9388,7 +9412,11 @@ function initCalendar(){
         if (statusEl) statusEl.textContent = 'Select a cancellation status first.';
         return;
       }
-      setCalendarPairingCancellationFromEvent(calendarDetailEventId, status);
+      const matchState = getCalendarPairingCancellationMatchState(calendarDetailEventId, status);
+      const shouldClear = matchState.matches;
+      setCalendarPairingCancellationFromEvent(calendarDetailEventId, shouldClear ? null : status, {
+        clear: shouldClear
+      });
       if (statusEl) statusEl.textContent = '';
     });
   }
