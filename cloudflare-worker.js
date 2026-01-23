@@ -87,6 +87,12 @@ function validatePayload(payload) {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
         return { ok: false, message: 'hotels entries must be objects.' };
       }
+      if (typeof entry.id !== 'string' || !entry.id.trim()) {
+        return { ok: false, message: 'hotels entries must include id.' };
+      }
+      if (typeof entry.name !== 'string') {
+        return { ok: false, message: 'hotels entries must include name.' };
+      }
       if (typeof entry.startKey !== 'string' || !entry.startKey.trim()) {
         return { ok: false, message: 'hotels entries must include startKey.' };
       }
