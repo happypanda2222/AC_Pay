@@ -4918,13 +4918,23 @@ function buildCalendarPairingCancellationSegments(range){
           const trigger = pairingEvents[startIndex];
           const triggerTiming = trigger?.timing || getCalendarEventTiming(trigger?.event, trigger?.dateKey);
           const timingInfo = getCalendarPairingTimingInfo(pairing.pairingId);
+          const endDateKey = timingInfo.lastDayKey || pairingDays[pairingDays.length - 1];
+          let endOffsetMinutes = Number.isFinite(timingInfo.checkOutMinutes) ? timingInfo.checkOutMinutes : null;
+          if (!Number.isFinite(endOffsetMinutes) && endDateKey){
+            const endDay = calendarState.eventsByDate?.[endDateKey];
+            const endDayStartMs = getDateKeyStartMs(endDateKey);
+            const lastFlightEndMs = getCalendarDayLastFlightEndMs(endDay, endDateKey);
+            if (Number.isFinite(lastFlightEndMs) && Number.isFinite(endDayStartMs)){
+              endOffsetMinutes = Math.round((lastFlightEndMs - endDayStartMs) / 60000);
+            }
+          }
           if (triggerTiming && Number.isFinite(triggerTiming.startMs)){
             applyToRestInfo = {
               cancellation: lastCancellation,
               startDateKey: trigger.dateKey,
               startMs: triggerTiming.startMs,
-              endDateKey: timingInfo.lastDayKey || pairingDays[pairingDays.length - 1],
-              endOffsetMinutes: timingInfo.checkOutMinutes,
+              endDateKey,
+              endOffsetMinutes: Number.isFinite(endOffsetMinutes) ? endOffsetMinutes : null,
               eventIds: new Set(
                 pairingEvents
                   .slice(startIndex)
@@ -8966,29 +8976,8 @@ function getCalendarPairingEventSequence(eventId){
   if (!entry) return null;
   const pairingId = getCalendarPairingIdForEvent(entry.event, entry.dateKey);
   if (!pairingId) return null;
-  const pairingDays = getCalendarPairingDays(pairingId);
-  if (!pairingDays.length) return null;
-  const dayOrder = new Map(pairingDays.map((dateKey, index) => [dateKey, index]));
-  const pairingEvents = [];
-  pairingDays.forEach((dateKey, dayIndex) => {
-    const day = calendarState.eventsByDate?.[dateKey];
-    (day?.events || []).forEach((event, eventIndex) => {
-      pairingEvents.push({ event, dateKey, dayIndex, eventIndex });
-    });
-  });
+  const pairingEvents = getCalendarPairingOrderedEvents(pairingId);
   if (!pairingEvents.length) return false;
-  pairingEvents.sort((a, b) => {
-    const timingA = getCalendarEventTiming(a.event, a.dateKey);
-    const timingB = getCalendarEventTiming(b.event, b.dateKey);
-    const hasTimingA = Number.isFinite(timingA?.startMs);
-    const hasTimingB = Number.isFinite(timingB?.startMs);
-    if (hasTimingA && hasTimingB && timingA.startMs !== timingB.startMs){
-      return timingA.startMs - timingB.startMs;
-    }
-    const dayCompare = (dayOrder.get(a.dateKey) ?? a.dayIndex) - (dayOrder.get(b.dateKey) ?? b.dayIndex);
-    if (dayCompare !== 0) return dayCompare;
-    return a.eventIndex - b.eventIndex;
-  });
   const selectedIndex = pairingEvents.findIndex(item => item.event?.id === eventId);
   if (selectedIndex < 0) return null;
   return { entry, pairingId, pairingEvents, selectedIndex };
