@@ -8455,6 +8455,14 @@ function isCalendarSwipeBlocked(){
   return isModernCalendarDetailVisible();
 }
 
+function renderCalendarIfNeeded(){
+  const mainEl = document.getElementById('modern-calendar-main');
+  if (calendarNeedsRender && mainEl && !mainEl.classList.contains('hidden')){
+    renderCalendar();
+    calendarNeedsRender = false;
+  }
+}
+
 function openCalendarDetail(eventId, source = 'main'){
   const mainEl = document.getElementById('modern-calendar-main');
   const detailEl = document.getElementById('modern-calendar-detail');
@@ -8488,6 +8496,7 @@ function closeCalendarDetail(){
   if (detailEl) detailEl.classList.add('hidden');
   calendarDetailEventId = null;
   calendarDetailSource = 'main';
+  renderCalendarIfNeeded();
 }
 
 function refreshCalendarDetail(){
@@ -8577,6 +8586,7 @@ function closeCalendarPairingDetail(){
   if (mainEl) mainEl.classList.remove('hidden');
   if (detailEl) detailEl.classList.add('hidden');
   calendarPairingId = null;
+  renderCalendarIfNeeded();
 }
 
 function refreshCalendarPairingDetail(){
@@ -8611,6 +8621,7 @@ function closeCalendarDayDetail(){
     document.getElementById('modern-calendar-main')?.classList.remove('hidden');
   }
   calendarDayDetailDateKey = null;
+  renderCalendarIfNeeded();
 }
 
 function refreshCalendarDayDetail(){
@@ -8904,10 +8915,7 @@ function closeCalendarCreditDetail(){
   calendarCreditDetailOpen = false;
   calendarBlockGrowthDetailOpen = false;
   document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
-  if (calendarNeedsRender && mainEl && !mainEl.classList.contains('hidden')){
-    renderCalendar();
-    calendarNeedsRender = false;
-  }
+  renderCalendarIfNeeded();
 }
 
 function refreshCalendarCreditDetail(){
@@ -8938,6 +8946,7 @@ function closeCalendarTafbDetail(){
   if (mainEl) mainEl.classList.remove('hidden');
   if (detailEl) detailEl.classList.add('hidden');
   calendarTafbDetailOpen = false;
+  renderCalendarIfNeeded();
 }
 
 function refreshCalendarTafbDetail(){
@@ -8970,6 +8979,7 @@ function closeCalendarBlockGrowthDetail(){
   } else {
     document.getElementById('modern-calendar-main')?.classList.remove('hidden');
   }
+  renderCalendarIfNeeded();
 }
 
 function refreshCalendarBlockGrowthDetail(){
@@ -8990,12 +9000,20 @@ function setCalendarEventCancellation(eventId, status){
   if (updated){
     updateCalendarPairingMetrics(calendarState.eventsByDate);
     saveCalendarState();
-    renderCalendar();
+    const mainEl = document.getElementById('modern-calendar-main');
+    const isMainHidden = mainEl?.classList.contains('hidden');
+    if (isMainHidden){
+      calendarNeedsRender = true;
+    } else {
+      calendarNeedsRender = false;
+      renderCalendar();
+    }
     refreshCalendarDetail();
     refreshCalendarPairingDetail();
     refreshCalendarDayDetail();
     refreshCalendarCreditDetail();
     refreshCalendarTafbDetail();
+    refreshCalendarBlockGrowthDetail();
   }
 }
 
@@ -9051,12 +9069,20 @@ function setCalendarPairingCancellationFromEvent(eventId, status, options = {}){
   if (updated || thgReset){
     updateCalendarPairingMetrics(calendarState.eventsByDate);
     saveCalendarState();
-    renderCalendar();
+    const mainEl = document.getElementById('modern-calendar-main');
+    const isMainHidden = mainEl?.classList.contains('hidden');
+    if (isMainHidden){
+      calendarNeedsRender = true;
+    } else {
+      calendarNeedsRender = false;
+      renderCalendar();
+    }
     refreshCalendarDetail();
     refreshCalendarPairingDetail();
     refreshCalendarDayDetail();
     refreshCalendarCreditDetail();
     refreshCalendarTafbDetail();
+    refreshCalendarBlockGrowthDetail();
   }
   return updated;
 }
