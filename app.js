@@ -5486,7 +5486,7 @@ async function triggerCalendarAutoSync(){
     if (result?.queued){
       setCalendarStatus('Offline. Sync queued.');
     } else {
-      setCalendarStatus('Synced to cloud.');
+      setCalendarStatus(result?.statusMessage || 'Synced to cloud.');
     }
   } catch (err){
     console.warn('Calendar auto-sync failed', err);
@@ -5499,6 +5499,7 @@ async function syncCalendarToCloud(){
     queueCalendarSyncRetry();
     return { queued: true };
   }
+  const CALENDAR_SYNC_SCHEMA_VERSION = 2;
   const token = getCalendarSyncToken();
   if (!token){
     throw new Error('Missing calendar sync token.');
@@ -5538,11 +5539,12 @@ async function syncCalendarToCloud(){
     selectedMonth,
     hotels
   };
-  const payloadMinimal = {
+  const payloadWithoutHotels = {
     eventsByDate,
     months,
     selectedMonth,
-    hotels
+    blockMonthsByMonthKey,
+    blockMonthRecurring
   };
   const sendCalendarPayload = async (bodyPayload) => {
     try {
@@ -5568,32 +5570,63 @@ async function syncCalendarToCloud(){
       return '';
     }
   };
-  const shouldRetryPayload = (status, message) => {
+  const readSchemaVersion = (resp) => {
+    const headerValue = resp?.headers?.get('X-AC-Pay-Schema');
+    if (!headerValue) return null;
+    const parsed = Number.parseInt(headerValue, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const isSchemaOutdated = (schemaVersion, message) => {
+    if (!message || typeof message !== 'string') return false;
+    const lower = message.toLowerCase();
+    if (!lower.includes('hotels')) return false;
+    if (schemaVersion === null) return true;
+    return schemaVersion < CALENDAR_SYNC_SCHEMA_VERSION;
+  };
+  const shouldRetryPayload = (status, message, schemaVersion) => {
     if (status !== 400) return null;
     if (!message || typeof message !== 'string') return null;
     const lower = message.toLowerCase();
     const rejectBlocks = ['blockmonthsbymonthkey', 'blockmonthrecurring'].some((key) => lower.includes(key));
-    if (!rejectBlocks) return null;
-    return { rejectBlocks };
+    const rejectHotels = lower.includes('unexpected keys') && lower.includes('hotels');
+    if (!rejectBlocks && !rejectHotels) return null;
+    return { rejectBlocks, rejectHotels, schemaOutdated: isSchemaOutdated(schemaVersion, message) };
   };
+  let statusMessage = '';
   let response = await sendCalendarPayload(payload);
   if (!response.ok){
     const validationMessage = await readCalendarSyncMessage(response);
-    const retryInfo = shouldRetryPayload(response.status, validationMessage);
+    const schemaVersion = readSchemaVersion(response);
+    const retryInfo = shouldRetryPayload(response.status, validationMessage, schemaVersion);
     if (retryInfo){
       let retryPayload = payload;
       if (retryInfo.rejectBlocks){
         retryPayload = payloadWithoutBlocks;
         console.warn('Calendar sync rejected block month keys; retrying without block month payload.');
       }
+      if (retryInfo.rejectHotels){
+        retryPayload = retryPayload === payloadWithoutBlocks
+          ? { ...payloadWithoutBlocks, hotels: undefined }
+          : payloadWithoutHotels;
+        console.warn('Calendar sync rejected hotels; retrying without hotels payload.');
+      }
       response = await sendCalendarPayload(retryPayload);
       if (!response.ok){
         const retryMessage = await readCalendarSyncMessage(response);
         const retrySuffix = retryMessage ? `: ${retryMessage}` : '';
+        if (retryInfo.schemaOutdated){
+          throw new Error('Server schema outdated (sync worker does not recognize hotels).');
+        }
         throw new Error(`Calendar sync failed (${response.status})${retrySuffix}`);
+      }
+      if (retryInfo.schemaOutdated){
+        statusMessage = 'Synced, but server schema outdated (hotels skipped).';
       }
     } else {
       const suffix = validationMessage ? `: ${validationMessage}` : '';
+      if (isSchemaOutdated(schemaVersion, validationMessage)){
+        throw new Error('Server schema outdated (sync worker does not recognize hotels).');
+      }
       throw new Error(`Calendar sync failed (${response.status})${suffix}`);
     }
   }
@@ -5612,7 +5645,7 @@ async function syncCalendarToCloud(){
     console.warn('Failed to store calendar sync timestamp', err);
   }
   clearCalendarSyncRetry();
-  return { queued: false };
+  return { queued: false, statusMessage };
 }
 
 async function loadCalendarFromCloud({ skipConfirm = false } = {}){
