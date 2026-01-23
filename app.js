@@ -4376,6 +4376,7 @@ let calendarBlockMonthDraft = null;
 let calendarHotelSelecting = false;
 let calendarHotelSelection = { startKey: null, endKey: null };
 let calendarPairingDisplayMode = 'classic';
+let calendarNeedsRender = false;
 const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
 let calendarAutoSyncTimer = null;
 let calendarHotelBarResizeObserver = null;
@@ -8677,6 +8678,10 @@ function closeCalendarCreditDetail(){
   calendarCreditDetailOpen = false;
   calendarBlockGrowthDetailOpen = false;
   document.getElementById('modern-calendar-block-growth-detail')?.classList.add('hidden');
+  if (calendarNeedsRender && mainEl && !mainEl.classList.contains('hidden')){
+    renderCalendar();
+    calendarNeedsRender = false;
+  }
 }
 
 function refreshCalendarCreditDetail(){
@@ -9403,7 +9408,20 @@ function initCalendar(){
       return;
     }
     setCalendarVacationCreditMinutes(monthKey, minutes);
-    renderCalendar();
+    const mainEl = document.getElementById('modern-calendar-main');
+    const isMainHidden = mainEl?.classList.contains('hidden');
+    if (isMainHidden){
+      calendarNeedsRender = true;
+      const [year, month] = (calendarState.selectedMonth || '').split('-').map(Number);
+      if (Number.isFinite(year) && Number.isFinite(month)){
+        updateCalendarTotals(year, month);
+      } else {
+        updateCalendarTotals(0, 0);
+      }
+    } else {
+      calendarNeedsRender = false;
+      renderCalendar();
+    }
     refreshCalendarCreditDetail();
     refreshCalendarTafbDetail();
     if (statusEl) statusEl.textContent = 'Vacation credit saved.';
