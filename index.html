@@ -505,6 +505,16 @@
       z-index:50;
       pointer-events:none;
     }
+    .calendar-row-pairing-bars{
+      position:absolute;
+      top:0;
+      bottom:0;
+      left:0;
+      right:0;
+      width:100%;
+      z-index:40;
+      pointer-events:none;
+    }
     .calendar-weekday{
       text-transform:uppercase;
       letter-spacing:.2px;
@@ -747,6 +757,36 @@
       font-size:inherit;
       line-height:inherit;
       border-radius:999px;
+    }
+    .calendar-row-pairing-segment{
+      margin:0;
+      position:absolute;
+      display:flex;
+      align-items:center;
+      height:16px;
+      border-radius:999px;
+      padding:0 6px;
+      font-size:9px;
+      font-weight:800;
+      letter-spacing:.2px;
+      overflow:hidden;
+      white-space:nowrap;
+      text-overflow:ellipsis;
+      pointer-events:auto;
+      z-index:6;
+      background:#3b82f6;
+      color:#f8fafc;
+    }
+    .calendar-row-pairing-segment.is-start{
+      border-top-right-radius:0;
+      border-bottom-right-radius:0;
+    }
+    .calendar-row-pairing-segment.is-end{
+      border-top-left-radius:0;
+      border-bottom-left-radius:0;
+    }
+    .calendar-row-pairing-segment.is-middle{
+      border-radius:0;
     }
     .calendar-row-hotel-segment.is-end{
       border-top-right-radius:999px;

@@ -4747,39 +4747,120 @@ function setCalendarHotelSelecting(shouldSelect){
   }
 }
 
+function getCalendarPairingTimingInfo(pairingId){
+  const pairingDays = getCalendarPairingDays(pairingId);
+  if (!pairingDays.length){
+    return {
+      checkInMinutes: null,
+      checkOutMinutes: null,
+      firstDayKey: '',
+      lastDayKey: ''
+    };
+  }
+  const firstDayKey = pairingDays[0];
+  const lastDayKey = pairingDays[pairingDays.length - 1];
+  const firstDay = calendarState.eventsByDate?.[firstDayKey];
+  const lastDay = calendarState.eventsByDate?.[lastDayKey];
+  let checkInMinutes = Number.isFinite(firstDay?.checkInMinutes) ? firstDay.checkInMinutes : null;
+  if (!Number.isFinite(checkInMinutes)){
+    const firstFlightMs = getCalendarDayFirstFlightStartMs(firstDay, firstDayKey);
+    const dayStartMs = getDateKeyStartMs(firstDayKey);
+    if (Number.isFinite(firstFlightMs) && Number.isFinite(dayStartMs)){
+      const adjustedMinutes = Math.round((firstFlightMs - dayStartMs) / 60000) - 75;
+      if (adjustedMinutes >= 0) checkInMinutes = adjustedMinutes;
+    }
+  }
+  let checkOutMinutes = Number.isFinite(lastDay?.checkOutMinutes) ? lastDay.checkOutMinutes : null;
+  if (!Number.isFinite(checkOutMinutes)){
+    const lastFlightMs = getCalendarDayLastFlightEndMs(lastDay, lastDayKey);
+    const dayStartMs = getDateKeyStartMs(lastDayKey);
+    if (Number.isFinite(lastFlightMs) && Number.isFinite(dayStartMs)){
+      checkOutMinutes = Math.round((lastFlightMs - dayStartMs) / 60000) + 15;
+    }
+  }
+  if (Number.isFinite(checkOutMinutes) && checkOutMinutes >= 1440){
+    checkOutMinutes -= 1440;
+  }
+  return {
+    checkInMinutes: Number.isFinite(checkInMinutes) ? checkInMinutes : null,
+    checkOutMinutes: Number.isFinite(checkOutMinutes) ? checkOutMinutes : null,
+    firstDayKey,
+    lastDayKey
+  };
+}
+
+function getCalendarPairingLayoverLabels(pairingId){
+  const pairingDays = getCalendarPairingDays(pairingId);
+  if (pairingDays.length < 3) return [];
+  const labels = [];
+  for (let i = 1; i < pairingDays.length - 1; i += 1){
+    const dateKey = pairingDays[i];
+    const day = calendarState.eventsByDate?.[dateKey];
+    const rawLabel = getCalendarLayoverLocationLabel(day, dateKey) || getCalendarPairingLayoverLabel(day, dateKey);
+    const label = String(rawLabel || '').trim();
+    if (!label) continue;
+    if (!labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
 function getCalendarPairingBarLabel(pairing){
-  const pairingNumber = String(pairing?.pairingNumber || '').trim();
-  if (pairingNumber) return `Pairing ${pairingNumber}`;
-  return 'Pairing';
+  const pairingId = String(pairing?.pairingId || '').trim();
+  if (!pairingId) return '';
+  const { checkInMinutes, checkOutMinutes } = getCalendarPairingTimingInfo(pairingId);
+  const checkInLabel = Number.isFinite(checkInMinutes) ? formatMinutesToTime(checkInMinutes) : 'Check in';
+  const checkOutLabel = Number.isFinite(checkOutMinutes) ? formatMinutesToTime(checkOutMinutes) : 'Check out';
+  const layoverLabels = getCalendarPairingLayoverLabels(pairingId);
+  if (layoverLabels.length){
+    return `${checkInLabel}/${layoverLabels.join('/')}/${checkOutLabel}`;
+  }
+  return `${checkInLabel}/${checkOutLabel}`;
 }
 
-function addCalendarBarSegment(map, dateKey, segment){
-  if (!map.has(dateKey)) map.set(dateKey, []);
-  map.get(dateKey).push(segment);
-}
-
-function buildCalendarPairingBarMap(range){
-  const map = new Map();
-  if (!range) return map;
+function buildCalendarPairingRowSegments(range){
+  const segments = [];
+  if (!range) return segments;
   const pairingMap = buildCalendarPairingIndex();
   pairingMap.forEach((pairing) => {
-    const visibleDays = pairing.days.filter((dateKey) => isCalendarDateKeyInRange(dateKey, range));
+    const pairingDays = pairing.days;
+    if (!pairingDays.length) return;
+    const visibleDays = pairingDays.filter((dateKey) => isCalendarDateKeyInRange(dateKey, range));
     if (!visibleDays.length) return;
-    const firstVisible = visibleDays[0];
-    const lastVisible = visibleDays[visibleDays.length - 1];
     const label = getCalendarPairingBarLabel(pairing);
-    visibleDays.forEach((dateKey) => {
-      const isSingle = firstVisible === lastVisible;
-      const segment = {
-        type: 'pairing',
+    const timing = getCalendarPairingTimingInfo(pairing.pairingId);
+    const fullStartKey = pairingDays[0];
+    const fullEndKey = pairingDays[pairingDays.length - 1];
+    const pushSegment = (segmentStartKey, segmentEndKey, weekIndex) => {
+      const isRangeStart = segmentStartKey === fullStartKey;
+      const isRangeEnd = segmentEndKey === fullEndKey;
+      const position = isRangeStart && isRangeEnd
+        ? 'single'
+        : (isRangeStart ? 'start' : (isRangeEnd ? 'end' : 'middle'));
+      segments.push({
         pairingId: pairing.pairingId,
-        label: dateKey === firstVisible ? label : '',
-        position: isSingle ? 'single' : (dateKey === firstVisible ? 'start' : (dateKey === lastVisible ? 'end' : 'middle'))
-      };
-      addCalendarBarSegment(map, dateKey, segment);
-    });
+        label: segmentStartKey === visibleDays[0] ? label : '',
+        startKey: segmentStartKey,
+        endKey: segmentEndKey,
+        weekIndex,
+        position,
+        startOffsetMinutes: segmentStartKey === timing.firstDayKey ? timing.checkInMinutes : null,
+        endOffsetMinutes: segmentEndKey === timing.lastDayKey ? timing.checkOutMinutes : null
+      });
+    };
+    let currentWeekIndex = getCalendarWeekIndex(visibleDays[0], range.startKey);
+    let segmentStartKey = visibleDays[0];
+    for (let index = 1; index < visibleDays.length; index += 1){
+      const dateKey = visibleDays[index];
+      const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
+      if (weekIndex !== currentWeekIndex){
+        pushSegment(segmentStartKey, visibleDays[index - 1], currentWeekIndex);
+        currentWeekIndex = weekIndex;
+        segmentStartKey = dateKey;
+      }
+    }
+    pushSegment(segmentStartKey, visibleDays[visibleDays.length - 1], currentWeekIndex);
   });
-  return map;
+  return segments;
 }
 
 function buildCalendarHotelRowSegments(range){
@@ -7404,6 +7485,26 @@ function buildCalendarHotelOffsetMap(container){
   return offsets;
 }
 
+function buildCalendarPairingOffsetMap(container){
+  const offsets = new Map();
+  if (!container) return offsets;
+  const gap = 4;
+  container.querySelectorAll('.calendar-day').forEach((dayCell) => {
+    const dateKey = dayCell.dataset.dateKey;
+    if (!dateKey) return;
+    const dayNumber = dayCell.querySelector('.calendar-day-number');
+    const rowWrap = dayCell.closest('.calendar-row-wrap');
+    if (!dayNumber || !rowWrap) return;
+    const rowRect = rowWrap.getBoundingClientRect();
+    const dayNumberRect = dayNumber.getBoundingClientRect();
+    const topOffset = dayNumberRect.bottom + gap - rowRect.top;
+    if (Number.isFinite(topOffset)){
+      offsets.set(dateKey, topOffset);
+    }
+  });
+  return offsets;
+}
+
 function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = new Map()){
   if (!container) return;
   container.querySelectorAll('.calendar-row-hotel-segment').forEach((segment) => segment.remove());
@@ -7492,6 +7593,78 @@ function renderCalendarHotelRowSegments(container, range, hotelOffsetsByDate = n
     bar.appendChild(label);
     barsContainer.appendChild(bar);
     fitCalendarHotelBarLabel(bar, label);
+  });
+}
+
+function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate = new Map()){
+  if (!container) return;
+  container.querySelectorAll('.calendar-row-pairing-segment').forEach((segment) => segment.remove());
+  const rowSegments = buildCalendarPairingRowSegments(range);
+  if (!rowSegments.length) return;
+  rowSegments.forEach((segment) => {
+    const rowWrap = container.querySelector(`.calendar-row-wrap[data-week-index="${segment.weekIndex}"]`);
+    if (!rowWrap) return;
+    const row = rowWrap.querySelector('.calendar-row');
+    if (!row) return;
+    const barsContainer = rowWrap.querySelector('.calendar-row-pairing-bars');
+    if (!barsContainer) return;
+    const startCell = row.querySelector(`.calendar-day[data-date-key="${segment.startKey}"]`);
+    const endCell = row.querySelector(`.calendar-day[data-date-key="${segment.endKey}"]`);
+    if (!startCell || !endCell) return;
+    const rowRect = rowWrap.getBoundingClientRect();
+    const startCellRect = startCell.getBoundingClientRect();
+    const endCellRect = endCell.getBoundingClientRect();
+    let leftOffset = startCellRect.left - rowRect.left;
+    let rightOffset = endCellRect.right - rowRect.left;
+    const startDayWidth = startCellRect.width;
+    const endDayWidth = endCellRect.width;
+    if (Number.isFinite(segment.startOffsetMinutes) && Number.isFinite(startDayWidth) && startDayWidth > 0){
+      const minuteOffset = Math.max(0, Math.min(1440, segment.startOffsetMinutes));
+      leftOffset = startCellRect.left - rowRect.left + ((minuteOffset / 1440) * startDayWidth);
+    }
+    if (Number.isFinite(segment.endOffsetMinutes) && Number.isFinite(endDayWidth) && endDayWidth > 0){
+      const minuteOffset = Math.max(0, Math.min(1440, segment.endOffsetMinutes));
+      rightOffset = endCellRect.left - rowRect.left + ((minuteOffset / 1440) * endDayWidth);
+    }
+    const segmentWidth = rightOffset - leftOffset;
+    if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
+    let topOffset = null;
+    if (pairingOffsetsByDate instanceof Map && pairingOffsetsByDate.size){
+      let targetOffsetKey = null;
+      if (pairingOffsetsByDate.has(segment.startKey)){
+        targetOffsetKey = segment.startKey;
+      } else {
+        const coveredKeys = getCalendarDateKeysInRange(segment.startKey, segment.endKey);
+        targetOffsetKey = coveredKeys.find(dateKey => pairingOffsetsByDate.has(dateKey)) || null;
+      }
+      if (targetOffsetKey){
+        const mappedOffset = pairingOffsetsByDate.get(targetOffsetKey);
+        if (Number.isFinite(mappedOffset)){
+          topOffset = mappedOffset;
+        }
+      }
+    }
+    if (!Number.isFinite(topOffset)){
+      const dayNumber = startCell.querySelector('.calendar-day-number');
+      if (dayNumber){
+        const dayNumberRect = dayNumber.getBoundingClientRect();
+        topOffset = dayNumberRect.bottom + 4 - rowRect.top;
+      } else {
+        topOffset = startCellRect.top - rowRect.top;
+      }
+    }
+    const bar = document.createElement('div');
+    bar.className = 'calendar-bar calendar-bar-pairing calendar-row-pairing-segment';
+    if (segment.position === 'start') bar.classList.add('is-start');
+    if (segment.position === 'end') bar.classList.add('is-end');
+    if (segment.position === 'middle') bar.classList.add('is-middle');
+    if (segment.position === 'single') bar.classList.add('is-single');
+    bar.dataset.pairingId = segment.pairingId;
+    bar.style.left = `${leftOffset}px`;
+    bar.style.top = `${topOffset}px`;
+    bar.style.width = `${segmentWidth}px`;
+    if (segment.label) bar.textContent = segment.label;
+    barsContainer.appendChild(bar);
   });
 }
 
@@ -7614,7 +7787,6 @@ function renderCalendar(){
   const rangeStart = new Date(`${displayRange.startKey}T00:00:00`);
   const rangeEnd = new Date(`${displayRange.endKey}T00:00:00`);
   const showBarStyle = calendarPairingDisplayMode === 'bar';
-  const pairingBarsByDate = showBarStyle ? buildCalendarPairingBarMap(displayRange) : new Map();
   const hotelSelectionRange = calendarHotelSelecting ? getCalendarHotelSelectionRange() : null;
   const todayKey = buildCalendarDateKeyFromDate(new Date());
   gridEl.innerHTML = '';
@@ -7634,6 +7806,11 @@ function renderCalendar(){
       currentRow = document.createElement('div');
       currentRow.className = 'calendar-row';
       currentRowWrap.appendChild(currentRow);
+      if (showBarStyle){
+        const currentPairingBarContainer = document.createElement('div');
+        currentPairingBarContainer.className = 'calendar-row-pairing-bars';
+        currentRowWrap.appendChild(currentPairingBarContainer);
+      }
       const currentHotelBarContainer = document.createElement('div');
       currentHotelBarContainer.className = 'calendar-row-hotel-bars';
       currentRowWrap.appendChild(currentHotelBarContainer);
@@ -7686,24 +7863,7 @@ function renderCalendar(){
     dayNumber.className = 'calendar-day-number';
     dayNumber.textContent = String(current.getDate());
     dayCell.appendChild(dayNumber);
-    if (showBarStyle){
-      const pairingSegments = pairingBarsByDate.get(dateKey) || [];
-      if (pairingSegments.length){
-        const bars = document.createElement('div');
-        bars.className = 'calendar-day-bars';
-        pairingSegments.forEach((segment) => {
-          const bar = document.createElement('div');
-          bar.className = `calendar-bar calendar-bar-${segment.type}`;
-          if (segment.position) bar.classList.add(`is-${segment.position}`);
-          if (segment.type === 'pairing'){
-            bar.dataset.pairingId = segment.pairingId;
-          }
-          if (segment.label && segment.type !== 'hotel') bar.textContent = segment.label;
-          bars.appendChild(bar);
-        });
-        dayCell.appendChild(bars);
-      }
-    } else {
+    if (!showBarStyle){
       if (dayEvents.length || dayData?.pairing?.pairingId){
         const wrapper = document.createElement('div');
         wrapper.className = 'calendar-event-item';
@@ -7756,6 +7916,10 @@ function renderCalendar(){
     currentRow.appendChild(dayCell);
   }
   requestAnimationFrame(() => {
+    if (showBarStyle){
+      calendarState.pairingOffsetsByDate = buildCalendarPairingOffsetMap(gridEl);
+      renderCalendarPairingRowSegments(gridEl, displayRange, calendarState.pairingOffsetsByDate);
+    }
     calendarState.hotelOffsetsByDate = buildCalendarHotelOffsetMap(gridEl);
     renderCalendarHotelRowSegments(gridEl, displayRange, calendarState.hotelOffsetsByDate);
     requestAnimationFrame(() => {
