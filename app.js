@@ -4864,16 +4864,78 @@ function buildCalendarPairingRowSegments(range){
   return segments;
 }
 
+function getCalendarPairingOrderedEvents(pairingId){
+  const pairingDays = getCalendarPairingDays(pairingId);
+  if (!pairingDays.length) return [];
+  const dayOrder = new Map(pairingDays.map((dateKey, index) => [dateKey, index]));
+  const pairingEvents = [];
+  pairingDays.forEach((dateKey, dayIndex) => {
+    const day = calendarState.eventsByDate?.[dateKey];
+    (day?.events || []).forEach((event, eventIndex) => {
+      const timing = getCalendarEventTiming(event, dateKey);
+      pairingEvents.push({ event, dateKey, dayIndex, eventIndex, timing });
+    });
+  });
+  pairingEvents.sort((a, b) => {
+    const timingA = a.timing;
+    const timingB = b.timing;
+    const hasTimingA = Number.isFinite(timingA?.startMs);
+    const hasTimingB = Number.isFinite(timingB?.startMs);
+    if (hasTimingA && hasTimingB && timingA.startMs !== timingB.startMs){
+      return timingA.startMs - timingB.startMs;
+    }
+    const dayCompare = (dayOrder.get(a.dateKey) ?? a.dayIndex) - (dayOrder.get(b.dateKey) ?? b.dayIndex);
+    if (dayCompare !== 0) return dayCompare;
+    return a.eventIndex - b.eventIndex;
+  });
+  return pairingEvents;
+}
+
 function buildCalendarPairingCancellationSegments(range){
   const segments = [];
   if (!range) return segments;
   const pairingMap = buildCalendarPairingIndex();
   const segmentMap = new Map();
+  const applyToRestSegments = [];
   pairingMap.forEach((pairing) => {
     const pairingDays = pairing.days;
     if (!pairingDays.length) return;
     const visibleDays = pairingDays.filter((dateKey) => isCalendarDateKeyInRange(dateKey, range));
     if (!visibleDays.length) return;
+    const pairingEvents = getCalendarPairingOrderedEvents(pairing.pairingId);
+    let applyToRestInfo = null;
+    if (pairingEvents.length > 1){
+      const lastEntry = pairingEvents[pairingEvents.length - 1];
+      const lastCancellation = String(lastEntry?.event?.cancellation || '').toUpperCase();
+      if (lastCancellation === 'CNX' || lastCancellation === 'CNX PP'){
+        let startIndex = pairingEvents.length - 1;
+        while (startIndex > 0){
+          const prevCancellation = String(pairingEvents[startIndex - 1]?.event?.cancellation || '').toUpperCase();
+          if (prevCancellation !== lastCancellation) break;
+          startIndex -= 1;
+        }
+        if (pairingEvents.length - startIndex > 1){
+          const trigger = pairingEvents[startIndex];
+          const triggerTiming = trigger?.timing || getCalendarEventTiming(trigger?.event, trigger?.dateKey);
+          const timingInfo = getCalendarPairingTimingInfo(pairing.pairingId);
+          if (triggerTiming && Number.isFinite(triggerTiming.startMs)){
+            applyToRestInfo = {
+              cancellation: lastCancellation,
+              startDateKey: trigger.dateKey,
+              startMs: triggerTiming.startMs,
+              endDateKey: timingInfo.lastDayKey || pairingDays[pairingDays.length - 1],
+              endOffsetMinutes: timingInfo.checkOutMinutes,
+              eventIds: new Set(
+                pairingEvents
+                  .slice(startIndex)
+                  .map(item => item.event?.id)
+                  .filter(Boolean)
+              )
+            };
+          }
+        }
+      }
+    }
     visibleDays.forEach((dateKey) => {
       const day = calendarState.eventsByDate?.[dateKey];
       const dayEvents = Array.isArray(day?.events) ? day.events : [];
@@ -4885,6 +4947,7 @@ function buildCalendarPairingCancellationSegments(range){
       dayEvents.forEach((event) => {
         const cancellation = String(event?.cancellation || '').toUpperCase();
         if (cancellation !== 'CNX' && cancellation !== 'CNX PP') return;
+        if (applyToRestInfo?.eventIds?.has(event?.id)) return;
         const timing = getCalendarEventTiming(event, dateKey);
         if (!timing) return;
         const startMs = Math.max(timing.startMs, dayStartMs);
@@ -4910,8 +4973,41 @@ function buildCalendarPairingCancellationSegments(range){
         }
       });
     });
+    if (applyToRestInfo){
+      const overlayDateKeys = getCalendarDateKeysInRange(
+        applyToRestInfo.startDateKey,
+        applyToRestInfo.endDateKey
+      );
+      overlayDateKeys.forEach((dateKey) => {
+        if (!isCalendarDateKeyInRange(dateKey, range)) return;
+        const dayStartMs = getDateKeyStartMs(dateKey);
+        if (!Number.isFinite(dayStartMs)) return;
+        const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
+        const isStartDay = dateKey === applyToRestInfo.startDateKey;
+        const isEndDay = dateKey === applyToRestInfo.endDateKey;
+        let startOffsetMinutes = 0;
+        if (isStartDay && Number.isFinite(applyToRestInfo.startMs)){
+          const startMs = Math.max(applyToRestInfo.startMs, dayStartMs);
+          startOffsetMinutes = Math.max(0, Math.min(1440, Math.round((startMs - dayStartMs) / 60000)));
+        }
+        let endOffsetMinutes = 1440;
+        if (isEndDay && Number.isFinite(applyToRestInfo.endOffsetMinutes)){
+          endOffsetMinutes = Math.max(0, Math.min(1440, Math.round(applyToRestInfo.endOffsetMinutes)));
+        }
+        if (endOffsetMinutes <= startOffsetMinutes) return;
+        applyToRestSegments.push({
+          pairingId: pairing.pairingId,
+          weekIndex,
+          dateKey,
+          cancellation: applyToRestInfo.cancellation,
+          startOffsetMinutes,
+          endOffsetMinutes
+        });
+      });
+    }
   });
   segmentMap.forEach((segment) => segments.push(segment));
+  segments.push(...applyToRestSegments);
   return segments;
 }
 
