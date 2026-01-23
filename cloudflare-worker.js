@@ -1,5 +1,5 @@
 const CALENDAR_KEY = 'calendar:default';
-const CALENDAR_SCHEMA_VERSION = 2;
+const CALENDAR_SCHEMA_VERSION = 3;
 
 function jsonResponse(body, options = {}) {
   const headers = new Headers(options.headers || {});

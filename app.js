@@ -5499,7 +5499,7 @@ async function syncCalendarToCloud(){
     queueCalendarSyncRetry();
     return { queued: true };
   }
-  const CALENDAR_SYNC_SCHEMA_VERSION = 2;
+  const CALENDAR_SYNC_SCHEMA_VERSION = 3;
   const token = getCalendarSyncToken();
   if (!token){
     throw new Error('Missing calendar sync token.');
@@ -5583,14 +5583,19 @@ async function syncCalendarToCloud(){
     if (schemaVersion === null) return true;
     return schemaVersion < CALENDAR_SYNC_SCHEMA_VERSION;
   };
+  const formatSchemaOutdatedMessage = (schemaVersion) => {
+    const versionLabel = Number.isFinite(schemaVersion) ? `v${schemaVersion}` : 'unknown version';
+    return `sync worker ${versionLabel} is outdated; update to v${CALENDAR_SYNC_SCHEMA_VERSION}+ to sync hotels.`;
+  };
   const shouldRetryPayload = (status, message, schemaVersion) => {
     if (status !== 400) return null;
     if (!message || typeof message !== 'string') return null;
     const lower = message.toLowerCase();
     const rejectBlocks = ['blockmonthsbymonthkey', 'blockmonthrecurring'].some((key) => lower.includes(key));
-    const rejectHotels = lower.includes('unexpected keys') && lower.includes('hotels');
+    const schemaOutdated = isSchemaOutdated(schemaVersion, message);
+    const rejectHotels = schemaOutdated && lower.includes('unexpected keys') && lower.includes('hotels');
     if (!rejectBlocks && !rejectHotels) return null;
-    return { rejectBlocks, rejectHotels, schemaOutdated: isSchemaOutdated(schemaVersion, message) };
+    return { rejectBlocks, rejectHotels, schemaOutdated };
   };
   let statusMessage = '';
   let response = await sendCalendarPayload(payload);
@@ -5615,17 +5620,17 @@ async function syncCalendarToCloud(){
         const retryMessage = await readCalendarSyncMessage(response);
         const retrySuffix = retryMessage ? `: ${retryMessage}` : '';
         if (retryInfo.schemaOutdated){
-          throw new Error('Server schema outdated (sync worker does not recognize hotels).');
+          throw new Error(formatSchemaOutdatedMessage(schemaVersion));
         }
         throw new Error(`Calendar sync failed (${response.status})${retrySuffix}`);
       }
       if (retryInfo.schemaOutdated){
-        statusMessage = 'Synced, but server schema outdated (hotels skipped).';
+        statusMessage = `Synced, but ${formatSchemaOutdatedMessage(schemaVersion)} Hotels skipped.`;
       }
     } else {
       const suffix = validationMessage ? `: ${validationMessage}` : '';
       if (isSchemaOutdated(schemaVersion, validationMessage)){
-        throw new Error('Server schema outdated (sync worker does not recognize hotels).');
+        throw new Error(formatSchemaOutdatedMessage(schemaVersion));
       }
       throw new Error(`Calendar sync failed (${response.status})${suffix}`);
     }
