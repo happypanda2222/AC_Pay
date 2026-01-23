@@ -7862,21 +7862,48 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
     bar.style.width = `${segmentWidth}px`;
     const cancellationKey = `${segment.pairingId}|${segment.weekIndex}`;
     const rowCancellationSegments = cancellationSegmentsByRow.get(cancellationKey) || [];
-    rowCancellationSegments.forEach((cnxSegment) => {
-      if (cnxSegment.dateKey < segment.startKey || cnxSegment.dateKey > segment.endKey) return;
-      const dayCell = row.querySelector(`.calendar-day[data-date-key="${cnxSegment.dateKey}"]`);
-      if (!dayCell) return;
-      const dayCellRect = dayCell.getBoundingClientRect();
-      const dayWidth = dayCellRect.width;
-      let overlayLeft = dayCellRect.left - rowRect.left;
-      let overlayRight = dayCellRect.right - rowRect.left;
-      if (Number.isFinite(cnxSegment.startOffsetMinutes) && Number.isFinite(dayWidth) && dayWidth > 0){
-        const minuteOffset = Math.max(0, Math.min(1440, cnxSegment.startOffsetMinutes));
-        overlayLeft = dayCellRect.left - rowRect.left + ((minuteOffset / 1440) * dayWidth);
+    const cancellationSegments = rowCancellationSegments
+      .filter(cnxSegment => cnxSegment.dateKey >= segment.startKey && cnxSegment.dateKey <= segment.endKey)
+      .sort((a, b) => {
+        if (a.cancellation !== b.cancellation) return a.cancellation.localeCompare(b.cancellation);
+        return a.dateKey.localeCompare(b.dateKey);
+      });
+    const overlayGroups = [];
+    cancellationSegments.forEach((cnxSegment) => {
+      const current = overlayGroups[overlayGroups.length - 1];
+      if (!current
+        || current.cancellation !== cnxSegment.cancellation
+        || !areDateKeysContiguous(current.endKey, cnxSegment.dateKey)
+      ){
+        overlayGroups.push({
+          cancellation: cnxSegment.cancellation,
+          startKey: cnxSegment.dateKey,
+          endKey: cnxSegment.dateKey,
+          startOffsetMinutes: cnxSegment.startOffsetMinutes,
+          endOffsetMinutes: cnxSegment.endOffsetMinutes
+        });
+      } else {
+        current.endKey = cnxSegment.dateKey;
+        current.endOffsetMinutes = cnxSegment.endOffsetMinutes;
       }
-      if (Number.isFinite(cnxSegment.endOffsetMinutes) && Number.isFinite(dayWidth) && dayWidth > 0){
+    });
+    overlayGroups.forEach((cnxSegment) => {
+      const startCell = row.querySelector(`.calendar-day[data-date-key="${cnxSegment.startKey}"]`);
+      const endCell = row.querySelector(`.calendar-day[data-date-key="${cnxSegment.endKey}"]`);
+      if (!startCell || !endCell) return;
+      const startCellRect = startCell.getBoundingClientRect();
+      const endCellRect = endCell.getBoundingClientRect();
+      const startDayWidth = startCellRect.width;
+      const endDayWidth = endCellRect.width;
+      let overlayLeft = startCellRect.left - rowRect.left;
+      let overlayRight = endCellRect.right - rowRect.left;
+      if (Number.isFinite(cnxSegment.startOffsetMinutes) && Number.isFinite(startDayWidth) && startDayWidth > 0){
+        const minuteOffset = Math.max(0, Math.min(1440, cnxSegment.startOffsetMinutes));
+        overlayLeft = startCellRect.left - rowRect.left + ((minuteOffset / 1440) * startDayWidth);
+      }
+      if (Number.isFinite(cnxSegment.endOffsetMinutes) && Number.isFinite(endDayWidth) && endDayWidth > 0){
         const minuteOffset = Math.max(0, Math.min(1440, cnxSegment.endOffsetMinutes));
-        overlayRight = dayCellRect.left - rowRect.left + ((minuteOffset / 1440) * dayWidth);
+        overlayRight = endCellRect.left - rowRect.left + ((minuteOffset / 1440) * endDayWidth);
       }
       const clippedLeft = Math.max(leftOffset, overlayLeft);
       const clippedRight = Math.min(rightOffset, overlayRight);
