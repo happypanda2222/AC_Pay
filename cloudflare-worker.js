@@ -1,5 +1,4 @@
 const CALENDAR_KEY = 'calendar:default';
-const WORKER_VERSION = '2025-02-14-hotels-1';
 
 function jsonResponse(body, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -16,7 +15,6 @@ function withCors(headers, origin) {
     next.set('Access-Control-Allow-Origin', origin);
     next.set('Vary', 'Origin');
   }
-  next.set('X-Worker-Version', WORKER_VERSION);
   next.set('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
   next.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-None-Match');
   next.set('Access-Control-Expose-Headers', 'ETag');
@@ -39,7 +37,6 @@ function validatePayload(payload) {
   const requiredKeys = ['eventsByDate', 'months', 'selectedMonth', 'blockMonthsByMonthKey', 'blockMonthRecurring'];
   const optionalKeys = ['hotels'];
   const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
-  allowedKeys.add('hotels');
   const keys = Object.keys(payload);
   const missing = requiredKeys.filter(key => !(key in payload));
   if (missing.length) {
