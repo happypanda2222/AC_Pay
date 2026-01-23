@@ -5021,6 +5021,56 @@ function buildCalendarPairingCancellationSegments(range){
   return segments;
 }
 
+function buildCalendarPairingDeadheadSegments(range){
+  const segments = [];
+  if (!range) return segments;
+  const pairingMap = buildCalendarPairingIndex();
+  const segmentMap = new Map();
+  pairingMap.forEach((pairing) => {
+    const pairingDays = pairing.days;
+    if (!pairingDays.length) return;
+    const visibleDays = pairingDays.filter((dateKey) => isCalendarDateKeyInRange(dateKey, range));
+    if (!visibleDays.length) return;
+    visibleDays.forEach((dateKey) => {
+      const day = calendarState.eventsByDate?.[dateKey];
+      const dayEvents = Array.isArray(day?.events) ? day.events : [];
+      if (!dayEvents.length) return;
+      const dayStartMs = getDateKeyStartMs(dateKey);
+      if (!Number.isFinite(dayStartMs)) return;
+      const dayEndMs = dayStartMs + 86400000;
+      const weekIndex = getCalendarWeekIndex(dateKey, range.startKey);
+      dayEvents.forEach((event) => {
+        if (!isDeadheadEvent(event)) return;
+        if (isCancelledEvent(event)) return;
+        const timing = getCalendarEventTiming(event, dateKey);
+        if (!timing) return;
+        const startMs = Math.max(timing.startMs, dayStartMs);
+        const endMs = Math.min(timing.endMs, dayEndMs);
+        const startOffsetMinutes = Math.max(0, Math.min(1440, Math.round((startMs - dayStartMs) / 60000)));
+        const endOffsetMinutes = Math.max(0, Math.min(1440, Math.round((endMs - dayStartMs) / 60000)));
+        if (!Number.isFinite(startOffsetMinutes) || !Number.isFinite(endOffsetMinutes)) return;
+        if (endOffsetMinutes <= startOffsetMinutes) return;
+        const key = `${pairing.pairingId}|${weekIndex}|${dateKey}`;
+        if (!segmentMap.has(key)){
+          segmentMap.set(key, {
+            pairingId: pairing.pairingId,
+            weekIndex,
+            dateKey,
+            startOffsetMinutes,
+            endOffsetMinutes
+          });
+        } else {
+          const existing = segmentMap.get(key);
+          existing.startOffsetMinutes = Math.min(existing.startOffsetMinutes, startOffsetMinutes);
+          existing.endOffsetMinutes = Math.max(existing.endOffsetMinutes, endOffsetMinutes);
+        }
+      });
+    });
+  });
+  segmentMap.forEach((segment) => segments.push(segment));
+  return segments;
+}
+
 function buildCalendarHotelRowSegments(range){
   const segments = [];
   if (!range) return segments;
@@ -6916,7 +6966,7 @@ function isDeadheadIdentifier(identifier){
 }
 
 function isDeadheadEvent(event){
-  if (event?.deadhead) return true;
+  if (event?.deadhead || event?.isDeadhead) return true;
   const identifiers = Array.isArray(event?.identifiers) ? event.identifiers : [];
   return identifiers.some(isDeadheadIdentifier);
 }
@@ -7790,8 +7840,15 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
   if (!container) return;
   container.querySelectorAll('.calendar-row-pairing-segment').forEach((segment) => segment.remove());
   const rowSegments = buildCalendarPairingRowSegments(range);
+  const deadheadSegments = buildCalendarPairingDeadheadSegments(range);
   const cancellationSegments = buildCalendarPairingCancellationSegments(range);
+  const deadheadSegmentsByRow = new Map();
   const cancellationSegmentsByRow = new Map();
+  deadheadSegments.forEach((segment) => {
+    const key = `${segment.pairingId}|${segment.weekIndex}`;
+    if (!deadheadSegmentsByRow.has(key)) deadheadSegmentsByRow.set(key, []);
+    deadheadSegmentsByRow.get(key).push(segment);
+  });
   cancellationSegments.forEach((segment) => {
     const key = `${segment.pairingId}|${segment.weekIndex}`;
     if (!cancellationSegmentsByRow.has(key)) cancellationSegmentsByRow.set(key, []);
@@ -7860,6 +7917,55 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
     bar.style.left = `${leftOffset}px`;
     bar.style.top = `${topOffset}px`;
     bar.style.width = `${segmentWidth}px`;
+    const deadheadKey = `${segment.pairingId}|${segment.weekIndex}`;
+    const rowDeadheadSegments = deadheadSegmentsByRow.get(deadheadKey) || [];
+    const deadheadSegments = rowDeadheadSegments
+      .filter(dhSegment => dhSegment.dateKey >= segment.startKey && dhSegment.dateKey <= segment.endKey)
+      .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+    const deadheadGroups = [];
+    deadheadSegments.forEach((dhSegment) => {
+      const current = deadheadGroups[deadheadGroups.length - 1];
+      if (!current || !areDateKeysContiguous(current.endKey, dhSegment.dateKey)){
+        deadheadGroups.push({
+          startKey: dhSegment.dateKey,
+          endKey: dhSegment.dateKey,
+          startOffsetMinutes: dhSegment.startOffsetMinutes,
+          endOffsetMinutes: dhSegment.endOffsetMinutes
+        });
+      } else {
+        current.endKey = dhSegment.dateKey;
+        current.endOffsetMinutes = dhSegment.endOffsetMinutes;
+      }
+    });
+    deadheadGroups.forEach((dhSegment) => {
+      const startCell = row.querySelector(`.calendar-day[data-date-key="${dhSegment.startKey}"]`);
+      const endCell = row.querySelector(`.calendar-day[data-date-key="${dhSegment.endKey}"]`);
+      if (!startCell || !endCell) return;
+      const startCellRect = startCell.getBoundingClientRect();
+      const endCellRect = endCell.getBoundingClientRect();
+      const startDayWidth = startCellRect.width;
+      const endDayWidth = endCellRect.width;
+      let overlayLeft = startCellRect.left - rowRect.left;
+      let overlayRight = endCellRect.right - rowRect.left;
+      if (Number.isFinite(dhSegment.startOffsetMinutes) && Number.isFinite(startDayWidth) && startDayWidth > 0){
+        const minuteOffset = Math.max(0, Math.min(1440, dhSegment.startOffsetMinutes));
+        overlayLeft = startCellRect.left - rowRect.left + ((minuteOffset / 1440) * startDayWidth);
+      }
+      if (Number.isFinite(dhSegment.endOffsetMinutes) && Number.isFinite(endDayWidth) && endDayWidth > 0){
+        const minuteOffset = Math.max(0, Math.min(1440, dhSegment.endOffsetMinutes));
+        overlayRight = endCellRect.left - rowRect.left + ((minuteOffset / 1440) * endDayWidth);
+      }
+      const clippedLeft = Math.max(leftOffset, overlayLeft);
+      const clippedRight = Math.min(rightOffset, overlayRight);
+      const overlayWidth = clippedRight - clippedLeft;
+      if (!Number.isFinite(overlayWidth) || overlayWidth <= 0) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'calendar-bar calendar-bar-deadhead is-deadhead';
+      overlay.style.left = `${clippedLeft}px`;
+      overlay.style.top = `${topOffset}px`;
+      overlay.style.width = `${overlayWidth}px`;
+      barsContainer.appendChild(overlay);
+    });
     const cancellationKey = `${segment.pairingId}|${segment.weekIndex}`;
     const rowCancellationSegments = cancellationSegmentsByRow.get(cancellationKey) || [];
     const cancellationSegments = rowCancellationSegments

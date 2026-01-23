@@ -786,6 +786,15 @@
       box-sizing:border-box;
       opacity:0.85;
     }
+    .calendar-row-pairing-bars .calendar-bar-deadhead{
+      position:absolute;
+      height:16px;
+      border-radius:999px;
+      pointer-events:none;
+      z-index:30;
+      box-sizing:border-box;
+      opacity:0.85;
+    }
     .calendar-row-pairing-segment .calendar-bar-label{
       position:relative;
       z-index:2;
@@ -886,6 +895,11 @@
     .calendar-pairing-flight.is-deadhead{
       border-color:#f97316;
       background:#2a1508;
+    }
+    .calendar-bar.is-deadhead{
+      border:1px solid #f97316;
+      background:#2a1508;
+      color:#fdba74;
     }
     .calendar-event.is-deadhead .calendar-event-meta{
       color:#fdba74;
