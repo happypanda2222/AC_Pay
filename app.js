@@ -7458,7 +7458,11 @@ function ensureCalendarSelection(){
   if (!months.length) return;
   if (!calendarSelectionInitialized){
     const currentMonthKey = getCalendarMonthKey(new Date());
-    calendarState.selectedMonth = months.includes(currentMonthKey) ? currentMonthKey : months[0];
+    if (months.includes(currentMonthKey)){
+      calendarState.selectedMonth = currentMonthKey;
+    } else if (!calendarState.selectedMonth || !months.includes(calendarState.selectedMonth)){
+      calendarState.selectedMonth = months[0];
+    }
     calendarSelectionInitialized = true;
     return;
   }
