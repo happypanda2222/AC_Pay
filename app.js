@@ -4363,6 +4363,7 @@ let calendarState = {
   hotels: [],
   updatedAt: 0
 };
+let calendarSelectionInitialized = false;
 let calendarDetailEventId = null;
 let calendarDetailSource = 'main';
 let calendarPairingId = null;
@@ -7454,9 +7455,20 @@ function deleteCalendarMonth(monthKey){
 
 function ensureCalendarSelection(){
   const months = getCalendarMonthCandidates();
-  if (!calendarState.selectedMonth || !months.includes(calendarState.selectedMonth)){
-    calendarState.selectedMonth = months[0];
+  if (!months.length) return;
+  const selectedMonth = calendarState.selectedMonth;
+  const hasSelectedMonth = selectedMonth && months.includes(selectedMonth);
+  if (hasSelectedMonth){
+    calendarSelectionInitialized = true;
+    return;
   }
+  if (!calendarSelectionInitialized){
+    const currentMonthKey = getCalendarMonthKey(new Date());
+    calendarState.selectedMonth = months.includes(currentMonthKey) ? currentMonthKey : months[0];
+    calendarSelectionInitialized = true;
+    return;
+  }
+  calendarState.selectedMonth = months[0];
 }
 
 function advanceCalendarMonth(direction){
