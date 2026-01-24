@@ -7456,16 +7456,15 @@ function deleteCalendarMonth(monthKey){
 function ensureCalendarSelection(){
   const months = getCalendarMonthCandidates();
   if (!months.length) return;
-  const selectedMonth = calendarState.selectedMonth;
-  const hasSelectedMonth = selectedMonth && months.includes(selectedMonth);
-  if (hasSelectedMonth){
-    calendarSelectionInitialized = true;
-    return;
-  }
   if (!calendarSelectionInitialized){
     const currentMonthKey = getCalendarMonthKey(new Date());
     calendarState.selectedMonth = months.includes(currentMonthKey) ? currentMonthKey : months[0];
     calendarSelectionInitialized = true;
+    return;
+  }
+  const selectedMonth = calendarState.selectedMonth;
+  const hasSelectedMonth = selectedMonth && months.includes(selectedMonth);
+  if (hasSelectedMonth){
     return;
   }
   calendarState.selectedMonth = months[0];
