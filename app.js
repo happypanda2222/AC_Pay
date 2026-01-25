@@ -8505,8 +8505,16 @@ function renderCalendarPairingDetail(pairingId){
     if (layoverLabel){
       layoverParts.push(layoverLabel);
     }
-    const shouldInsertSeparator = hasEvents && hasLayoverDuration && hasNextFlights && layoverParts.length;
-    const shouldShowLayoverInHeader = layoverParts.length && !shouldInsertSeparator;
+    const hasLayoverInfo = layoverParts.length > 0;
+    const shouldInsertSeparator = hasLayoverInfo && ((hasEvents && hasLayoverDuration && hasNextFlights) || !hasEvents);
+    const shouldShowLayoverInHeader = hasLayoverInfo && !shouldInsertSeparator;
+    if (!hasEvents && shouldInsertSeparator){
+      const separator = document.createElement('div');
+      separator.className = 'calendar-pairing-day-separator';
+      separator.textContent = `Layover ${layoverParts.join(' · ')}`;
+      daysEl.appendChild(separator);
+      return;
+    }
     const dayRow = document.createElement('button');
     dayRow.type = 'button';
     dayRow.className = 'calendar-pairing-day';
