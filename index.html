@@ -531,6 +531,7 @@
       --calendar-hotel-slot:0.41;
       --calendar-hotel-slot-height:18px;
       --calendar-hotel-bar-height:16px;
+      --calendar-hotel-font-size:9px;
       padding:var(--calendar-day-padding);
       padding-top:var(--calendar-day-padding);
       min-height:110px;
@@ -691,6 +692,7 @@
       height:var(--calendar-hotel-bar-height);
       border-radius:999px;
       padding:0 6px;
+      font-size:clamp(var(--calendar-hotel-font-size), 1vw, var(--calendar-hotel-font-size));
       font-weight:800;
       letter-spacing:.2px;
       overflow:hidden;
@@ -754,7 +756,7 @@
       z-index:6;
       height:16px;
       padding:0 6px;
-      font-size:inherit;
+      font-size:clamp(var(--calendar-hotel-font-size), 1vw, var(--calendar-hotel-font-size));
       line-height:inherit;
       border-radius:999px;
     }
