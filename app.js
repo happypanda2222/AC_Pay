@@ -6488,6 +6488,106 @@ function getCalendarPairingTafbMinutes(day, dateKey){
   return pairing.tafbMinutes;
 }
 
+function getCalendarPairingTafbFromEvents(pairingId, eventsByDate = calendarState.eventsByDate){
+  const pairingDays = getCalendarPairingDaysFromEvents(eventsByDate, pairingId);
+  if (!pairingDays.length) return null;
+  const dayEntries = pairingDays.map(dateKey => ({
+    dateKey,
+    day: eventsByDate?.[dateKey]
+  })).filter(entry => entry.day);
+  if (!dayEntries.length) return null;
+  const flightEntries = [];
+  dayEntries.forEach(({ dateKey, day }) => {
+    (day?.events || []).forEach((event) => {
+      const timing = getCalendarEventTiming(event, dateKey);
+      if (!timing) return;
+      flightEntries.push({
+        event,
+        dateKey,
+        startMs: timing.startMs,
+        endMs: timing.endMs,
+        departureMinutes: timing.departureMinutes,
+        arrivalMinutes: timing.arrivalMinutes
+      });
+    });
+  });
+  flightEntries.sort((a, b) => a.startMs - b.startMs);
+  const firstFlight = flightEntries[0] || null;
+  const lastFlight = flightEntries[flightEntries.length - 1] || null;
+  const firstActive = flightEntries.find(entry => !isCancelledEvent(entry.event)) || null;
+  const lastActive = [...flightEntries].reverse().find(entry => !isCancelledEvent(entry.event)) || null;
+  const firstCheckIn = dayEntries.find(entry => Number.isFinite(entry.day?.checkInMinutes));
+  const lastCheckOut = [...dayEntries].reverse().find(entry => Number.isFinite(entry.day?.checkOutMinutes));
+  const checkInMs = firstCheckIn
+    ? getDateKeyStartMs(firstCheckIn.dateKey) + (firstCheckIn.day.checkInMinutes * 60000)
+    : null;
+  const checkOutMs = lastCheckOut
+    ? (() => {
+      const checkOutStartMs = getDateKeyStartMs(lastCheckOut.dateKey);
+      let checkOutMinutes = lastCheckOut.day.checkOutMinutes;
+      if (Number.isFinite(checkOutMinutes) && lastFlight){
+        const lastFlightStartMs = getDateKeyStartMs(lastFlight.dateKey);
+        const lastFlightCrossesMidnight = Number.isFinite(lastFlight.arrivalMinutes) &&
+          Number.isFinite(lastFlight.departureMinutes) &&
+          lastFlight.arrivalMinutes < lastFlight.departureMinutes;
+        const lastFlightEndsNextDay = lastFlight.endMs > (lastFlightStartMs + (24 * 60 * 60000));
+        const checkOutSameDateAsLastFlight = lastCheckOut.dateKey === lastFlight.dateKey;
+        if (checkOutSameDateAsLastFlight && (lastFlightCrossesMidnight || lastFlightEndsNextDay)){
+          checkOutMinutes += 1440;
+        }
+      }
+      return checkOutStartMs + (checkOutMinutes * 60000);
+    })()
+    : null;
+  const boundaryCancelled = Boolean(
+    (firstFlight && isCancelledEvent(firstFlight.event)) ||
+    (lastFlight && isCancelledEvent(lastFlight.event))
+  );
+  let pairingCheckInMs = null;
+  let pairingCheckOutMs = null;
+  if (boundaryCancelled){
+    if (firstActive && lastActive){
+      pairingCheckInMs = firstActive.startMs - (75 * 60000);
+      pairingCheckOutMs = lastActive.endMs + (15 * 60000);
+    }
+  } else {
+    if (firstFlight){
+      if (Number.isFinite(checkInMs)){
+        pairingCheckInMs = checkInMs;
+      } else if (Number.isFinite(firstFlight.departureMinutes)){
+        pairingCheckInMs = firstFlight.startMs - (75 * 60000);
+      }
+    } else if (Number.isFinite(checkInMs)){
+      pairingCheckInMs = checkInMs;
+    }
+    if (lastFlight){
+      if (Number.isFinite(checkOutMs)){
+        pairingCheckOutMs = checkOutMs;
+      } else if (Number.isFinite(lastFlight.arrivalMinutes)){
+        pairingCheckOutMs = lastFlight.endMs + (15 * 60000);
+      }
+    } else if (Number.isFinite(checkOutMs)){
+      pairingCheckOutMs = checkOutMs;
+    }
+  }
+  const tripTafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.pairing?.tripTafbMinutes));
+  const tripTafbMinutes = tripTafbOverride?.day?.pairing?.tripTafbMinutes;
+  const tafbOverride = dayEntries.find(entry => Number.isFinite(entry.day?.tafbMinutes));
+  let tafbMinutes = null;
+  if (!boundaryCancelled){
+    tafbMinutes = Number.isFinite(tripTafbMinutes)
+      ? tripTafbMinutes
+      : (Number.isFinite(tafbOverride?.day?.tafbMinutes)
+        ? tafbOverride.day.tafbMinutes
+        : null);
+  }
+  if (!Number.isFinite(tafbMinutes) && Number.isFinite(pairingCheckInMs) && Number.isFinite(pairingCheckOutMs)){
+    const diffMinutes = Math.round((pairingCheckOutMs - pairingCheckInMs) / 60000);
+    tafbMinutes = diffMinutes >= 0 ? diffMinutes : null;
+  }
+  return Number.isFinite(tafbMinutes) ? tafbMinutes : null;
+}
+
 function getCalendarDayTafbDisplayMinutes(day, dateKey){
   const pairing = day?.pairing;
   if (pairing && Number.isFinite(pairing.tafbMinutes)){
@@ -8439,13 +8539,17 @@ function getCalendarPairingDisplayLabel(pairing){
 function getCalendarPairingSummary(
   pairingId,
   monthKey = calendarState.selectedMonth,
-  eventsByDate = calendarState.eventsByDate
+  eventsByDate = calendarState.eventsByDate,
+  { useLiveTafb = false } = {}
 ){
   const pairingDays = getCalendarPairingDaysFromEvents(eventsByDate, pairingId);
   let creditMinutes = 0;
   let dpgMinutes = 0;
   let thgMinutes = 0;
   let tafbMinutes = null;
+  const liveTafbMinutes = useLiveTafb
+    ? getCalendarPairingTafbFromEvents(pairingId, eventsByDate)
+    : null;
   let tripCreditMinutes = null;
   let cnxCreditMinutes = 0;
   let rangeExcludesDay = false;
@@ -8473,11 +8577,15 @@ function getCalendarPairingSummary(
     if (Number.isFinite(day.dpgMinutes)) dpgMinutes += day.dpgMinutes;
     if (Number.isFinite(day.thgMinutes)) thgMinutes += day.thgMinutes;
     if (!Number.isFinite(tafbMinutes) && dateKey === firstDayInRange){
-      const pairingTripTafb = day?.pairing?.tripTafbMinutes;
-      const pairingTafb = Number.isFinite(pairingTripTafb)
-        ? pairingTripTafb
-        : getCalendarPairingTafbMinutes(day, dateKey);
-      if (Number.isFinite(pairingTafb)) tafbMinutes = pairingTafb;
+      if (useLiveTafb){
+        if (Number.isFinite(liveTafbMinutes)) tafbMinutes = liveTafbMinutes;
+      } else {
+        const pairingTripTafb = day?.pairing?.tripTafbMinutes;
+        const pairingTafb = Number.isFinite(pairingTripTafb)
+          ? pairingTripTafb
+          : getCalendarPairingTafbMinutes(day, dateKey);
+        if (Number.isFinite(pairingTafb)) tafbMinutes = pairingTafb;
+      }
     }
   });
   if (Number.isFinite(tripCreditMinutes) && !rangeExcludesDay){
@@ -8509,7 +8617,12 @@ function renderCalendarPairingDetail(pairingId){
   const label = getCalendarPairingDisplayLabel(pairing);
   titleEl.textContent = label;
   if (summaryEl){
-    const summary = getCalendarPairingSummary(pairingId, calendarState.selectedMonth, calendarState.eventsByDate);
+    const summary = getCalendarPairingSummary(
+      pairingId,
+      calendarState.selectedMonth,
+      calendarState.eventsByDate,
+      { useLiveTafb: true }
+    );
     const blocks = [];
     if (Number.isFinite(summary.creditMinutes)){
       blocks.push(`<div class="block"><div class="label">${labelWithInfo('Total credit', INFO_COPY.calendar.pairingCredit)}</div><div class="value">${escapeHtml(formatDurationMinutes(summary.creditMinutes))}</div></div>`);
@@ -13125,6 +13238,7 @@ const INFO_COPY = {
     pairingCredit: 'Pairing credit uses the trip credit from TRIP TAFB lines when available, minus CNX (non-PP) event credits; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
     creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals use TRIP credit minus CNX (non-PP) credits when available; otherwise they sum daily credits (CNX PP credits remain included). Non-pairing days always use daily credit totals, and vacation credit is added once.',
+    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel).',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. Pairing TAFB uses updated boundary times from the first and last non-cancelled flights; if all boundary flights cancel, TAFB is blank.'
   },
   vo: {
