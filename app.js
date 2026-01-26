@@ -8515,7 +8515,7 @@ function renderCalendarPairingDetail(pairingId){
       blocks.push(`<div class="block"><div class="label">${labelWithInfo('Total credit', INFO_COPY.calendar.pairingCredit)}</div><div class="value">${escapeHtml(formatDurationMinutes(summary.creditMinutes))}</div></div>`);
     }
     if (Number.isFinite(summary.tafbMinutes)){
-      blocks.push(`<div class="block"><div class="label">Total TAFB</div><div class="value">${escapeHtml(formatDurationMinutes(summary.tafbMinutes))}</div></div>`);
+      blocks.push(`<div class="block"><div class="label">${labelWithInfo('Total TAFB', INFO_COPY.calendar.tafb)}</div><div class="value">${escapeHtml(formatDurationMinutes(summary.tafbMinutes))}</div></div>`);
     }
     summaryEl.innerHTML = blocks.join('');
   }
@@ -8765,6 +8765,34 @@ function closeCalendarPairingDetail(){
 function refreshCalendarPairingDetail(){
   if (!calendarPairingId) return;
   renderCalendarPairingDetail(calendarPairingId);
+}
+
+function refreshCalendarPairingDetailForEvent(eventId){
+  let pairingUpdated = false;
+  if (eventId){
+    const entry = findCalendarEventById(eventId);
+    const pairingId = entry ? getCalendarPairingIdForEvent(entry.event, entry.dateKey) : '';
+    const pairingDays = pairingId ? getCalendarPairingDays(pairingId) : [];
+    if (pairingDays.length){
+      const scopedEventsByDate = {};
+      pairingDays.forEach((dateKey) => {
+        const day = calendarState.eventsByDate?.[dateKey];
+        if (day) scopedEventsByDate[dateKey] = day;
+      });
+      if (Object.keys(scopedEventsByDate).length){
+        updateCalendarPairingMetrics(scopedEventsByDate);
+        Object.entries(scopedEventsByDate).forEach(([dateKey, day]) => {
+          if (!calendarState.eventsByDate[dateKey]) calendarState.eventsByDate[dateKey] = day;
+        });
+        pairingUpdated = true;
+      }
+    }
+  }
+  if (!pairingUpdated){
+    updateCalendarPairingMetrics(calendarState.eventsByDate);
+  }
+  refreshCalendarPairingDetail();
+  return pairingUpdated;
 }
 
 function openCalendarDayDetail(dateKey){
@@ -9171,13 +9199,10 @@ function setCalendarEventCancellation(eventId, status){
     });
   });
   if (updated){
-    if (!recomputeCalendarPairingMetricsForEvent(eventId, calendarState.eventsByDate)){
-      updateCalendarPairingMetrics(calendarState.eventsByDate);
-    }
+    refreshCalendarPairingDetailForEvent(eventId);
     saveCalendarState();
     renderCalendarIfVisible();
     refreshCalendarDetail();
-    refreshCalendarPairingDetail();
     refreshCalendarDayDetail();
     refreshCalendarCreditDetail();
     refreshCalendarTafbDetail();
@@ -9235,13 +9260,10 @@ function setCalendarPairingCancellationFromEvent(eventId, status, options = {}){
     });
   }
   if (updated || thgReset){
-    if (!recomputeCalendarPairingMetricsForPairing(pairingId, calendarState.eventsByDate)){
-      updateCalendarPairingMetrics(calendarState.eventsByDate);
-    }
+    refreshCalendarPairingDetailForEvent(eventId);
     saveCalendarState();
     renderCalendarIfVisible();
     refreshCalendarDetail();
-    refreshCalendarPairingDetail();
     refreshCalendarDayDetail();
     refreshCalendarCreditDetail();
     refreshCalendarTafbDetail();
