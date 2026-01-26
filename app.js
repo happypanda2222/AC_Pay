@@ -4379,8 +4379,125 @@ let calendarHotelSelection = { startKey: null, endKey: null };
 let calendarPairingDisplayMode = 'classic';
 let calendarNeedsRender = false;
 const CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 750;
+const CALENDAR_WEATHER_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
 let calendarAutoSyncTimer = null;
 let calendarHotelBarResizeObserver = null;
+const calendarWeatherCache = new Map();
+const calendarWeatherState = { weatherMap: {} };
+let calendarWeatherInFlight = null;
+
+function calendarWeatherKey(airport, targetMs){
+  const code = String(airport || '').toUpperCase();
+  if (!code || !Number.isFinite(targetMs)) return '';
+  return `${code}|${Math.round(targetMs / 60000)}`;
+}
+
+function calendarDateKeyMinutesToMs(dateKey, minutes){
+  if (!dateKey || !Number.isFinite(minutes)) return null;
+  const base = new Date(`${dateKey}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return null;
+  const totalMinutes = Number(minutes);
+  const dayOffset = Math.floor(totalMinutes / 1440);
+  const minuteOffset = totalMinutes - dayOffset * 1440;
+  base.setDate(base.getDate() + dayOffset);
+  base.setMinutes(base.getMinutes() + minuteOffset);
+  return base.getTime();
+}
+
+function getCalendarWeatherAssessment(airport, targetMs){
+  const key = calendarWeatherKey(airport, targetMs);
+  if (!key) return null;
+  const entry = calendarWeatherCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > WEATHER_CACHE_TTL_MS){
+    calendarWeatherCache.delete(key);
+    return null;
+  }
+  return entry.assessment || null;
+}
+
+function setCalendarWeatherAssessment(airport, targetMs, assessment){
+  const key = calendarWeatherKey(airport, targetMs);
+  if (!key || !assessment) return;
+  calendarWeatherCache.set(key, { assessment, fetchedAt: Date.now() });
+}
+
+function collectCalendarWeatherTargets(eventsByDate){
+  const now = Date.now();
+  const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
+  const targets = [];
+  Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
+    (day?.events || []).forEach(event => {
+      (event?.segments || []).forEach((segment, index) => {
+        const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
+        if (!Number.isFinite(depMs)) return;
+        if (depMs < now || depMs > windowEnd) return;
+        const from = String(segment?.from || '').trim().toUpperCase();
+        const to = String(segment?.to || '').trim().toUpperCase();
+        if (from) targets.push({ airport: from, targetMs: depMs, phase: 'dep', segmentIndex: index });
+        const arrMs = calendarDateKeyMinutesToMs(dateKey, segment?.arrivalMinutes);
+        if (to && Number.isFinite(arrMs)) targets.push({ airport: to, targetMs: arrMs, phase: 'arr', segmentIndex: index });
+      });
+    });
+  });
+  return targets;
+}
+
+function getCalendarSegmentTargets(event, dateKey){
+  const segments = Array.isArray(event?.segments) ? event.segments : [];
+  return segments.flatMap((segment, index) => {
+    const from = String(segment?.from || '').trim().toUpperCase();
+    const to = String(segment?.to || '').trim().toUpperCase();
+    const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
+    const arrMs = calendarDateKeyMinutesToMs(dateKey, segment?.arrivalMinutes);
+    const targets = [];
+    if (from && Number.isFinite(depMs)) targets.push({ airport: from, targetMs: depMs, phase: 'dep', segmentIndex: index });
+    if (to && Number.isFinite(arrMs)) targets.push({ airport: to, targetMs: arrMs, phase: 'arr', segmentIndex: index });
+    return targets;
+  });
+}
+
+async function collectCalendarWeatherAssessments(eventsByDate){
+  const now = Date.now();
+  for (const [key, entry] of calendarWeatherCache.entries()){
+    if (now - entry.fetchedAt > WEATHER_CACHE_TTL_MS){
+      calendarWeatherCache.delete(key);
+    }
+  }
+  const targets = collectCalendarWeatherTargets(eventsByDate);
+  const needed = targets.filter(target => !getCalendarWeatherAssessment(target.airport, target.targetMs));
+  if (!needed.length) return false;
+  const uniqueAirports = Array.from(new Set(needed.map(target => target.airport)));
+  const weatherMap = await fetchWeatherWithPriority(uniqueAirports, (icao) => getWeatherForAirport(icao));
+  let updated = false;
+  needed.forEach((target) => {
+    const record = weatherMap[target.airport];
+    if (!record || !hasWeatherData(record)) return;
+    const label = target.phase === 'dep' ? 'Departure field' : 'Arrival field';
+    const assessment = summarizeWeatherWindow(record, target.targetMs, label, { useDecoders: true });
+    if (!assessment) return;
+    setCalendarWeatherAssessment(target.airport, target.targetMs, assessment);
+    updated = true;
+  });
+  if (Object.keys(weatherMap).length){
+    calendarWeatherState.weatherMap = { ...calendarWeatherState.weatherMap, ...weatherMap };
+  }
+  return updated;
+}
+
+function ensureCalendarWeatherAssessments(eventsByDate){
+  if (calendarWeatherInFlight) return calendarWeatherInFlight;
+  const run = collectCalendarWeatherAssessments(eventsByDate)
+    .catch((err) => {
+      console.warn('Calendar weather assessment failed', err);
+      return false;
+    })
+    .finally(() => {
+      calendarWeatherInFlight = null;
+    });
+  calendarWeatherInFlight = run;
+  return run;
+}
 
 function normalizeCalendarUpdatedAt(value){
   if (Number.isFinite(value)) return value;
@@ -8235,6 +8352,40 @@ function getCalendarDisplayRange(year, month){
   };
 }
 
+function buildCalendarWeatherTags(events, dateKey){
+  const now = Date.now();
+  const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
+  const tags = [];
+  const seen = new Set();
+  (events || []).forEach((event) => {
+    (event?.segments || []).forEach((segment) => {
+      const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
+      if (!Number.isFinite(depMs)) return;
+      if (depMs < now || depMs > windowEnd) return;
+      const from = String(segment?.from || '').trim().toUpperCase();
+      const to = String(segment?.to || '').trim().toUpperCase();
+      const arrMs = calendarDateKeyMinutesToMs(dateKey, segment?.arrivalMinutes);
+      const depAssessment = from ? getCalendarWeatherAssessment(from, depMs) : null;
+      const arrAssessment = (to && Number.isFinite(arrMs)) ? getCalendarWeatherAssessment(to, arrMs) : null;
+      if (depAssessment?.rules?.code){
+        const key = `dep|${from}|${depMs}`;
+        if (!seen.has(key)){
+          tags.push({ airport: from, targetMs: depMs, phase: 'Departure', rules: depAssessment.rules });
+          seen.add(key);
+        }
+      }
+      if (arrAssessment?.rules?.code){
+        const key = `arr|${to}|${arrMs}`;
+        if (!seen.has(key)){
+          tags.push({ airport: to, targetMs: arrMs, phase: 'Arrival', rules: arrAssessment.rules });
+          seen.add(key);
+        }
+      }
+    });
+  });
+  return tags;
+}
+
 function renderCalendar(){
   const monthSelect = document.getElementById('modern-calendar-month');
   const headerEl = document.getElementById('modern-calendar-summary-header');
@@ -8293,6 +8444,12 @@ function renderCalendar(){
   if (!displayRange){
     gridEl.innerHTML = '';
     return;
+  }
+  const weatherPromise = ensureCalendarWeatherAssessments(calendarState.eventsByDate);
+  if (weatherPromise){
+    weatherPromise.then((updated) => {
+      if (updated) renderCalendarIfVisible();
+    });
   }
   const rangeStart = new Date(`${displayRange.startKey}T00:00:00`);
   const rangeEnd = new Date(`${displayRange.endKey}T00:00:00`);
@@ -8416,9 +8573,30 @@ function renderCalendar(){
           .filter(Boolean)
           .join(' ');
         if (legsLabel) parts.push(legsLabel);
-        meta.textContent = parts.join(' · ');
+        const metaText = parts.join(' · ');
+        if (metaText){
+          const metaTextEl = document.createElement('div');
+          metaTextEl.className = 'calendar-event-meta-text';
+          metaTextEl.textContent = metaText;
+          meta.appendChild(metaTextEl);
+        }
+        const wxTags = buildCalendarWeatherTags(dayEvents, dateKey);
+        if (wxTags.length){
+          const tagWrap = document.createElement('div');
+          tagWrap.className = 'calendar-wx-tags';
+          wxTags.forEach((tag) => {
+            const badge = document.createElement('span');
+            badge.className = `status-badge calendar-wx-tag ${tag.rules.className || ''}`.trim();
+            badge.textContent = tag.rules.label || tag.rules.code || '';
+            const title = `${tag.airport} ${tag.phase} · ${formatZulu(tag.targetMs)}`;
+            badge.setAttribute('title', title);
+            badge.setAttribute('aria-label', title);
+            tagWrap.appendChild(badge);
+          });
+          meta.appendChild(tagWrap);
+        }
         eventBtn.appendChild(title);
-        if (meta.textContent) eventBtn.appendChild(meta);
+        if (meta.childNodes.length) eventBtn.appendChild(meta);
         wrapper.appendChild(eventBtn);
         dayCell.appendChild(wrapper);
       }
@@ -8466,12 +8644,22 @@ function renderCalendarDetail(event, dateKey){
     if (!value) return;
     blocks.push(`<div class="block"><div class="label">${escapeHtml(blockLabel)}</div><div class="value">${escapeHtml(value)}</div></div>`);
   };
+  const buildAirportTag = (airport, targetMs) => {
+    const code = String(airport || '').trim().toUpperCase();
+    if (!code) return '<span class="calendar-airport-text">—</span>';
+    const timeAttr = Number.isFinite(targetMs) ? ` data-calendar-wx-time="${escapeHtml(String(targetMs))}"` : '';
+    return `<button class="status-badge calendar-airport-tag" type="button" data-calendar-wx-airport="${escapeHtml(code)}"${timeAttr}>${escapeHtml(code)}</button>`;
+  };
   const segmentsLabel = Array.isArray(event?.segments) && event.segments.length
     ? event.segments
       .map((segment) => {
         const dep = Number.isFinite(segment.departureMinutes) ? formatMinutesToTime(segment.departureMinutes) : '--:--';
         const arr = Number.isFinite(segment.arrivalMinutes) ? formatMinutesToTime(segment.arrivalMinutes) : '--:--';
-        return escapeHtml(`${segment.from} ${dep} → ${segment.to} ${arr}`);
+        const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
+        const arrMs = calendarDateKeyMinutesToMs(dateKey, segment?.arrivalMinutes);
+        const fromTag = buildAirportTag(segment.from, depMs);
+        const toTag = buildAirportTag(segment.to, arrMs);
+        return `<span class="calendar-segment-line">${fromTag}<span class="calendar-segment-time">${escapeHtml(dep)}</span><span class="calendar-segment-arrow">→</span>${toTag}<span class="calendar-segment-time">${escapeHtml(arr)}</span></span>`;
       })
       .join('<br>')
     : '';
@@ -8507,6 +8695,43 @@ function renderCalendarDetail(event, dateKey){
     cancelRestButton.classList.toggle('is-active', matchState.matches);
   }
   if (statusEl) statusEl.textContent = '';
+}
+
+function openWeatherForCalendarSegment(airport, targetMs){
+  const code = String(airport || '').trim().toUpperCase();
+  if (!code) return;
+  setModernPrimaryTab('modern-weather');
+  const depInput = document.getElementById('modern-wx-dep');
+  const arrInput = document.getElementById('modern-wx-arr');
+  const depHrsInput = document.getElementById('modern-wx-dep-hrs');
+  const arrHrsInput = document.getElementById('modern-wx-arr-hrs');
+  if (depInput) depInput.value = code;
+  if (arrInput) arrInput.value = code;
+  if (Number.isFinite(targetMs)){
+    const diffHours = Math.max(0, (targetMs - Date.now()) / 3600000);
+    const roundHalf = (value) => Math.round(value * 2) / 2;
+    const depHours = roundHalf(Math.min(diffHours, 48));
+    const arrHours = roundHalf(Math.min(diffHours, 72));
+    if (depHrsInput) depHrsInput.value = String(depHours);
+    if (arrHrsInput) arrHrsInput.value = String(arrHours);
+  }
+  const assessment = Number.isFinite(targetMs) ? getCalendarWeatherAssessment(code, targetMs) : null;
+  const record = calendarWeatherState.weatherMap?.[code] || getCachedWeather(code);
+  const outEl = document.getElementById('modern-wx-out');
+  const rawEl = document.getElementById('modern-wx-raw-body');
+  const rawDetails = document.getElementById('modern-wx-raw');
+  if (assessment && record && outEl){
+    const normalized = { ...assessment, feedback: assessment.feedback || {} };
+    const rawSources = [record];
+    renderWeatherResults(outEl, rawEl, [normalized], rawSources, { showDecoders: false, enableFeedback: false });
+    latestWeatherContext = { assessments: [normalized], weatherMap: { [code]: record }, rawSources, outEl, rawEl, rawDetails };
+    if (rawDetails){
+      rawDetails.classList.toggle('hidden', !rawSources.length);
+      rawDetails.open = false;
+    }
+    return;
+  }
+  runWeatherWorkflow({ depId:'modern-wx-dep', arrId:'modern-wx-arr', depHrsId:'modern-wx-dep-hrs', arrHrsId:'modern-wx-arr-hrs', outId:'modern-wx-out', rawId:'modern-wx-raw-body' });
 }
 
 function buildCalendarPairingIndex(){
@@ -9889,6 +10114,17 @@ function initCalendar(){
   if (detailBack){
     detailBack.addEventListener('click', () => {
       closeCalendarDetail();
+    });
+  }
+  const detailInfo = document.getElementById('calendar-detail-info');
+  if (detailInfo){
+    detailInfo.addEventListener('click', (event) => {
+      const target = event.target;
+      const button = target instanceof Element ? target.closest('[data-calendar-wx-airport]') : null;
+      if (!button) return;
+      const airport = button.getAttribute('data-calendar-wx-airport');
+      const targetMs = Number(button.getAttribute('data-calendar-wx-time'));
+      openWeatherForCalendarSegment(airport, targetMs);
     });
   }
   const creditCard = document.getElementById('modern-calendar-credit-card');
