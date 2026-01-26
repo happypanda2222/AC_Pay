@@ -5535,6 +5535,30 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
   });
 }
 
+function recomputeCalendarPairingMetricsForPairing(pairingId, targetEventsByDate = calendarState.eventsByDate){
+  if (!pairingId || !targetEventsByDate) return false;
+  const pairingDays = getCalendarPairingDaysFromEvents(targetEventsByDate, pairingId);
+  if (!pairingDays.length) return false;
+  const scopedEventsByDate = {};
+  pairingDays.forEach((dateKey) => {
+    const day = targetEventsByDate?.[dateKey];
+    if (day) scopedEventsByDate[dateKey] = day;
+  });
+  updateCalendarPairingMetrics(scopedEventsByDate);
+  Object.entries(scopedEventsByDate).forEach(([dateKey, day]) => {
+    if (!targetEventsByDate[dateKey]) targetEventsByDate[dateKey] = day;
+  });
+  return true;
+}
+
+function recomputeCalendarPairingMetricsForEvent(eventId, targetEventsByDate = calendarState.eventsByDate){
+  if (!eventId) return false;
+  const entry = findCalendarEventById(eventId);
+  if (!entry) return false;
+  const pairingId = getCalendarPairingIdForEvent(entry.event, entry.dateKey);
+  return recomputeCalendarPairingMetricsForPairing(pairingId, targetEventsByDate);
+}
+
 function saveCalendarState({ bumpUpdatedAt = true } = {}){
   if (bumpUpdatedAt){
     calendarState.updatedAt = Date.now();
@@ -9147,7 +9171,9 @@ function setCalendarEventCancellation(eventId, status){
     });
   });
   if (updated){
-    updateCalendarPairingMetrics(calendarState.eventsByDate);
+    if (!recomputeCalendarPairingMetricsForEvent(eventId, calendarState.eventsByDate)){
+      updateCalendarPairingMetrics(calendarState.eventsByDate);
+    }
     saveCalendarState();
     renderCalendarIfVisible();
     refreshCalendarDetail();
@@ -9209,7 +9235,9 @@ function setCalendarPairingCancellationFromEvent(eventId, status, options = {}){
     });
   }
   if (updated || thgReset){
-    updateCalendarPairingMetrics(calendarState.eventsByDate);
+    if (!recomputeCalendarPairingMetricsForPairing(pairingId, calendarState.eventsByDate)){
+      updateCalendarPairingMetrics(calendarState.eventsByDate);
+    }
     saveCalendarState();
     renderCalendarIfVisible();
     refreshCalendarDetail();
