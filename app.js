@@ -6333,15 +6333,19 @@ function getCalendarPairingIdForDay(dateKey){
   return String(day?.pairing?.pairingId || '').trim();
 }
 
-function getCalendarPairingDays(pairingId){
+function getCalendarPairingDaysFromEvents(eventsByDate, pairingId){
   if (!pairingId) return [];
   const days = new Set();
-  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+  Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
     if (day?.pairing?.pairingId === pairingId) days.add(dateKey);
     const dayEvents = day?.events || [];
     if (dayEvents.some(event => event?.pairingId === pairingId)) days.add(dateKey);
   });
   return Array.from(days).sort();
+}
+
+function getCalendarPairingDays(pairingId){
+  return getCalendarPairingDaysFromEvents(calendarState.eventsByDate, pairingId);
 }
 
 function getCalendarPairingIdForEvent(event, dateKey){
@@ -7659,7 +7663,7 @@ function getCalendarMonthlyCreditMinutes(monthKey){
     const pairingId = String(day?.pairing?.pairingId || '').trim();
     if (pairingId){
       if (countedPairings.has(pairingId)) return;
-      const summary = getCalendarPairingSummary(pairingId, monthKey);
+      const summary = getCalendarPairingSummary(pairingId, monthKey, calendarState.eventsByDate);
       if (Number.isFinite(summary.creditMinutes)){
         totalMinutes += summary.creditMinutes;
       }
@@ -8408,8 +8412,12 @@ function getCalendarPairingDisplayLabel(pairing){
   return dateLabel || 'Pairing';
 }
 
-function getCalendarPairingSummary(pairingId, monthKey = calendarState.selectedMonth){
-  const pairingDays = getCalendarPairingDays(pairingId);
+function getCalendarPairingSummary(
+  pairingId,
+  monthKey = calendarState.selectedMonth,
+  eventsByDate = calendarState.eventsByDate
+){
+  const pairingDays = getCalendarPairingDaysFromEvents(eventsByDate, pairingId);
   let creditMinutes = 0;
   let dpgMinutes = 0;
   let thgMinutes = 0;
@@ -8426,7 +8434,7 @@ function getCalendarPairingSummary(pairingId, monthKey = calendarState.selectedM
       rangeExcludesDay = true;
       return;
     }
-    const day = calendarState.eventsByDate?.[dateKey];
+    const day = eventsByDate?.[dateKey];
     if (!day) return;
     (day?.events || []).forEach((event) => {
       if (event?.cancellation !== 'CNX') return;
@@ -8477,7 +8485,7 @@ function renderCalendarPairingDetail(pairingId){
   const label = getCalendarPairingDisplayLabel(pairing);
   titleEl.textContent = label;
   if (summaryEl){
-    const summary = getCalendarPairingSummary(pairingId);
+    const summary = getCalendarPairingSummary(pairingId, calendarState.selectedMonth, calendarState.eventsByDate);
     const blocks = [];
     if (Number.isFinite(summary.creditMinutes)){
       blocks.push(`<div class="block"><div class="label">${labelWithInfo('Total credit', INFO_COPY.calendar.pairingCredit)}</div><div class="value">${escapeHtml(formatDurationMinutes(summary.creditMinutes))}</div></div>`);
