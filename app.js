@@ -4479,6 +4479,39 @@ function filterCalendarWeatherTargetsToWindow(targets){
   });
 }
 
+function filterCalendarTargetsToDepartureWindow(segments, dateKey, targets){
+  if (!Array.isArray(segments) || !dateKey) return [];
+  const now = Date.now();
+  const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
+  const allowedIndices = new Set();
+  segments.forEach((segment, index) => {
+    const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
+    if (!Number.isFinite(depMs)) return;
+    if (depMs < now || depMs > windowEnd) return;
+    allowedIndices.add(index);
+  });
+  if (!allowedIndices.size) return [];
+  return (targets || []).filter(target => allowedIndices.has(target.segmentIndex));
+}
+
+function buildCalendarDetailWeatherTargets(event, dateKey){
+  if (!event || !dateKey) return [];
+  const segmentTargets = getCalendarSegmentTargets(event, dateKey);
+  return filterCalendarTargetsToDepartureWindow(event?.segments, dateKey, segmentTargets);
+}
+
+function buildCalendarPairingDetailWeatherTargets(pairingDays){
+  if (!Array.isArray(pairingDays) || !pairingDays.length) return [];
+  return pairingDays.flatMap((dateKey) => {
+    const day = calendarState.eventsByDate?.[dateKey];
+    if (!day) return [];
+    return (day?.events || []).flatMap((event) => {
+      const segmentTargets = getCalendarSegmentTargets(event, dateKey);
+      return filterCalendarTargetsToDepartureWindow(event?.segments, dateKey, segmentTargets);
+    });
+  });
+}
+
 async function collectCalendarWeatherAssessmentsForTargets(targets){
   const now = Date.now();
   for (const [key, entry] of calendarWeatherCache.entries()){
@@ -4515,11 +4548,7 @@ function collectCalendarWeatherAssessmentsForSegments(segments, dateKey){
 
 function collectCalendarWeatherAssessmentsForPairingDays(pairingDays){
   if (!Array.isArray(pairingDays) || !pairingDays.length) return Promise.resolve(false);
-  const targets = pairingDays.flatMap((dateKey) => {
-    const day = calendarState.eventsByDate?.[dateKey];
-    if (!day) return [];
-    return (day?.events || []).flatMap(event => getCalendarSegmentTargets(event, dateKey));
-  });
+  const targets = buildCalendarPairingDetailWeatherTargets(pairingDays);
   return collectCalendarWeatherAssessmentsForTargets(targets);
 }
 
@@ -8798,6 +8827,18 @@ function renderCalendarDetail(event, dateKey){
     cancelRestButton.classList.toggle('is-active', matchState.matches);
   }
   if (statusEl) statusEl.textContent = '';
+  const eventId = event?.id;
+  if (eventId){
+    const targets = buildCalendarDetailWeatherTargets(event, dateKey);
+    const weatherPromise = collectCalendarWeatherAssessmentsForTargets(targets);
+    if (weatherPromise){
+      weatherPromise.then((updated) => {
+        if (!updated || calendarDetailEventId !== eventId) return;
+        const latestEntry = findCalendarEventById(eventId);
+        if (latestEntry) renderCalendarDetail(latestEntry.event, latestEntry.dateKey);
+      });
+    }
+  }
 }
 
 function openWeatherForCalendarLeg({ depCode, arrCode, depMs, arrMs }){
@@ -9163,6 +9204,16 @@ function renderCalendarPairingDetail(pairingId){
     }
   });
   if (statusEl) statusEl.textContent = '';
+  if (pairingId){
+    const targets = buildCalendarPairingDetailWeatherTargets(pairingDays);
+    const weatherPromise = collectCalendarWeatherAssessmentsForTargets(targets);
+    if (weatherPromise){
+      weatherPromise.then((updated) => {
+        if (!updated || calendarPairingId !== pairingId) return;
+        renderCalendarPairingDetail(pairingId);
+      });
+    }
+  }
 }
 
 function isModernCalendarDetailVisible(){
@@ -9210,14 +9261,6 @@ function openCalendarDetail(eventId, source = 'main'){
   calendarDetailEventId = eventId;
   calendarDetailSource = source;
   renderCalendarDetail(entry.event, entry.dateKey);
-  const weatherPromise = collectCalendarWeatherAssessmentsForSegments(entry.event?.segments, entry.dateKey);
-  if (weatherPromise){
-    weatherPromise.then((updated) => {
-      if (!updated || calendarDetailEventId !== eventId) return;
-      const latestEntry = findCalendarEventById(eventId);
-      if (latestEntry) renderCalendarDetail(latestEntry.event, latestEntry.dateKey);
-    });
-  }
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
@@ -9316,14 +9359,6 @@ function openCalendarPairingDetail(pairingId, sourceDateKey = null){
   calendarPairingId = pairingId;
   calendarPairingSourceDateKey = sourceDateKey ? normalizeCalendarDateKey(sourceDateKey) : null;
   renderCalendarPairingDetail(pairingId);
-  const pairingDays = getCalendarPairingDetailDays(pairingId, calendarPairingSourceDateKey).pairingDays;
-  const weatherPromise = collectCalendarWeatherAssessmentsForPairingDays(pairingDays);
-  if (weatherPromise){
-    weatherPromise.then((updated) => {
-      if (!updated || calendarPairingId !== pairingId) return;
-      renderCalendarPairingDetail(pairingId);
-    });
-  }
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
