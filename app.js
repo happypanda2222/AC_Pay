@@ -8676,7 +8676,9 @@ function renderCalendarDetail(event, dateKey){
     const code = String(airport || '').trim().toUpperCase();
     if (!code) return '<span class="calendar-airport-text">—</span>';
     const timeAttr = Number.isFinite(targetMs) ? ` data-calendar-wx-time="${escapeHtml(String(targetMs))}"` : '';
-    return `<button class="status-badge calendar-airport-tag" type="button" data-calendar-wx-airport="${escapeHtml(code)}"${timeAttr}>${escapeHtml(code)}</button>`;
+    const assessment = Number.isFinite(targetMs) ? getCalendarWeatherAssessment(code, targetMs) : null;
+    const statusClass = assessment?.rules?.className || 'status-unk';
+    return `<button class="status-badge wx-flag calendar-airport-tag calendar-wx-tag ${escapeHtml(statusClass)}" type="button" data-calendar-wx-airport="${escapeHtml(code)}"${timeAttr}>${escapeHtml(code)}</button>`;
   };
   const segmentsLabel = Array.isArray(event?.segments) && event.segments.length
     ? event.segments
