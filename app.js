@@ -8908,6 +8908,34 @@ function renderCalendarPairingDetail(pairingId){
   const statusEl = document.getElementById('calendar-pairing-status');
   const summaryEl = document.getElementById('calendar-pairing-summary');
   if (!titleEl || !daysEl) return;
+  const buildAirportTag = (airport, targetMs, segmentIndex, phase, legData) => {
+    const code = String(airport || '').trim().toUpperCase();
+    if (!code){
+      const empty = document.createElement('span');
+      empty.className = 'calendar-airport-text';
+      empty.textContent = '—';
+      return empty;
+    }
+    const depCode = String(legData?.depCode || '').trim().toUpperCase();
+    const arrCode = String(legData?.arrCode || '').trim().toUpperCase();
+    const depMs = legData?.depMs;
+    const arrMs = legData?.arrMs;
+    const assessment = Number.isFinite(targetMs) ? getCalendarWeatherAssessment(code, targetMs) : null;
+    const statusClass = assessment?.rules?.className || 'status-unk';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `status-badge calendar-airport-tag calendar-wx-tag ${statusClass}`.trim();
+    button.textContent = code;
+    button.setAttribute('data-calendar-wx-airport', code);
+    if (Number.isFinite(targetMs)) button.setAttribute('data-calendar-wx-time', String(targetMs));
+    if (Number.isFinite(segmentIndex)) button.setAttribute('data-calendar-wx-seg-index', String(segmentIndex));
+    if (phase) button.setAttribute('data-calendar-wx-phase', String(phase));
+    if (depCode) button.setAttribute('data-calendar-wx-dep', depCode);
+    if (arrCode) button.setAttribute('data-calendar-wx-arr', arrCode);
+    if (Number.isFinite(depMs)) button.setAttribute('data-calendar-wx-dep-ms', String(depMs));
+    if (Number.isFinite(arrMs)) button.setAttribute('data-calendar-wx-arr-ms', String(arrMs));
+    return button;
+  };
   const pairingMap = buildCalendarPairingIndex();
   const pairing = pairingMap.get(pairingId);
   let pairingDays = pairing?.days?.length
@@ -9009,6 +9037,45 @@ function renderCalendarPairingDetail(pairingId){
         const route = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '';
         const label = event.label || event.identifiers?.join(', ') || 'Flight';
         flight.textContent = route ? `${label} · ${route}` : label;
+        if (Array.isArray(event?.segments) && event.segments.length){
+          const segmentsWrap = document.createElement('div');
+          segmentsWrap.className = 'calendar-wx-tags';
+          event.segments.forEach((segment, segmentIndex) => {
+            const line = document.createElement('div');
+            line.className = 'calendar-segment-line';
+            const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
+            const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
+            const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
+            const legData = {
+              depCode: segment.from,
+              arrCode: segment.to,
+              depMs,
+              arrMs
+            };
+            const depTag = buildAirportTag(segment.from, depMs, segmentIndex, 'dep', legData);
+            const arrTag = buildAirportTag(segment.to, arrMs, segmentIndex, 'arr', legData);
+            const depTime = document.createElement('span');
+            depTime.className = 'calendar-segment-time';
+            depTime.textContent = Number.isFinite(segment?.departureMinutes)
+              ? formatMinutesToTime(segment.departureMinutes)
+              : '--:--';
+            const arrTime = document.createElement('span');
+            arrTime.className = 'calendar-segment-time';
+            arrTime.textContent = Number.isFinite(segment?.arrivalMinutes)
+              ? formatMinutesToTime(segment.arrivalMinutes)
+              : '--:--';
+            const arrow = document.createElement('span');
+            arrow.className = 'calendar-segment-arrow';
+            arrow.textContent = '→';
+            line.appendChild(depTag);
+            line.appendChild(depTime);
+            line.appendChild(arrow);
+            line.appendChild(arrTag);
+            line.appendChild(arrTime);
+            segmentsWrap.appendChild(line);
+          });
+          flight.appendChild(segmentsWrap);
+        }
         flights.appendChild(flight);
       });
     } else {
@@ -9075,6 +9142,14 @@ function openCalendarDetail(eventId, source = 'main'){
   calendarDetailEventId = eventId;
   calendarDetailSource = source;
   renderCalendarDetail(entry.event, entry.dateKey);
+  const weatherPromise = ensureCalendarWeatherAssessments(calendarState.eventsByDate);
+  if (weatherPromise){
+    weatherPromise.then((updated) => {
+      if (!updated || calendarDetailEventId !== eventId) return;
+      const latestEntry = findCalendarEventById(eventId);
+      if (latestEntry) renderCalendarDetail(latestEntry.event, latestEntry.dateKey);
+    });
+  }
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-pairing-detail')?.classList.add('hidden');
@@ -9173,6 +9248,13 @@ function openCalendarPairingDetail(pairingId, sourceDateKey = null){
   calendarPairingId = pairingId;
   calendarPairingSourceDateKey = sourceDateKey ? normalizeCalendarDateKey(sourceDateKey) : null;
   renderCalendarPairingDetail(pairingId);
+  const weatherPromise = ensureCalendarWeatherAssessments(calendarState.eventsByDate);
+  if (weatherPromise){
+    weatherPromise.then((updated) => {
+      if (!updated || calendarPairingId !== pairingId) return;
+      renderCalendarPairingDetail(pairingId);
+    });
+  }
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
@@ -10380,6 +10462,23 @@ function initCalendar(){
   if (pairingDays){
     pairingDays.addEventListener('click', (event) => {
       const target = event.target;
+      const wxButton = target instanceof Element ? target.closest('[data-calendar-wx-airport]') : null;
+      if (wxButton){
+        const depCode = wxButton.getAttribute('data-calendar-wx-dep');
+        const arrCode = wxButton.getAttribute('data-calendar-wx-arr');
+        const depMs = Number(wxButton.getAttribute('data-calendar-wx-dep-ms'));
+        const arrMs = Number(wxButton.getAttribute('data-calendar-wx-arr-ms'));
+        if (depCode || arrCode){
+          openWeatherForCalendarLeg({
+            depCode,
+            arrCode,
+            depMs: Number.isFinite(depMs) ? depMs : null,
+            arrMs: Number.isFinite(arrMs) ? arrMs : null
+          });
+          return;
+        }
+        return;
+      }
       const dayButton = target instanceof Element ? target.closest('[data-date-key]') : null;
       const dateKey = dayButton?.dataset?.dateKey;
       if (dateKey) openCalendarDayDetail(dateKey);
