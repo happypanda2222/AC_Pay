@@ -8672,24 +8672,28 @@ function renderCalendarDetail(event, dateKey){
     if (!value) return;
     blocks.push(`<div class="block"><div class="label">${escapeHtml(blockLabel)}</div><div class="value">${escapeHtml(value)}</div></div>`);
   };
-  const buildAirportTag = (airport, targetMs) => {
+  const buildAirportTag = (airport, targetMs, segmentIndex, phase) => {
     const code = String(airport || '').trim().toUpperCase();
     if (!code) return '<span class="calendar-airport-text">—</span>';
     const timeAttr = Number.isFinite(targetMs) ? ` data-calendar-wx-time="${escapeHtml(String(targetMs))}"` : '';
+    const segmentAttr = Number.isFinite(segmentIndex)
+      ? ` data-calendar-wx-seg-index="${escapeHtml(String(segmentIndex))}"`
+      : '';
+    const phaseAttr = phase ? ` data-calendar-wx-phase="${escapeHtml(String(phase))}"` : '';
     const assessment = Number.isFinite(targetMs) ? getCalendarWeatherAssessment(code, targetMs) : null;
     const statusClass = assessment?.rules?.className || 'status-unk';
-    return `<button class="status-badge wx-flag calendar-airport-tag calendar-wx-tag ${escapeHtml(statusClass)}" type="button" data-calendar-wx-airport="${escapeHtml(code)}"${timeAttr}>${escapeHtml(code)}</button>`;
+    return `<button class="status-badge wx-flag calendar-airport-tag calendar-wx-tag ${escapeHtml(statusClass)}" type="button" data-calendar-wx-airport="${escapeHtml(code)}"${timeAttr}${segmentAttr}${phaseAttr}>${escapeHtml(code)}</button>`;
   };
   const segmentsLabel = Array.isArray(event?.segments) && event.segments.length
     ? event.segments
-      .map((segment) => {
+      .map((segment, index) => {
         const dep = Number.isFinite(segment.departureMinutes) ? formatMinutesToTime(segment.departureMinutes) : '--:--';
         const arr = Number.isFinite(segment.arrivalMinutes) ? formatMinutesToTime(segment.arrivalMinutes) : '--:--';
         const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
         const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
         const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
-        const fromTag = buildAirportTag(segment.from, depMs);
-        const toTag = buildAirportTag(segment.to, arrMs);
+        const fromTag = buildAirportTag(segment.from, depMs, index, 'dep');
+        const toTag = buildAirportTag(segment.to, arrMs, index, 'arr');
         return `<span class="calendar-segment-line">${fromTag}<span class="calendar-segment-time">${escapeHtml(dep)}</span><span class="calendar-segment-arrow">→</span>${toTag}<span class="calendar-segment-time">${escapeHtml(arr)}</span></span>`;
       })
       .join('<br>')
@@ -8728,34 +8732,53 @@ function renderCalendarDetail(event, dateKey){
   if (statusEl) statusEl.textContent = '';
 }
 
-function openWeatherForCalendarSegment(airport, targetMs){
-  const code = String(airport || '').trim().toUpperCase();
-  if (!code) return;
+function openWeatherForCalendarSegment(segment, dateKey){
+  if (!segment || !dateKey) return;
+  const depCode = String(segment?.from || '').trim().toUpperCase();
+  const arrCode = String(segment?.to || '').trim().toUpperCase();
+  if (!depCode && !arrCode) return;
   setModernPrimaryTab('modern-weather');
   const depInput = document.getElementById('modern-wx-dep');
   const arrInput = document.getElementById('modern-wx-arr');
   const depHrsInput = document.getElementById('modern-wx-dep-hrs');
   const arrHrsInput = document.getElementById('modern-wx-arr-hrs');
-  if (depInput) depInput.value = code;
-  if (arrInput) arrInput.value = code;
-  if (Number.isFinite(targetMs)){
-    const diffHours = Math.max(0, (targetMs - Date.now()) / 3600000);
-    const roundHalf = (value) => Math.round(value * 2) / 2;
+  if (depInput) depInput.value = depCode;
+  if (arrInput) arrInput.value = arrCode;
+  const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
+  const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
+  const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
+  const roundHalf = (value) => Math.round(value * 2) / 2;
+  if (Number.isFinite(depMs)){
+    const diffHours = Math.max(0, (depMs - Date.now()) / 3600000);
     const depHours = roundHalf(Math.min(diffHours, 48));
-    const arrHours = roundHalf(Math.min(diffHours, 72));
     if (depHrsInput) depHrsInput.value = String(depHours);
+  }
+  if (Number.isFinite(arrMs)){
+    const diffHours = Math.max(0, (arrMs - Date.now()) / 3600000);
+    const arrHours = roundHalf(Math.min(diffHours, 72));
     if (arrHrsInput) arrHrsInput.value = String(arrHours);
   }
-  const assessment = Number.isFinite(targetMs) ? getCalendarWeatherAssessment(code, targetMs) : null;
-  const record = calendarWeatherState.weatherMap?.[code] || getCachedWeather(code);
+  const assessments = [];
+  const weatherMap = {};
+  const rawSources = [];
+  const addAssessment = (code, targetMs) => {
+    if (!code) return;
+    const assessment = Number.isFinite(targetMs) ? getCalendarWeatherAssessment(code, targetMs) : null;
+    if (assessment) assessments.push({ ...assessment, feedback: assessment.feedback || {} });
+    const record = calendarWeatherState.weatherMap?.[code] || getCachedWeather(code);
+    if (record && !weatherMap[code]){
+      weatherMap[code] = record;
+      rawSources.push(record);
+    }
+  };
+  addAssessment(depCode, depMs);
+  addAssessment(arrCode, arrMs);
   const outEl = document.getElementById('modern-wx-out');
   const rawEl = document.getElementById('modern-wx-raw-body');
   const rawDetails = document.getElementById('modern-wx-raw');
-  if (assessment && record && outEl){
-    const normalized = { ...assessment, feedback: assessment.feedback || {} };
-    const rawSources = [record];
-    renderWeatherResults(outEl, rawEl, [normalized], rawSources, { showDecoders: false, enableFeedback: false });
-    latestWeatherContext = { assessments: [normalized], weatherMap: { [code]: record }, rawSources, outEl, rawEl, rawDetails };
+  if (assessments.length && rawSources.length && outEl){
+    renderWeatherResults(outEl, rawEl, assessments, rawSources, { showDecoders: false, enableFeedback: false });
+    latestWeatherContext = { assessments, weatherMap, rawSources, outEl, rawEl, rawDetails };
     if (rawDetails){
       rawDetails.classList.toggle('hidden', !rawSources.length);
       rawDetails.open = false;
@@ -10158,9 +10181,12 @@ function initCalendar(){
       const target = event.target;
       const button = target instanceof Element ? target.closest('[data-calendar-wx-airport]') : null;
       if (!button) return;
-      const airport = button.getAttribute('data-calendar-wx-airport');
-      const targetMs = Number(button.getAttribute('data-calendar-wx-time'));
-      openWeatherForCalendarSegment(airport, targetMs);
+      const segmentIndex = Number(button.getAttribute('data-calendar-wx-seg-index'));
+      if (!Number.isFinite(segmentIndex)) return;
+      const entry = calendarDetailEventId ? findCalendarEventById(calendarDetailEventId) : null;
+      const segment = entry?.event?.segments?.[segmentIndex];
+      if (!segment) return;
+      openWeatherForCalendarSegment(segment, entry.dateKey);
     });
   }
   const creditCard = document.getElementById('modern-calendar-credit-card');
