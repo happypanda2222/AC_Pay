@@ -4594,10 +4594,16 @@ function normalizeCalendarState(){
       if (!Number.isFinite(event.arrivalMinutes)) event.arrivalMinutes = null;
       return event;
     }).filter(Boolean);
+    const pairingIdFromEvents = getCalendarPairingIdFromEvents(day.events);
     if (!day.pairing || typeof day.pairing !== 'object'){
-      day.pairing = inferCalendarDayPairing(day, dateKey);
+      day.pairing = pairingIdFromEvents
+        ? { pairingId: pairingIdFromEvents, pairingNumber: '', pairingDays: [] }
+        : inferCalendarDayPairing(day, dateKey);
     }
     if (day.pairing){
+      if (!day.pairing.pairingId && pairingIdFromEvents){
+        day.pairing.pairingId = pairingIdFromEvents;
+      }
       day.pairing.pairingId = String(day.pairing.pairingId || '').trim();
       day.pairing.pairingNumber = String(day.pairing.pairingNumber || '').trim();
       if (!Array.isArray(day.pairing.pairingDays)) day.pairing.pairingDays = [];
@@ -5288,6 +5294,14 @@ function inferCalendarDayPairing(day, dateKey){
     pairingNumber,
     pairingDays: []
   };
+}
+
+function getCalendarPairingIdFromEvents(events){
+  if (!Array.isArray(events)) return '';
+  const pairingIds = events
+    .map(event => String(event?.pairingId || '').trim())
+    .filter(Boolean);
+  return pairingIds[0] || '';
 }
 
 function hydrateCalendarPairingDays(targetEventsByDate = calendarState.eventsByDate){
@@ -8544,10 +8558,11 @@ function renderCalendar(){
     dayNumber.textContent = String(current.getDate());
     dayCell.appendChild(dayNumber);
     if (!showBarStyle){
-      if (dayEvents.length || dayData?.pairing?.pairingId){
+      const dayPairingId = dayData?.pairing?.pairingId || getCalendarPairingIdFromEvents(dayEvents);
+      if (dayEvents.length || dayPairingId){
         const wrapper = document.createElement('div');
         wrapper.className = 'calendar-event-item';
-        if (dayData?.pairing?.pairingId) wrapper.dataset.pairingId = dayData.pairing.pairingId;
+        if (dayPairingId) wrapper.dataset.pairingId = dayPairingId;
         wrapper.dataset.dateKey = dateKey;
         const pairingDays = getCalendarPairingDaysForDay(dayData);
         const isSingleDayPairing = pairingDays.length === 1;
@@ -8751,7 +8766,7 @@ function openWeatherForCalendarSegment(airport, targetMs){
 function buildCalendarPairingIndex(){
   const pairingMap = new Map();
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-    const pairingId = String(day?.pairing?.pairingId || '').trim();
+    const pairingId = String(day?.pairing?.pairingId || getCalendarPairingIdFromEvents(day?.events) || '').trim();
     if (!pairingId) return;
     if (!pairingMap.has(pairingId)){
       pairingMap.set(pairingId, {
@@ -8846,14 +8861,19 @@ function renderCalendarPairingDetail(pairingId){
   if (!titleEl || !daysEl) return;
   const pairingMap = buildCalendarPairingIndex();
   const pairing = pairingMap.get(pairingId);
-  if (!pairing){
+  const pairingDays = pairing?.days?.length
+    ? pairing.days
+    : getCalendarPairingDaysFromEvents(calendarState.eventsByDate, pairingId);
+  if (!pairingDays.length){
     titleEl.textContent = 'Pairing';
-    daysEl.innerHTML = '';
+    daysEl.innerHTML = '<div class="muted-note">No pairing days found.</div>';
     if (summaryEl) summaryEl.innerHTML = '';
-    if (statusEl) statusEl.textContent = 'Pairing not found.';
+    if (statusEl) statusEl.textContent = 'No pairing days found.';
     return;
   }
-  const label = getCalendarPairingDisplayLabel(pairing);
+  const label = pairing
+    ? getCalendarPairingDisplayLabel(pairing)
+    : (formatCalendarShortDateLabel(pairingDays[0]) || 'Pairing');
   titleEl.textContent = label;
   if (summaryEl){
     const summary = getCalendarPairingSummary(
@@ -8872,10 +8892,10 @@ function renderCalendarPairingDetail(pairingId){
     summaryEl.innerHTML = blocks.join('');
   }
   daysEl.innerHTML = '';
-  pairing.days.forEach((dateKey, index) => {
+  pairingDays.forEach((dateKey, index) => {
     const day = calendarState.eventsByDate?.[dateKey];
     if (!day) return;
-    const nextDateKey = pairing.days[index + 1];
+    const nextDateKey = pairingDays[index + 1];
     const nextDay = nextDateKey ? calendarState.eventsByDate?.[nextDateKey] : null;
     const hasEvents = Array.isArray(day.events) && day.events.length > 0;
     const hasNextFlights = Array.isArray(nextDay?.events) && nextDay.events.length > 0;
