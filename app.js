@@ -4404,6 +4404,16 @@ function calendarDateKeyMinutesToMs(dateKey, minutes){
   return base.getTime();
 }
 
+function getCalendarSegmentArrivalMinutes(segment){
+  const arrivalMinutes = Number(segment?.arrivalMinutes);
+  if (!Number.isFinite(arrivalMinutes)) return null;
+  const departureMinutes = Number(segment?.departureMinutes);
+  if (Number.isFinite(departureMinutes) && arrivalMinutes < departureMinutes){
+    return arrivalMinutes + 1440;
+  }
+  return arrivalMinutes;
+}
+
 function getCalendarWeatherAssessment(airport, targetMs){
   const key = calendarWeatherKey(airport, targetMs);
   if (!key) return null;
@@ -4435,7 +4445,8 @@ function collectCalendarWeatherTargets(eventsByDate){
         const from = String(segment?.from || '').trim().toUpperCase();
         const to = String(segment?.to || '').trim().toUpperCase();
         if (from) targets.push({ airport: from, targetMs: depMs, phase: 'dep', segmentIndex: index });
-        const arrMs = calendarDateKeyMinutesToMs(dateKey, segment?.arrivalMinutes);
+        const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
+        const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
         if (to && Number.isFinite(arrMs)) targets.push({ airport: to, targetMs: arrMs, phase: 'arr', segmentIndex: index });
       });
     });
@@ -4449,7 +4460,8 @@ function getCalendarSegmentTargets(event, dateKey){
     const from = String(segment?.from || '').trim().toUpperCase();
     const to = String(segment?.to || '').trim().toUpperCase();
     const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
-    const arrMs = calendarDateKeyMinutesToMs(dateKey, segment?.arrivalMinutes);
+    const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
+    const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
     const targets = [];
     if (from && Number.isFinite(depMs)) targets.push({ airport: from, targetMs: depMs, phase: 'dep', segmentIndex: index });
     if (to && Number.isFinite(arrMs)) targets.push({ airport: to, targetMs: arrMs, phase: 'arr', segmentIndex: index });
@@ -8364,7 +8376,8 @@ function buildCalendarWeatherTags(events, dateKey){
       if (depMs < now || depMs > windowEnd) return;
       const from = String(segment?.from || '').trim().toUpperCase();
       const to = String(segment?.to || '').trim().toUpperCase();
-      const arrMs = calendarDateKeyMinutesToMs(dateKey, segment?.arrivalMinutes);
+      const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
+      const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
       const depAssessment = from ? getCalendarWeatherAssessment(from, depMs) : null;
       const arrAssessment = (to && Number.isFinite(arrMs)) ? getCalendarWeatherAssessment(to, arrMs) : null;
       if (depAssessment?.rules?.code){
@@ -8656,7 +8669,8 @@ function renderCalendarDetail(event, dateKey){
         const dep = Number.isFinite(segment.departureMinutes) ? formatMinutesToTime(segment.departureMinutes) : '--:--';
         const arr = Number.isFinite(segment.arrivalMinutes) ? formatMinutesToTime(segment.arrivalMinutes) : '--:--';
         const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
-        const arrMs = calendarDateKeyMinutesToMs(dateKey, segment?.arrivalMinutes);
+        const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
+        const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
         const fromTag = buildAirportTag(segment.from, depMs);
         const toTag = buildAirportTag(segment.to, arrMs);
         return `<span class="calendar-segment-line">${fromTag}<span class="calendar-segment-time">${escapeHtml(dep)}</span><span class="calendar-segment-arrow">→</span>${toTag}<span class="calendar-segment-time">${escapeHtml(arr)}</span></span>`;
