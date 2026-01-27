@@ -9038,12 +9038,14 @@ function renderCalendarPairingDetail(pairingId){
         const label = event.label || event.identifiers?.join(', ') || 'Flight';
         flight.textContent = route ? `${label} · ${route}` : label;
         if (Array.isArray(event?.segments) && event.segments.length){
-          const segmentsWrap = document.createElement('div');
-          segmentsWrap.className = 'calendar-wx-tags';
+          const now = Date.now();
+          const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
+          const segmentLines = [];
           event.segments.forEach((segment, segmentIndex) => {
+            const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
+            if (!Number.isFinite(depMs) || depMs < now || depMs > windowEnd) return;
             const line = document.createElement('div');
             line.className = 'calendar-segment-line';
-            const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
             const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
             const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
             const legData = {
@@ -9072,9 +9074,14 @@ function renderCalendarPairingDetail(pairingId){
             line.appendChild(arrow);
             line.appendChild(arrTag);
             line.appendChild(arrTime);
-            segmentsWrap.appendChild(line);
+            segmentLines.push(line);
           });
-          flight.appendChild(segmentsWrap);
+          if (segmentLines.length){
+            const segmentsWrap = document.createElement('div');
+            segmentsWrap.className = 'calendar-wx-tags';
+            segmentLines.forEach((line) => segmentsWrap.appendChild(line));
+            flight.appendChild(segmentsWrap);
+          }
         }
         flights.appendChild(flight);
       });
