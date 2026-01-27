@@ -4470,6 +4470,59 @@ function getCalendarSegmentTargets(event, dateKey){
   });
 }
 
+function filterCalendarWeatherTargetsToWindow(targets){
+  const now = Date.now();
+  const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
+  return (targets || []).filter((target) => {
+    if (!target || !Number.isFinite(target.targetMs)) return false;
+    return target.targetMs >= now && target.targetMs <= windowEnd;
+  });
+}
+
+async function collectCalendarWeatherAssessmentsForTargets(targets){
+  const now = Date.now();
+  for (const [key, entry] of calendarWeatherCache.entries()){
+    if (now - entry.fetchedAt > WEATHER_CACHE_TTL_MS){
+      calendarWeatherCache.delete(key);
+    }
+  }
+  const scopedTargets = filterCalendarWeatherTargetsToWindow(targets);
+  const needed = scopedTargets.filter(target => !getCalendarWeatherAssessment(target.airport, target.targetMs));
+  if (!needed.length) return false;
+  const uniqueAirports = Array.from(new Set(needed.map(target => target.airport)));
+  const weatherMap = await fetchWeatherWithPriority(uniqueAirports, (icao) => getWeatherForAirport(icao));
+  let updated = false;
+  needed.forEach((target) => {
+    const record = weatherMap[target.airport];
+    if (!record || !hasWeatherData(record)) return;
+    const label = target.phase === 'dep' ? 'Departure field' : 'Arrival field';
+    const assessment = summarizeWeatherWindow(record, target.targetMs, label, { useDecoders: true });
+    if (!assessment) return;
+    setCalendarWeatherAssessment(target.airport, target.targetMs, assessment);
+    updated = true;
+  });
+  if (Object.keys(weatherMap).length){
+    calendarWeatherState.weatherMap = { ...calendarWeatherState.weatherMap, ...weatherMap };
+  }
+  return updated;
+}
+
+function collectCalendarWeatherAssessmentsForSegments(segments, dateKey){
+  if (!Array.isArray(segments) || !dateKey) return Promise.resolve(false);
+  const targets = getCalendarSegmentTargets({ segments }, dateKey);
+  return collectCalendarWeatherAssessmentsForTargets(targets);
+}
+
+function collectCalendarWeatherAssessmentsForPairingDays(pairingDays){
+  if (!Array.isArray(pairingDays) || !pairingDays.length) return Promise.resolve(false);
+  const targets = pairingDays.flatMap((dateKey) => {
+    const day = calendarState.eventsByDate?.[dateKey];
+    if (!day) return [];
+    return (day?.events || []).flatMap(event => getCalendarSegmentTargets(event, dateKey));
+  });
+  return collectCalendarWeatherAssessmentsForTargets(targets);
+}
+
 async function collectCalendarWeatherAssessments(eventsByDate){
   const now = Date.now();
   for (const [key, entry] of calendarWeatherCache.entries()){
@@ -8902,6 +8955,25 @@ function getCalendarPairingSummary(
   };
 }
 
+function getCalendarPairingDetailDays(pairingId, sourceDateKey = null){
+  const pairingMap = buildCalendarPairingIndex();
+  const pairing = pairingMap.get(pairingId);
+  let pairingDays = pairing?.days?.length
+    ? pairing.days
+    : getCalendarPairingDaysFromEvents(calendarState.eventsByDate, pairingId);
+  let pairingIdForSummary = pairingId;
+  if (!pairingDays.length && sourceDateKey){
+    const fallbackKey = normalizeCalendarDateKey(sourceDateKey);
+    const fallbackDay = fallbackKey ? calendarState.eventsByDate?.[fallbackKey] : null;
+    const fallbackPairingId = fallbackDay
+      ? String(fallbackDay?.pairing?.pairingId || getCalendarPairingIdFromEvents(fallbackDay?.events) || '').trim()
+      : '';
+    if (fallbackPairingId) pairingIdForSummary = fallbackPairingId;
+    if (fallbackKey && fallbackDay) pairingDays = [fallbackKey];
+  }
+  return { pairingMap, pairing, pairingDays, pairingIdForSummary };
+}
+
 function renderCalendarPairingDetail(pairingId){
   const titleEl = document.getElementById('calendar-pairing-title');
   const daysEl = document.getElementById('calendar-pairing-days');
@@ -8936,21 +9008,10 @@ function renderCalendarPairingDetail(pairingId){
     if (Number.isFinite(arrMs)) button.setAttribute('data-calendar-wx-arr-ms', String(arrMs));
     return button;
   };
-  const pairingMap = buildCalendarPairingIndex();
-  const pairing = pairingMap.get(pairingId);
-  let pairingDays = pairing?.days?.length
-    ? pairing.days
-    : getCalendarPairingDaysFromEvents(calendarState.eventsByDate, pairingId);
-  let pairingIdForSummary = pairingId;
-  if (!pairingDays.length && calendarPairingSourceDateKey){
-    const fallbackKey = normalizeCalendarDateKey(calendarPairingSourceDateKey);
-    const fallbackDay = fallbackKey ? calendarState.eventsByDate?.[fallbackKey] : null;
-    const fallbackPairingId = fallbackDay
-      ? String(fallbackDay?.pairing?.pairingId || getCalendarPairingIdFromEvents(fallbackDay?.events) || '').trim()
-      : '';
-    if (fallbackPairingId) pairingIdForSummary = fallbackPairingId;
-    if (fallbackKey && fallbackDay) pairingDays = [fallbackKey];
-  }
+  const { pairingMap, pairing, pairingDays, pairingIdForSummary } = getCalendarPairingDetailDays(
+    pairingId,
+    calendarPairingSourceDateKey
+  );
   if (!pairingDays.length){
     titleEl.textContent = 'Pairing';
     daysEl.innerHTML = '<div class="muted-note">No pairing days found.</div>';
@@ -9149,7 +9210,7 @@ function openCalendarDetail(eventId, source = 'main'){
   calendarDetailEventId = eventId;
   calendarDetailSource = source;
   renderCalendarDetail(entry.event, entry.dateKey);
-  const weatherPromise = ensureCalendarWeatherAssessments(calendarState.eventsByDate);
+  const weatherPromise = collectCalendarWeatherAssessmentsForSegments(entry.event?.segments, entry.dateKey);
   if (weatherPromise){
     weatherPromise.then((updated) => {
       if (!updated || calendarDetailEventId !== eventId) return;
@@ -9255,7 +9316,8 @@ function openCalendarPairingDetail(pairingId, sourceDateKey = null){
   calendarPairingId = pairingId;
   calendarPairingSourceDateKey = sourceDateKey ? normalizeCalendarDateKey(sourceDateKey) : null;
   renderCalendarPairingDetail(pairingId);
-  const weatherPromise = ensureCalendarWeatherAssessments(calendarState.eventsByDate);
+  const pairingDays = getCalendarPairingDetailDays(pairingId, calendarPairingSourceDateKey).pairingDays;
+  const weatherPromise = collectCalendarWeatherAssessmentsForPairingDays(pairingDays);
   if (weatherPromise){
     weatherPromise.then((updated) => {
       if (!updated || calendarPairingId !== pairingId) return;
