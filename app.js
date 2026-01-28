@@ -8775,6 +8775,13 @@ function renderCalendarDetail(event, dateKey){
     const statusClass = assessment?.rules?.className || 'status-unk';
     return `<button class="status-badge calendar-airport-tag calendar-wx-tag ${escapeHtml(statusClass)}" type="button" data-calendar-wx-airport="${escapeHtml(code)}"${timeAttr}${segmentAttr}${phaseAttr}${depAttr}${arrAttr}${depMsAttr}${arrMsAttr}>${escapeHtml(code)}</button>`;
   };
+  const buildAirportText = (airport) => {
+    const code = String(airport || '').trim().toUpperCase();
+    if (!code) return '<span class="calendar-airport-text">—</span>';
+    return `<span class="calendar-airport-text">${escapeHtml(code)}</span>`;
+  };
+  const now = Date.now();
+  const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
   const segmentsLabel = Array.isArray(event?.segments) && event.segments.length
     ? event.segments
       .map((segment, index) => {
@@ -8789,8 +8796,13 @@ function renderCalendarDetail(event, dateKey){
           depMs,
           arrMs
         };
-        const fromTag = buildAirportTag(segment.from, depMs, index, 'dep', legData);
-        const toTag = buildAirportTag(segment.to, arrMs, index, 'arr', legData);
+        const showTags = Number.isFinite(depMs) && depMs >= now && depMs <= windowEnd;
+        const fromTag = showTags
+          ? buildAirportTag(segment.from, depMs, index, 'dep', legData)
+          : buildAirportText(segment.from);
+        const toTag = showTags
+          ? buildAirportTag(segment.to, arrMs, index, 'arr', legData)
+          : buildAirportText(segment.to);
         return `<span class="calendar-segment-line">${fromTag}<span class="calendar-segment-time">${escapeHtml(dep)}</span><span class="calendar-segment-arrow">→</span>${toTag}<span class="calendar-segment-time">${escapeHtml(arr)}</span></span>`;
       })
       .join('<br>')
@@ -9049,6 +9061,13 @@ function renderCalendarPairingDetail(pairingId){
     if (Number.isFinite(arrMs)) button.setAttribute('data-calendar-wx-arr-ms', String(arrMs));
     return button;
   };
+  const buildAirportText = (airport) => {
+    const code = String(airport || '').trim().toUpperCase();
+    const text = document.createElement('span');
+    text.className = 'calendar-airport-text';
+    text.textContent = code || '—';
+    return text;
+  };
   const { pairingMap, pairing, pairingDays, pairingIdForSummary } = getCalendarPairingDetailDays(
     pairingId,
     calendarPairingSourceDateKey
@@ -9142,10 +9161,8 @@ function renderCalendarPairingDetail(pairingId){
         if (Array.isArray(event?.segments) && event.segments.length){
           const now = Date.now();
           const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
-          const segmentLines = [];
           event.segments.forEach((segment, segmentIndex) => {
             const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
-            if (!Number.isFinite(depMs) || depMs < now || depMs > windowEnd) return;
             const line = document.createElement('div');
             line.className = 'calendar-segment-line';
             const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
@@ -9156,8 +9173,13 @@ function renderCalendarPairingDetail(pairingId){
               depMs,
               arrMs
             };
-            const depTag = buildAirportTag(segment.from, depMs, segmentIndex, 'dep', legData);
-            const arrTag = buildAirportTag(segment.to, arrMs, segmentIndex, 'arr', legData);
+            const showTags = Number.isFinite(depMs) && depMs >= now && depMs <= windowEnd;
+            const depTag = showTags
+              ? buildAirportTag(segment.from, depMs, segmentIndex, 'dep', legData)
+              : buildAirportText(segment.from);
+            const arrTag = showTags
+              ? buildAirportTag(segment.to, arrMs, segmentIndex, 'arr', legData)
+              : buildAirportText(segment.to);
             const depTime = document.createElement('span');
             depTime.className = 'calendar-segment-time';
             depTime.textContent = Number.isFinite(segment?.departureMinutes)
@@ -9176,14 +9198,15 @@ function renderCalendarPairingDetail(pairingId){
             line.appendChild(arrow);
             line.appendChild(arrTag);
             line.appendChild(arrTime);
-            segmentLines.push(line);
+            if (showTags){
+              const segmentsWrap = document.createElement('div');
+              segmentsWrap.className = 'calendar-wx-tags';
+              segmentsWrap.appendChild(line);
+              flight.appendChild(segmentsWrap);
+            } else {
+              flight.appendChild(line);
+            }
           });
-          if (segmentLines.length){
-            const segmentsWrap = document.createElement('div');
-            segmentsWrap.className = 'calendar-wx-tags';
-            segmentLines.forEach((line) => segmentsWrap.appendChild(line));
-            flight.appendChild(segmentsWrap);
-          }
         }
         flights.appendChild(flight);
       });
