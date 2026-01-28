@@ -4491,7 +4491,11 @@ function filterCalendarTargetsToDepartureWindow(segments, dateKey, targets){
     allowedIndices.add(index);
   });
   if (!allowedIndices.size) return [];
-  return (targets || []).filter(target => allowedIndices.has(target.segmentIndex));
+  return (targets || []).flatMap((target) => {
+    if (!target || !allowedIndices.has(target.segmentIndex)) return [];
+    target.departureWindow = true;
+    return target;
+  });
 }
 
 function buildCalendarDetailWeatherTargets(event, dateKey){
@@ -4519,7 +4523,13 @@ async function collectCalendarWeatherAssessmentsForTargets(targets){
       calendarWeatherCache.delete(key);
     }
   }
-  const scopedTargets = filterCalendarWeatherTargetsToWindow(targets);
+  const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
+  const scopedTargets = (targets || []).filter((target) => {
+    if (!target) return false;
+    if (target.departureWindow) return true;
+    if (!Number.isFinite(target.targetMs)) return false;
+    return target.targetMs >= now && target.targetMs <= windowEnd;
+  });
   const needed = scopedTargets.filter(target => !getCalendarWeatherAssessment(target.airport, target.targetMs));
   if (!needed.length) return false;
   const uniqueAirports = Array.from(new Set(needed.map(target => target.airport)));
