@@ -8965,6 +8965,7 @@ function getCalendarPairingSummary(
   let creditMinutes = 0;
   let dpgMinutes = 0;
   let thgMinutes = 0;
+  let blockGrowthMinutes = 0;
   let tafbMinutes = null;
   const liveTafbMinutes = useLiveTafb
     ? getCalendarPairingTafbFromEvents(pairingId, eventsByDate)
@@ -8984,6 +8985,7 @@ function getCalendarPairingSummary(
     const day = eventsByDate?.[dateKey];
     if (!day) return;
     (day?.events || []).forEach((event) => {
+      blockGrowthMinutes += getCalendarEventBlockGrowth(event);
       if (event?.cancellation !== 'CNX') return;
       const creditTotal = getCalendarEventCreditTotal(event);
       if (creditTotal) cnxCreditMinutes += creditTotal;
@@ -9008,7 +9010,7 @@ function getCalendarPairingSummary(
     }
   });
   if (Number.isFinite(tripCreditMinutes) && !rangeExcludesDay){
-    creditMinutes = Math.max(0, tripCreditMinutes - cnxCreditMinutes);
+    creditMinutes = Math.max(0, tripCreditMinutes - cnxCreditMinutes) + blockGrowthMinutes;
   }
   return {
     creditMinutes,
@@ -13818,7 +13820,7 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Pairing credit uses the trip credit from TRIP TAFB lines when available, minus CNX (non-PP) event credits; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
+    pairingCredit: 'Pairing credit uses TRIP credit minus CNX (non-PP) plus block growth only when TRIP credit is available; otherwise it sums each day’s credit. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
     creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals use TRIP credit minus CNX (non-PP) credits when available; otherwise they sum daily credits (CNX PP credits remain included). Non-pairing days always use daily credit totals, and vacation credit is added once.',
     tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel).',
