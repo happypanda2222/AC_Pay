@@ -1209,6 +1209,36 @@
       min-width:0;
       white-space:nowrap;
     }
+    .calendar-pairing-panel .stacked-fields{
+      gap:10px;
+    }
+    .calendar-pairing-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+    .calendar-pairing-actions .btn{
+      flex:1 1 0;
+      min-width:0;
+      white-space:nowrap;
+    }
+    .calendar-pairing-detail-actions{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      margin-top:12px;
+    }
+    .calendar-pairing-detail-actions .calendar-pairing-buttons{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .calendar-pairing-detail-actions .calendar-pairing-buttons .btn{
+      flex:1 1 0;
+      min-width:0;
+      white-space:nowrap;
+    }
     .calendar-month-controls{
       display:flex;
       flex-direction:column;
@@ -1320,6 +1350,8 @@
       .calendar-grid,
       .calendar-row,
       .calendar-row-wrap{width:100%;max-width:100%}
+      .calendar-pairing-actions{flex-direction:column;align-items:stretch}
+      .calendar-pairing-detail-actions .calendar-pairing-buttons{flex-direction:column;align-items:stretch}
     }
     @media(max-width:430px){
       .calendar-grid{grid-template-columns:repeat(7,minmax(0,1fr));--calendar-gap:3px}
@@ -1985,11 +2017,11 @@
                 <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
                 <div class="metric-grid calendar-summary-grid">
                   <button class="metric-card actionable" id="modern-calendar-credit-card" type="button">
-                    <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses TRIP credit minus CNX (non-PP) plus block growth only when available; otherwise day summary credit is used when no per-flight credits are available, plus DPG/THG extras and vacation credit. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses TRIP credit minus CNX (non-PP) plus block growth only when available; otherwise day summary credit is used when no per-flight credits are available, plus DPG/THG extras and vacation credit. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs.</span></span></div>
+                    <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses TRIP credit minus CNX (non-PP) plus block growth only when available; otherwise day summary credit is used when no per-flight credits are available, plus DPG/THG extras and vacation credit. When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses TRIP credit minus CNX (non-PP) plus block growth only when available; otherwise day summary credit is used when no per-flight credits are available, plus DPG/THG extras and vacation credit. When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs.</span></span></div>
                     <div class="metric-value" id="modern-calendar-total-credit">--</div>
                   </button>
                   <button class="metric-card actionable" id="modern-calendar-tafb-card" type="button">
-                    <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals include days in that range (including the 3-day buffer outside the month when configured), and trip TAFB is counted on the pairing’s first day inside the range. TAFB detail converts minutes to dollars at $5.427/hr."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals include days in that range (including the 3-day buffer outside the month when configured), and trip TAFB is counted on the pairing’s first day inside the range. TAFB detail converts minutes to dollars at $5.427/hr.</span></span></div>
+                    <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals include days in that range (including the 3-day buffer outside the month when configured), and trip TAFB is counted on the pairing’s first day inside the range. TAFB detail converts minutes to dollars at $5.427/hr."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB totals are recalculated per pairing using the first TRIP TAFB value when present; otherwise they run from the first check-in to the final check-out. If the first/last flight is cancelled, check-in/out is recomputed using 75 min pre-departure or 15 min post-arrival from the next/previous active flight. When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. Pairing detail shows the trip-level TAFB when present. If a block-month range is set, totals include days in that range (including the 3-day buffer outside the month when configured), and trip TAFB is counted on the pairing’s first day inside the range. TAFB detail converts minutes to dollars at $5.427/hr.</span></span></div>
                     <div class="metric-value" id="modern-calendar-total-tafb">--</div>
                   </button>
                 </div>
@@ -1998,6 +2030,7 @@
               <div class="calendar-input-actions">
                 <button id="modern-calendar-hotel" class="btn btn-secondary" type="button" aria-pressed="false">Hotel</button>
                 <button id="modern-calendar-insert" class="btn btn-secondary" type="button" aria-pressed="false">Insert</button>
+                <button id="modern-calendar-add-pairing" class="btn btn-secondary" type="button" aria-pressed="false">Add pairing</button>
               </div>
               <div class="calendar-post-actions hidden" id="modern-calendar-paste-panel" aria-hidden="true">
                 <div class="calendar-paste">
@@ -2006,6 +2039,48 @@
                 </div>
                 <div class="calendar-parse">
                   <button id="modern-calendar-parse" class="btn-primary" type="button">Parse schedule</button>
+                </div>
+              </div>
+              <div class="calendar-post-actions calendar-pairing-panel hidden" id="modern-calendar-pairing-panel" aria-hidden="true">
+                <div class="stacked-fields">
+                  <div>
+                    <label for="modern-calendar-pairing-number">Pairing number</label>
+                    <input id="modern-calendar-pairing-number" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" placeholder="e.g., 1234">
+                  </div>
+                  <div class="two-col">
+                    <div>
+                      <label for="modern-calendar-pairing-start">Start date</label>
+                      <input id="modern-calendar-pairing-start" type="date">
+                    </div>
+                    <div>
+                      <label for="modern-calendar-pairing-end">End date</label>
+                      <input id="modern-calendar-pairing-end" type="date">
+                    </div>
+                  </div>
+                  <div class="two-col">
+                    <div>
+                      <label for="modern-calendar-pairing-trip-credit">Trip credit (HH:MM)</label>
+                      <input id="modern-calendar-pairing-trip-credit" type="text" inputmode="numeric" placeholder="e.g., 18:30">
+                    </div>
+                    <div>
+                      <label for="modern-calendar-pairing-trip-tafb">Trip TAFB (HH:MM)</label>
+                      <input id="modern-calendar-pairing-trip-tafb" type="text" inputmode="numeric" placeholder="e.g., 72:15">
+                    </div>
+                  </div>
+                  <div class="two-col">
+                    <div>
+                      <label for="modern-calendar-pairing-checkin">Check-in</label>
+                      <input id="modern-calendar-pairing-checkin" type="time">
+                    </div>
+                    <div>
+                      <label for="modern-calendar-pairing-checkout">Check-out</label>
+                      <input id="modern-calendar-pairing-checkout" type="time">
+                    </div>
+                  </div>
+                  <div class="calendar-pairing-actions">
+                    <button id="modern-calendar-pairing-save" class="btn-primary" type="button">Create pairing</button>
+                    <button id="modern-calendar-pairing-cancel" class="btn btn-secondary" type="button">Cancel</button>
+                  </div>
                 </div>
               </div>
               <div class="calendar-sync-actions">
@@ -2057,6 +2132,22 @@
                   <div class="calendar-detail-title" id="calendar-pairing-title">Pairing</div>
                 </div>
                 <div class="calendar-detail-grid" id="calendar-pairing-summary"></div>
+                <div class="calendar-pairing-detail-actions">
+                  <div class="two-col">
+                    <div>
+                      <label for="calendar-pairing-checkin-time">Check-in</label>
+                      <input id="calendar-pairing-checkin-time" type="time">
+                    </div>
+                    <div>
+                      <label for="calendar-pairing-checkout-time">Check-out</label>
+                      <input id="calendar-pairing-checkout-time" type="time">
+                    </div>
+                  </div>
+                  <div class="calendar-pairing-buttons">
+                    <button id="calendar-pairing-timing-save" class="btn" type="button">Save check-in/out</button>
+                    <button id="calendar-pairing-add-flight" class="btn btn-secondary" type="button">Add flight</button>
+                  </div>
+                </div>
                 <div id="calendar-pairing-days"></div>
                 <div class="muted-note" id="calendar-pairing-status" aria-live="polite"></div>
               </div>
