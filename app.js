@@ -5580,8 +5580,13 @@ function ensureLayoverPlaceholderDays(targetEventsByDate = calendarState.eventsB
         durationMinutes: Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null,
         placeholderFromDateKey: typeof sourceDateKey === 'string' ? sourceDateKey : ''
       };
-    } else if (!existingLayover.placeholderFromDateKey && typeof sourceDateKey === 'string'){
-      existingLayover.placeholderFromDateKey = sourceDateKey;
+    } else {
+      if (!Number.isFinite(existingLayover.durationMinutes)){
+        existingLayover.durationMinutes = Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null;
+      }
+      if (!existingLayover.placeholderFromDateKey && typeof sourceDateKey === 'string'){
+        existingLayover.placeholderFromDateKey = sourceDateKey;
+      }
     }
     targetEventsByDate[dateKey] = nextDay;
   });
@@ -6923,6 +6928,20 @@ function getCalendarLastFlightArrivalCode(day, dateKey){
   return '';
 }
 
+function getCalendarEventArrivalCode(event){
+  const segments = Array.isArray(event?.segments) ? event.segments : [];
+  for (let i = segments.length - 1; i >= 0; i -= 1){
+    const to = String(segments[i]?.to || '').trim().toUpperCase();
+    if (/^[A-Z]{3}$/.test(to)) return to;
+  }
+  const legs = Array.isArray(event?.legs) ? event.legs : [];
+  for (let i = legs.length - 1; i >= 0; i -= 1){
+    const to = String(legs[i]?.to || '').trim().toUpperCase();
+    if (/^[A-Z]{3}$/.test(to)) return to;
+  }
+  return '';
+}
+
 function getCalendarLastFlightDepartureCode(day, dateKey){
   const events = Array.isArray(day?.events) ? day.events : [];
   const dayStartMs = getDateKeyStartMs(dateKey);
@@ -8039,13 +8058,15 @@ function applyManualPairingLayoverDurations({
   flightEntries.forEach((entry, index) => {
     const nextEntry = flightEntries[index + 1];
     if (!nextEntry) return;
-    let nextStartMs = nextEntry.timing.startMs;
     const currentEndMs = entry.timing.endMs;
-    if (!Number.isFinite(nextStartMs) || !Number.isFinite(currentEndMs)) return;
-    let gapMinutes = Math.round((nextStartMs - currentEndMs) / 60000);
-    if (gapMinutes <= 0){
-      nextStartMs += 86400000;
-      gapMinutes = Math.round((nextStartMs - currentEndMs) / 60000);
+    if (!Number.isFinite(nextEntry.timing.startMs) || !Number.isFinite(currentEndMs)) return;
+    const currentCheckOutMs = currentEndMs + (15 * 60000);
+    let nextCheckInMs = nextEntry.timing.startMs - (75 * 60000);
+    if (!Number.isFinite(currentCheckOutMs) || !Number.isFinite(nextCheckInMs)) return;
+    let gapMinutes = Math.round((nextCheckInMs - currentCheckOutMs) / 60000);
+    if (gapMinutes <= 0 && nextEntry.timing.startMs < currentEndMs){
+      nextCheckInMs += 86400000;
+      gapMinutes = Math.round((nextCheckInMs - currentCheckOutMs) / 60000);
     }
     if (gapMinutes <= 480) return;
     const arrivalDateKey = getDateKeyFromMs(currentEndMs);
@@ -8079,6 +8100,10 @@ function applyManualPairingLayoverDurations({
     const existingDuration = Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null;
     if (!Number.isFinite(existingDuration) || gapMinutes > existingDuration){
       layover.durationMinutes = gapMinutes;
+    }
+    if (!layover.hotel){
+      const arrivalCode = getCalendarEventArrivalCode(entry.event);
+      if (arrivalCode) layover.hotel = arrivalCode;
     }
     const sourceDateKey = entry.event?.date || normalizedStartKey;
     if (arrivalDateKey !== sourceDateKey && !layover.placeholderFromDateKey){
@@ -8140,6 +8165,31 @@ function applyManualPairingAutoCheckTimes({
   }
   if (lastDay){
     lastDay.checkOutMinutes = Number.isFinite(checkOutMinutes) ? checkOutMinutes : null;
+  }
+}
+
+function recomputeCalendarPairingLayovers(pairingId, eventsByDate = calendarState.eventsByDate){
+  if (!pairingId || !eventsByDate) return;
+  const pairingDays = getCalendarPairingDaysFromEvents(eventsByDate, pairingId);
+  pairingDays.forEach((dateKey) => {
+    const day = eventsByDate?.[dateKey];
+    if (!day?.layover) return;
+    const hasHotel = typeof day.layover.hotel === 'string' && day.layover.hotel.trim();
+    if (!hasHotel){
+      delete day.layover;
+    } else if (day.layover?.placeholderFromDateKey){
+      delete day.layover.placeholderFromDateKey;
+    }
+  });
+  clearCalendarPairingPlaceholders(pairingId);
+  const pairingFlights = getCalendarPairingEvents(pairingId);
+  if (pairingFlights.length >= 2){
+    applyManualPairingLayoverDurations({
+      pairingId,
+      pairingFlights,
+      startKey: pairingDays[0],
+      eventsByDate
+    });
   }
 }
 
@@ -9988,15 +10038,7 @@ function deleteCalendarPairingFlight(eventId){
         delete day.layover;
       }
     });
-    const pairingFlights = getCalendarPairingEvents(pairingId);
-    if (pairingFlights.length){
-      applyManualPairingLayoverDurations({
-        pairingId,
-        pairingFlights,
-        startKey: pairingDays[0],
-        eventsByDate: calendarState.eventsByDate
-      });
-    }
+    recomputeCalendarPairingLayovers(pairingId, calendarState.eventsByDate);
     updateCalendarPairingMetrics(calendarState.eventsByDate);
   }
   calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
@@ -10007,6 +10049,44 @@ function deleteCalendarPairingFlight(eventId){
   refreshCalendarTafbDetail();
   refreshCalendarDayDetail();
   return { pairingId };
+}
+
+function deleteCalendarPairing(pairingId){
+  if (!pairingId) return { error: 'Pairing not found.' };
+  const pairingDays = getCalendarPairingDays(pairingId);
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (!day || typeof day !== 'object') return;
+    const dayPairingId = String(day?.pairing?.pairingId || '').trim();
+    if (Array.isArray(day.events)){
+      const remainingEvents = day.events.filter(
+        (event) => getCalendarPairingIdForEvent(event, dateKey) !== pairingId
+      );
+      if (remainingEvents.length !== day.events.length){
+        day.events = remainingEvents;
+      }
+      if (!day.events.length) delete day.events;
+    }
+    if (dayPairingId === pairingId){
+      delete day.pairing;
+      delete day.checkInMinutes;
+      delete day.checkOutMinutes;
+      delete day.checkoutPlaceholderFromDateKey;
+      if (day.layover?.placeholderFromDateKey){
+        delete day.layover;
+      }
+    }
+    pruneCalendarEmptyPairingDay(dateKey);
+  });
+  clearCalendarPairingPlaceholders(pairingId);
+  updateCalendarPairingMetrics(calendarState.eventsByDate);
+  calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
+  saveCalendarState();
+  renderCalendarIfVisible();
+  refreshCalendarPairingDetail();
+  refreshCalendarCreditDetail();
+  refreshCalendarTafbDetail();
+  refreshCalendarDayDetail();
+  return { pairingId, pairingDays };
 }
 
 function refreshCalendarPairingDetailForEvent(eventId){
@@ -10937,12 +11017,6 @@ function initCalendar(){
             targetDay.events.push(event);
           });
         });
-        applyManualPairingLayoverDurations({
-          pairingId: result.pairingId,
-          pairingFlights,
-          startKey,
-          eventsByDate: calendarState.eventsByDate
-        });
       }
       applyManualPairingAutoCheckTimes({
         pairingId: result.pairingId,
@@ -10950,6 +11024,7 @@ function initCalendar(){
         pairingDays: result.pairingDays,
         eventsByDate: calendarState.eventsByDate
       });
+      recomputeCalendarPairingLayovers(result.pairingId, calendarState.eventsByDate);
       dedupeCalendarPairingIds(calendarState.eventsByDate);
       updateCalendarPairingMetrics(calendarState.eventsByDate);
       calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
@@ -11377,6 +11452,20 @@ function initCalendar(){
       setCalendarPairingEditMode(!calendarPairingEditMode);
     });
   }
+  const pairingDelete = document.getElementById('calendar-pairing-delete');
+  if (pairingDelete){
+    pairingDelete.addEventListener('click', () => {
+      if (!calendarPairingId) return;
+      const statusEl = document.getElementById('calendar-pairing-status');
+      const result = deleteCalendarPairing(calendarPairingId);
+      if (result?.error){
+        if (statusEl) statusEl.textContent = result.error;
+        return;
+      }
+      if (statusEl) statusEl.textContent = 'Pairing deleted.';
+      closeCalendarPairingDetail();
+    });
+  }
   const pairingTimingSave = document.getElementById('calendar-pairing-timing-save');
   if (pairingTimingSave){
     pairingTimingSave.addEventListener('click', () => {
@@ -11405,7 +11494,16 @@ function initCalendar(){
       }
       firstDay.checkInMinutes = Number.isFinite(checkInMinutes) ? checkInMinutes : null;
       lastDay.checkOutMinutes = Number.isFinite(checkOutMinutes) ? checkOutMinutes : null;
-      recomputeCalendarPairingMetricsForPairing(calendarPairingId);
+      pairingDays.forEach((dateKey) => {
+        const day = calendarState.eventsByDate?.[dateKey];
+        if (day?.pairing && Number.isFinite(day.pairing.tripTafbMinutes)){
+          day.pairing.tripTafbMinutes = null;
+        }
+        if (Number.isFinite(day?.tafbMinutes)){
+          day.tafbMinutes = null;
+        }
+      });
+      updateCalendarPairingMetrics(calendarState.eventsByDate);
       saveCalendarState();
       refreshCalendarPairingDetail();
       refreshCalendarCreditDetail();
@@ -11450,12 +11548,7 @@ function initCalendar(){
         if (statusEl) statusEl.textContent = err?.message || 'Unable to add flights.';
         return;
       }
-      applyManualPairingLayoverDurations({
-        pairingId: calendarPairingId,
-        pairingFlights,
-        startKey: pairingDaysList[0],
-        eventsByDate: calendarState.eventsByDate
-      });
+      recomputeCalendarPairingLayovers(calendarPairingId, calendarState.eventsByDate);
       recomputeCalendarPairingMetricsForPairing(calendarPairingId);
       calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
       saveCalendarState();
