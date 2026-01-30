@@ -1210,7 +1210,17 @@
       white-space:nowrap;
     }
     .calendar-pairing-panel .stacked-fields{
+      display:flex;
+      flex-wrap:wrap;
       gap:10px;
+      align-items:flex-end;
+    }
+    .calendar-pairing-panel .stacked-fields .two-col{
+      flex:1 1 320px;
+      min-width:260px;
+    }
+    .calendar-pairing-panel .stacked-fields .calendar-pairing-actions{
+      flex:1 1 100%;
     }
     .calendar-pairing-actions{
       display:flex;
@@ -1352,6 +1362,9 @@
       .calendar-row-wrap{width:100%;max-width:100%}
       .calendar-pairing-actions{flex-direction:column;align-items:stretch}
       .calendar-pairing-detail-actions .calendar-pairing-buttons{flex-direction:column;align-items:stretch}
+      .calendar-pairing-panel .stacked-fields{
+        align-items:stretch;
+      }
     }
     @media(max-width:430px){
       .calendar-grid{grid-template-columns:repeat(7,minmax(0,1fr));--calendar-gap:3px}
@@ -1364,6 +1377,12 @@
       .calendar-wx-tag{padding:2px 5px;font-size:8px}
       .calendar-airport-tag{padding:3px 6px;font-size:10px}
       .calendar-day-total{font-size:10px}
+      .calendar-pairing-panel .stacked-fields{
+        flex-direction:column;
+      }
+      .calendar-pairing-panel .stacked-fields .two-col{
+        min-width:0;
+      }
     }
     @media(max-width:430px) and (min-width:421px){
       .calendar-event-title-main,
