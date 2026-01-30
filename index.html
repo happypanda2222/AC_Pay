@@ -1228,6 +1228,43 @@
       flex-wrap:wrap;
       align-items:center;
     }
+    .calendar-pairing-flight-rows{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      padding:10px;
+      border:1px solid rgba(0,0,0,0.08);
+      border-radius:12px;
+      background:#fff;
+      max-height:260px;
+      overflow-y:auto;
+    }
+    .calendar-pairing-flight-row{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      align-items:flex-end;
+    }
+    .calendar-pairing-flight-field{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      flex:1 1 140px;
+      min-width:120px;
+    }
+    .calendar-pairing-flight-field input{
+      min-width:0;
+    }
+    .calendar-pairing-flight-remove{
+      align-self:flex-end;
+      flex:0 0 auto;
+      padding:6px 12px;
+      min-width:auto;
+    }
+    .calendar-pairing-flight-add{
+      display:flex;
+      justify-content:flex-start;
+    }
     .calendar-pairing-actions .btn{
       flex:1 1 0;
       min-width:0;
@@ -2092,6 +2129,67 @@
                       <input id="modern-calendar-pairing-checkout" type="time">
                     </div>
                   </div>
+                  <div class="calendar-pairing-flight-rows" id="modern-calendar-pairing-flight-rows" aria-label="Flight rows">
+                    <div class="calendar-pairing-flight-row">
+                      <label class="calendar-pairing-flight-field">
+                        <span>Flight #</span>
+                        <input type="text" inputmode="text" placeholder="AC123" data-field="flight-number">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Route/legs</span>
+                        <input type="text" inputmode="text" placeholder="YYZ-LHR" data-field="route-legs">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Dep</span>
+                        <input type="time" data-field="depart-time">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Arr</span>
+                        <input type="time" data-field="arrive-time">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Block</span>
+                        <input type="text" inputmode="numeric" placeholder="H:MM" data-field="block-minutes">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Credit</span>
+                        <input type="text" inputmode="numeric" placeholder="H:MM" data-field="credit-minutes">
+                      </label>
+                      <button class="btn btn-secondary calendar-pairing-flight-remove" type="button" data-action="remove-pairing-flight-row" aria-label="Remove flight row">×</button>
+                    </div>
+                  </div>
+                  <div class="calendar-pairing-flight-add">
+                    <button id="modern-calendar-pairing-add-flight-row" class="btn btn-secondary" type="button">+ Add flight</button>
+                  </div>
+                  <template id="calendar-pairing-flight-row-template">
+                    <div class="calendar-pairing-flight-row">
+                      <label class="calendar-pairing-flight-field">
+                        <span>Flight #</span>
+                        <input type="text" inputmode="text" placeholder="AC123" data-field="flight-number">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Route/legs</span>
+                        <input type="text" inputmode="text" placeholder="YYZ-LHR" data-field="route-legs">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Dep</span>
+                        <input type="time" data-field="depart-time">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Arr</span>
+                        <input type="time" data-field="arrive-time">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Block</span>
+                        <input type="text" inputmode="numeric" placeholder="H:MM" data-field="block-minutes">
+                      </label>
+                      <label class="calendar-pairing-flight-field">
+                        <span>Credit</span>
+                        <input type="text" inputmode="numeric" placeholder="H:MM" data-field="credit-minutes">
+                      </label>
+                      <button class="btn btn-secondary calendar-pairing-flight-remove" type="button" data-action="remove-pairing-flight-row" aria-label="Remove flight row">×</button>
+                    </div>
+                  </template>
                   <div class="calendar-pairing-actions">
                     <button id="modern-calendar-pairing-save" class="btn-primary" type="button">Create pairing</button>
                     <button id="modern-calendar-pairing-cancel" class="btn btn-secondary" type="button">Cancel</button>
