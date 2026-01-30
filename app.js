@@ -6225,7 +6225,6 @@ function createCalendarPairingSkeleton({
   startKey,
   endKey,
   tripCreditMinutes,
-  tripTafbMinutes,
   checkInMinutes,
   checkOutMinutes,
   eventsByDate = calendarState.eventsByDate
@@ -6247,7 +6246,6 @@ function createCalendarPairingSkeleton({
     return { error: `Pairing already exists on ${conflicts.join(', ')}.` };
   }
   const tripCredit = Number.isFinite(tripCreditMinutes) ? tripCreditMinutes : null;
-  const tripTafb = Number.isFinite(tripTafbMinutes) ? tripTafbMinutes : null;
   pairingDays.forEach((dateKey, index) => {
     const existingDay = eventsByDate?.[dateKey];
     const nextDay = existingDay && typeof existingDay === 'object' ? existingDay : {};
@@ -6256,8 +6254,7 @@ function createCalendarPairingSkeleton({
       pairingId,
       pairingNumber: normalizedNumber,
       pairingDays: pairingDays.slice(),
-      tripCreditMinutes: tripCredit,
-      tripTafbMinutes: tripTafb
+      tripCreditMinutes: tripCredit
     };
     nextDay.sourceMonthKey = typeof nextDay.sourceMonthKey === 'string' ? nextDay.sourceMonthKey : dateKey.slice(0, 7);
     nextDay.layover = nextDay.layover && typeof nextDay.layover === 'object'
@@ -10663,7 +10660,6 @@ function initCalendar(){
       const startKey = document.getElementById('modern-calendar-pairing-start')?.value || '';
       const endKey = document.getElementById('modern-calendar-pairing-end')?.value || '';
       const tripCreditRaw = document.getElementById('modern-calendar-pairing-trip-credit')?.value || '';
-      const tripTafbRaw = document.getElementById('modern-calendar-pairing-trip-tafb')?.value || '';
       const checkInRaw = document.getElementById('modern-calendar-pairing-checkin')?.value || '';
       const checkOutRaw = document.getElementById('modern-calendar-pairing-checkout')?.value || '';
       let pairingFlights = [];
@@ -10677,11 +10673,6 @@ function initCalendar(){
       const tripCreditMinutes = tripCreditRaw ? parseDurationToMinutes(tripCreditRaw) : null;
       if (tripCreditRaw && !Number.isFinite(tripCreditMinutes)){
         setCalendarStatus('Trip credit must be H:MM.');
-        return;
-      }
-      const tripTafbMinutes = tripTafbRaw ? parseDurationToMinutes(tripTafbRaw) : null;
-      if (tripTafbRaw && !Number.isFinite(tripTafbMinutes)){
-        setCalendarStatus('Trip TAFB must be H:MM.');
         return;
       }
       const checkInMinutes = checkInRaw ? parseTimeToMinutes(checkInRaw) : null;
@@ -10698,7 +10689,6 @@ function initCalendar(){
         startKey,
         endKey,
         tripCreditMinutes,
-        tripTafbMinutes,
         checkInMinutes,
         checkOutMinutes
       });
@@ -10738,7 +10728,6 @@ function initCalendar(){
         'modern-calendar-pairing-start',
         'modern-calendar-pairing-end',
         'modern-calendar-pairing-trip-credit',
-        'modern-calendar-pairing-trip-tafb',
         'modern-calendar-pairing-checkin',
         'modern-calendar-pairing-checkout'
       ].forEach((id) => {
@@ -14448,7 +14437,7 @@ const INFO_COPY = {
     esop: 'Employee ESOP deduction for the month at the selected percentage of gross (capped to the monthly portion of $30,000).',
     esopMatch: 'Employer ESOP match for the month (30% of your contribution) reduced by estimated tax on the match.',
     union: 'Estimated monthly union dues based on seat, aircraft, year and hours.',
-    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out. If the original first/last flight is cancelled, TRIP and manual overrides are ignored and TAFB is recalculated as 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel).',
+    tafb: 'Per diem hours paid at $5.427/hr added after tax. Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out. Manual pairings always use check-in/out times (no TRIP TAFB override). If the original first/last flight is cancelled, TRIP and manual overrides are ignored and TAFB is recalculated as 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel).',
     marginalFed: 'Marginal federal tax rate based on annualized taxable income (gross minus pension).',
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
@@ -14456,7 +14445,7 @@ const INFO_COPY = {
     pairingCredit: 'Pairing credit uses TRIP credit minus CNX (non-PP) plus block growth only when TRIP credit is available; otherwise it sums each day’s credit. When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
     creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals use TRIP credit minus CNX (non-PP) credits when available; otherwise they sum daily credits (CNX PP credits remain included). When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. Non-pairing days always use daily credit totals, and vacation credit is added once.',
-    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel).',
+    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings always use check-in/out times (no TRIP TAFB override). When manual check-in/out edits set TAFB, pairing credit floors at TAFB/4. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel).',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. Pairing TAFB uses updated boundary times from the first and last non-cancelled flights; if all boundary flights cancel, TAFB is blank.'
   },
   vo: {
