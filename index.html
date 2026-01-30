@@ -1286,6 +1286,29 @@
       min-width:0;
       white-space:nowrap;
     }
+    .calendar-pairing-inline-add{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      margin-top:12px;
+    }
+    .calendar-pairing-inline-title{
+      font-size:12px;
+      color:var(--muted);
+      font-weight:700;
+      letter-spacing:.2px;
+      text-transform:uppercase;
+    }
+    .calendar-pairing-inline-add .calendar-pairing-buttons{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .calendar-pairing-inline-add .calendar-pairing-buttons .btn{
+      flex:1 1 0;
+      min-width:0;
+      white-space:nowrap;
+    }
     .calendar-month-controls{
       display:flex;
       flex-direction:column;
@@ -2258,7 +2281,16 @@
                   </div>
                   <div class="calendar-pairing-buttons">
                     <button id="calendar-pairing-timing-save" class="btn" type="button">Save check-in/out</button>
-                    <button id="calendar-pairing-add-flight" class="btn btn-secondary" type="button">Add flight</button>
+                  </div>
+                </div>
+                <div class="calendar-pairing-inline-add">
+                  <div class="calendar-pairing-inline-title">Add flight(s)</div>
+                  <div class="calendar-pairing-flight-rows" id="calendar-pairing-detail-flight-rows" aria-label="Add flight rows"></div>
+                  <div class="calendar-pairing-flight-add">
+                    <button id="calendar-pairing-detail-add-flight-row" class="btn btn-secondary" type="button">+ Add flight row</button>
+                  </div>
+                  <div class="calendar-pairing-buttons">
+                    <button id="calendar-pairing-add-flight" class="btn btn-secondary" type="button">Add flight(s)</button>
                   </div>
                 </div>
                 <div id="calendar-pairing-days"></div>

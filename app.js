@@ -7922,10 +7922,40 @@ function parseCalendarPairingFlightNumber(rawValue){
   return { error: 'Use AC123 or 123.' };
 }
 
-function serializeCalendarPairingFlightRows({ dateKey, pairingId } = {}){
-  const rowsContainer = document.getElementById('modern-calendar-pairing-flight-rows');
-  if (!rowsContainer) return { events: [] };
-  const rows = Array.from(rowsContainer.querySelectorAll('.calendar-pairing-flight-row'));
+function createCalendarPairingFlightRowElement(){
+  const pairingRowTemplate = document.getElementById('calendar-pairing-flight-row-template');
+  if (pairingRowTemplate?.content?.firstElementChild){
+    return pairingRowTemplate.content.firstElementChild.cloneNode(true);
+  }
+  const fallbackContainer = document.getElementById('modern-calendar-pairing-flight-rows')
+    || document.getElementById('calendar-pairing-detail-flight-rows');
+  const existingRow = fallbackContainer?.querySelector('.calendar-pairing-flight-row');
+  return existingRow ? existingRow.cloneNode(true) : null;
+}
+
+function addCalendarPairingFlightRowToContainer(container, { focusField = false } = {}){
+  if (!container) return;
+  const newRow = createCalendarPairingFlightRowElement();
+  if (!newRow) return;
+  newRow.querySelectorAll('input').forEach((input) => {
+    input.value = '';
+  });
+  container.appendChild(newRow);
+  if (focusField){
+    newRow.querySelector('[data-field="flight-number"]')?.focus();
+  }
+}
+
+function resetCalendarPairingFlightRows(container){
+  if (!container) return;
+  container.querySelectorAll('.calendar-pairing-flight-row').forEach((row) => row.remove());
+  addCalendarPairingFlightRowToContainer(container);
+}
+
+function serializeCalendarPairingFlightRows({ dateKey, pairingId, rowsContainer } = {}){
+  const container = rowsContainer || document.getElementById('modern-calendar-pairing-flight-rows');
+  if (!container) return { events: [] };
+  const rows = Array.from(container.querySelectorAll('.calendar-pairing-flight-row'));
   const events = [];
   rows.forEach((row, index) => {
     const flightNumber = row.querySelector('[data-field="flight-number"]')?.value || '';
@@ -9708,6 +9738,7 @@ function openCalendarPairingDetail(pairingId, sourceDateKey = null){
   calendarPairingId = pairingId;
   calendarPairingSourceDateKey = sourceDateKey ? normalizeCalendarDateKey(sourceDateKey) : null;
   renderCalendarPairingDetail(pairingId);
+  resetCalendarPairingFlightRows(document.getElementById('calendar-pairing-detail-flight-rows'));
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
@@ -9735,71 +9766,17 @@ function refreshCalendarPairingDetail(){
   renderCalendarPairingDetail(calendarPairingId);
 }
 
-function promptCalendarPairingFlightDetails(pairingId){
-  const pairingDays = getCalendarPairingDays(pairingId);
-  const defaultDateKey = pairingDays[0] || '';
-  const dateInput = window.prompt('Flight date (YYYY-MM-DD)?', defaultDateKey);
-  if (dateInput === null) return { cancelled: true };
-  const dateKey = normalizeCalendarDateKey(dateInput);
-  if (!dateKey) return { error: 'Enter the date as YYYY-MM-DD.' };
-  const prefixInput = window.prompt('Flight prefix (AC/QK/RV)?', 'AC');
-  if (prefixInput === null) return { cancelled: true };
-  const numberInput = window.prompt('Flight number?', '');
-  if (numberInput === null) return { cancelled: true };
-  const routeInput = window.prompt('Route legs (e.g., YYZ-LHR or YYZ-LHR LHR-YYZ)?', '');
-  if (routeInput === null) return { cancelled: true };
-  const depInput = window.prompt('Departure time (HH:MM, optional)?', '');
-  if (depInput === null) return { cancelled: true };
-  const arrInput = window.prompt('Arrival time (HH:MM, optional)?', '');
-  if (arrInput === null) return { cancelled: true };
-  const creditInput = window.prompt('Credit (H:MM, optional)?', '');
-  if (creditInput === null) return { cancelled: true };
-  const blockInput = window.prompt('Block (H:MM, optional)?', '');
-  if (blockInput === null) return { cancelled: true };
-  const cancellationInput = window.prompt('Cancellation (CNX, CNX PP, optional)?', '');
-  if (cancellationInput === null) return { cancelled: true };
-  const deadhead = window.confirm('Is this a deadhead flight?');
-  const departureMinutes = depInput ? parseTimeToMinutes(depInput) : null;
-  if (depInput && !Number.isFinite(departureMinutes)){
-    return { error: 'Enter departure time as HH:MM.' };
-  }
-  const arrivalMinutes = arrInput ? parseTimeToMinutes(arrInput) : null;
-  if (arrInput && !Number.isFinite(arrivalMinutes)){
-    return { error: 'Enter arrival time as HH:MM.' };
-  }
-  const creditMinutes = creditInput ? parseDurationToMinutes(creditInput) : null;
-  if (creditInput && !Number.isFinite(creditMinutes)){
-    return { error: 'Enter credit as H:MM.' };
-  }
-  const blockMinutes = blockInput ? parseDurationToMinutes(blockInput) : null;
-  if (blockInput && !Number.isFinite(blockMinutes)){
-    return { error: 'Enter block as H:MM.' };
-  }
-  const result = buildCalendarManualEvent({
-    dateKey,
-    prefix: prefixInput,
-    number: numberInput,
-    route: routeInput,
-    departureMinutes,
-    arrivalMinutes,
-    creditMinutes,
-    blockMinutes,
-    cancellation: cancellationInput,
-    deadhead,
-    pairingId
-  });
-  if (result?.error) return { error: result.error };
-  return { event: result.event, dateKey };
-}
-
-function addCalendarManualFlightToPairing(pairingId){
+function addCalendarManualFlightsToPairing({ pairingId, dateKey, flights } = {}){
   if (!pairingId) return { error: 'Pairing not found.' };
-  const entry = promptCalendarPairingFlightDetails(pairingId);
-  if (entry?.cancelled) return { cancelled: true };
-  if (entry?.error) return { error: entry.error };
-  const { event, dateKey } = entry;
-  if (!event || !dateKey) return { error: 'Missing flight details.' };
-  const existingDay = calendarState.eventsByDate?.[dateKey];
+  const pairingDays = getCalendarPairingDays(pairingId);
+  if (!pairingDays.length) return { error: 'Pairing days not found.' };
+  const normalizedDateKey = normalizeCalendarDateKey(dateKey);
+  const targetDateKey = normalizedDateKey && pairingDays.includes(normalizedDateKey)
+    ? normalizedDateKey
+    : pairingDays[0];
+  if (!targetDateKey) return { error: 'Select a valid pairing date.' };
+  if (!Array.isArray(flights) || !flights.length) return { error: 'Add at least one flight.' };
+  const existingDay = calendarState.eventsByDate?.[targetDateKey];
   const existingPairingId = String(existingDay?.pairing?.pairingId || '').trim();
   if (existingPairingId && existingPairingId !== pairingId){
     return { error: 'That date already belongs to another pairing.' };
@@ -9819,14 +9796,16 @@ function addCalendarManualFlightToPairing(pairingId){
   }
   nextDay.sourceMonthKey = typeof nextDay.sourceMonthKey === 'string'
     ? nextDay.sourceMonthKey
-    : dateKey.slice(0, 7);
+    : targetDateKey.slice(0, 7);
   nextDay.layover = nextDay.layover && typeof nextDay.layover === 'object'
     ? nextDay.layover
     : { hotel: '', durationMinutes: null };
-  event.pairingId = pairingId;
-  nextDay.events.push(event);
-  calendarState.eventsByDate[dateKey] = nextDay;
-  return { event, dateKey };
+  flights.forEach((event) => {
+    event.pairingId = pairingId;
+    nextDay.events.push(event);
+  });
+  calendarState.eventsByDate[targetDateKey] = nextDay;
+  return { dateKey: targetDateKey, count: flights.length };
 }
 
 function refreshCalendarPairingDetailForEvent(eventId){
@@ -10555,31 +10534,21 @@ function initCalendar(){
   const insertToggle = document.getElementById('modern-calendar-insert');
   const pairingPanel = document.getElementById('modern-calendar-pairing-panel');
   const pairingToggle = document.getElementById('modern-calendar-add-pairing');
-  const pairingRowTemplate = document.getElementById('calendar-pairing-flight-row-template');
   const pairingRowContainer = document.getElementById('modern-calendar-pairing-flight-rows');
   const pairingRowAdd = document.getElementById('modern-calendar-pairing-add-flight-row');
-  const addCalendarPairingFlightRow = ({ focusField = false } = {}) => {
-    if (!pairingRowContainer) return;
-    let newRow = null;
-    if (pairingRowTemplate?.content?.firstElementChild){
-      newRow = pairingRowTemplate.content.firstElementChild.cloneNode(true);
-    } else {
-      const existingRow = pairingRowContainer.querySelector('.calendar-pairing-flight-row');
-      if (existingRow) newRow = existingRow.cloneNode(true);
-    }
-    if (!newRow) return;
-    newRow.querySelectorAll('input').forEach((input) => {
-      input.value = '';
+  const pairingDetailRowContainer = document.getElementById('calendar-pairing-detail-flight-rows');
+  const pairingDetailRowAdd = document.getElementById('calendar-pairing-detail-add-flight-row');
+  const attachPairingRowRemoval = (container) => {
+    if (!container) return;
+    container.addEventListener('click', (event) => {
+      const removeButton = event.target.closest('[data-action="remove-pairing-flight-row"]');
+      if (!removeButton) return;
+      const row = removeButton.closest('.calendar-pairing-flight-row');
+      if (row) row.remove();
+      if (!container.querySelector('.calendar-pairing-flight-row')){
+        addCalendarPairingFlightRowToContainer(container);
+      }
     });
-    pairingRowContainer.appendChild(newRow);
-    if (focusField){
-      newRow.querySelector('[data-field="flight-number"]')?.focus();
-    }
-  };
-  const resetCalendarPairingFlightRows = () => {
-    if (!pairingRowContainer) return;
-    pairingRowContainer.querySelectorAll('.calendar-pairing-flight-row').forEach((row) => row.remove());
-    addCalendarPairingFlightRow();
   };
   const setCalendarPastePanelOpen = (shouldOpen) => {
     if (!pastePanel) return;
@@ -10603,27 +10572,23 @@ function initCalendar(){
     }
     if (isOpen){
       if (pairingRowContainer && !pairingRowContainer.querySelector('.calendar-pairing-flight-row')){
-        addCalendarPairingFlightRow();
+        addCalendarPairingFlightRowToContainer(pairingRowContainer);
       }
       document.getElementById('modern-calendar-pairing-start')?.focus();
     }
   };
   if (pairingRowAdd){
     pairingRowAdd.addEventListener('click', () => {
-      addCalendarPairingFlightRow({ focusField: true });
+      addCalendarPairingFlightRowToContainer(pairingRowContainer, { focusField: true });
     });
   }
-  if (pairingRowContainer){
-    pairingRowContainer.addEventListener('click', (event) => {
-      const removeButton = event.target.closest('[data-action="remove-pairing-flight-row"]');
-      if (!removeButton) return;
-      const row = removeButton.closest('.calendar-pairing-flight-row');
-      if (row) row.remove();
-      if (!pairingRowContainer.querySelector('.calendar-pairing-flight-row')){
-        addCalendarPairingFlightRow();
-      }
+  if (pairingDetailRowAdd){
+    pairingDetailRowAdd.addEventListener('click', () => {
+      addCalendarPairingFlightRowToContainer(pairingDetailRowContainer, { focusField: true });
     });
   }
+  attachPairingRowRemoval(pairingRowContainer);
+  attachPairingRowRemoval(pairingDetailRowContainer);
   if (insertToggle){
     insertToggle.addEventListener('click', () => {
       const isOpen = pastePanel && !pastePanel.classList.contains('hidden');
@@ -10780,7 +10745,7 @@ function initCalendar(){
         const input = document.getElementById(id);
         if (input) input.value = '';
       });
-      resetCalendarPairingFlightRows();
+      resetCalendarPairingFlightRows(pairingRowContainer);
       setCalendarPairingPanelOpen(false);
     });
   }
@@ -10788,7 +10753,7 @@ function initCalendar(){
   if (pairingCancel){
     pairingCancel.addEventListener('click', () => {
       setCalendarPairingPanelOpen(false);
-      resetCalendarPairingFlightRows();
+      resetCalendarPairingFlightRows(pairingRowContainer);
     });
   }
   const monthSelect = document.getElementById('modern-calendar-month');
@@ -11217,12 +11182,42 @@ function initCalendar(){
     pairingAddFlight.addEventListener('click', () => {
       if (!calendarPairingId) return;
       const statusEl = document.getElementById('calendar-pairing-status');
-      const result = addCalendarManualFlightToPairing(calendarPairingId);
-      if (result?.cancelled) return;
+      const pairingDaysList = getCalendarPairingDays(calendarPairingId);
+      if (!pairingDaysList.length){
+        if (statusEl) statusEl.textContent = 'Pairing days not found.';
+        return;
+      }
+      const sourceDateKey = calendarPairingSourceDateKey && pairingDaysList.includes(calendarPairingSourceDateKey)
+        ? calendarPairingSourceDateKey
+        : pairingDaysList[0];
+      const rowsContainer = pairingDetailRowContainer;
+      let pairingFlights = [];
+      try {
+        const serialized = serializeCalendarPairingFlightRows({
+          dateKey: sourceDateKey,
+          pairingId: calendarPairingId,
+          rowsContainer
+        });
+        pairingFlights = serialized?.events || [];
+      } catch (err){
+        if (statusEl) statusEl.textContent = err?.message || 'Unable to read flight rows.';
+        return;
+      }
+      const result = addCalendarManualFlightsToPairing({
+        pairingId: calendarPairingId,
+        dateKey: sourceDateKey,
+        flights: pairingFlights
+      });
       if (result?.error){
         if (statusEl) statusEl.textContent = result.error;
         return;
       }
+      applyManualPairingLayoverDurations({
+        pairingId: calendarPairingId,
+        pairingFlights,
+        startKey: sourceDateKey,
+        eventsByDate: calendarState.eventsByDate
+      });
       recomputeCalendarPairingMetricsForPairing(calendarPairingId);
       calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
       saveCalendarState();
@@ -11231,7 +11226,8 @@ function initCalendar(){
       refreshCalendarCreditDetail();
       refreshCalendarTafbDetail();
       refreshCalendarDayDetail();
-      if (statusEl) statusEl.textContent = 'Flight added.';
+      resetCalendarPairingFlightRows(pairingDetailRowContainer);
+      if (statusEl) statusEl.textContent = 'Flight(s) added.';
     });
   }
   const pairingDays = document.getElementById('calendar-pairing-days');
