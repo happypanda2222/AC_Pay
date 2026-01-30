@@ -1309,6 +1309,48 @@
       min-width:0;
       white-space:nowrap;
     }
+    .calendar-pairing-edit-footer{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:14px;
+    }
+    .calendar-pairing-edit-footer .btn{
+      flex:1 1 0;
+      min-width:0;
+      white-space:nowrap;
+    }
+    .calendar-pairing-edit-panel{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      margin-top:14px;
+    }
+    .calendar-pairing-edit-panel.hidden{
+      display:none;
+    }
+    .calendar-pairing-edit-toggle{
+      width:100%;
+    }
+    .calendar-pairing-flight-delete{
+      margin-top:6px;
+      padding:6px 10px;
+      font-size:12px;
+      border-radius:10px;
+      border:1px solid #d44545;
+      background:rgba(212,69,69,0.15);
+      color:#ffb6b6;
+      cursor:pointer;
+      display:none;
+    }
+    .calendar-pairing-editing .calendar-pairing-flight-delete{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+    }
+    .calendar-pairing-editing .calendar-pairing-flight{
+      padding-bottom:8px;
+    }
     .calendar-month-controls{
       display:flex;
       flex-direction:column;
@@ -1423,6 +1465,10 @@
       .calendar-pairing-actions{flex-direction:column;align-items:stretch}
       .calendar-pairing-detail-actions .calendar-pairing-buttons{flex-direction:column;align-items:stretch}
       .calendar-pairing-panel .stacked-fields{
+        align-items:stretch;
+      }
+      .calendar-pairing-edit-footer{
+        flex-direction:column;
         align-items:stretch;
       }
     }
@@ -2151,6 +2197,10 @@
                   <div class="calendar-pairing-flight-rows" id="modern-calendar-pairing-flight-rows" aria-label="Flight rows">
                     <div class="calendar-pairing-flight-row">
                       <label class="calendar-pairing-flight-field">
+                        <span>Date</span>
+                        <input type="date" data-field="flight-date" required>
+                      </label>
+                      <label class="calendar-pairing-flight-field">
                         <span>Flight #</span>
                         <input type="text" inputmode="text" placeholder="AC123" data-field="flight-number">
                       </label>
@@ -2165,14 +2215,6 @@
                       <label class="calendar-pairing-flight-field">
                         <span>Arr</span>
                         <input type="time" data-field="arrive-time">
-                      </label>
-                      <label class="calendar-pairing-flight-field">
-                        <span>Block</span>
-                        <input type="text" inputmode="numeric" placeholder="H:MM" data-field="block-minutes">
-                      </label>
-                      <label class="calendar-pairing-flight-field">
-                        <span>Credit</span>
-                        <input type="text" inputmode="numeric" placeholder="H:MM" data-field="credit-minutes">
                       </label>
                       <button class="btn btn-secondary calendar-pairing-flight-remove" type="button" data-action="remove-pairing-flight-row" aria-label="Remove flight row">×</button>
                     </div>
@@ -2183,6 +2225,10 @@
                   <template id="calendar-pairing-flight-row-template">
                     <div class="calendar-pairing-flight-row">
                       <label class="calendar-pairing-flight-field">
+                        <span>Date</span>
+                        <input type="date" data-field="flight-date" required>
+                      </label>
+                      <label class="calendar-pairing-flight-field">
                         <span>Flight #</span>
                         <input type="text" inputmode="text" placeholder="AC123" data-field="flight-number">
                       </label>
@@ -2197,14 +2243,6 @@
                       <label class="calendar-pairing-flight-field">
                         <span>Arr</span>
                         <input type="time" data-field="arrive-time">
-                      </label>
-                      <label class="calendar-pairing-flight-field">
-                        <span>Block</span>
-                        <input type="text" inputmode="numeric" placeholder="H:MM" data-field="block-minutes">
-                      </label>
-                      <label class="calendar-pairing-flight-field">
-                        <span>Credit</span>
-                        <input type="text" inputmode="numeric" placeholder="H:MM" data-field="credit-minutes">
                       </label>
                       <button class="btn btn-secondary calendar-pairing-flight-remove" type="button" data-action="remove-pairing-flight-row" aria-label="Remove flight row">×</button>
                     </div>
@@ -2264,32 +2302,37 @@
                   <div class="calendar-detail-title" id="calendar-pairing-title">Pairing</div>
                 </div>
                 <div class="calendar-detail-grid" id="calendar-pairing-summary"></div>
-                <div class="calendar-pairing-detail-actions">
-                  <div class="two-col">
-                    <div>
-                      <label for="calendar-pairing-checkin-time">Check-in</label>
-                      <input id="calendar-pairing-checkin-time" type="time">
-                    </div>
-                    <div>
-                      <label for="calendar-pairing-checkout-time">Check-out</label>
-                      <input id="calendar-pairing-checkout-time" type="time">
-                    </div>
-                  </div>
-                  <div class="calendar-pairing-buttons">
-                    <button id="calendar-pairing-timing-save" class="btn" type="button">Save check-in/out</button>
-                  </div>
-                </div>
-                <div class="calendar-pairing-inline-add">
-                  <div class="calendar-pairing-inline-title">Add flight(s)</div>
-                  <div class="calendar-pairing-flight-rows" id="calendar-pairing-detail-flight-rows" aria-label="Add flight rows"></div>
-                  <div class="calendar-pairing-flight-add">
-                    <button id="calendar-pairing-detail-add-flight-row" class="btn btn-secondary" type="button">+ Add flight row</button>
-                  </div>
-                  <div class="calendar-pairing-buttons">
-                    <button id="calendar-pairing-add-flight" class="btn btn-secondary" type="button">Add flight(s)</button>
-                  </div>
-                </div>
                 <div id="calendar-pairing-days"></div>
+                <div class="calendar-pairing-edit-panel hidden" id="calendar-pairing-edit-panel" aria-hidden="true">
+                  <div class="calendar-pairing-detail-actions">
+                    <div class="two-col">
+                      <div>
+                        <label for="calendar-pairing-checkin-time">Check-in</label>
+                        <input id="calendar-pairing-checkin-time" type="time">
+                      </div>
+                      <div>
+                        <label for="calendar-pairing-checkout-time">Check-out</label>
+                        <input id="calendar-pairing-checkout-time" type="time">
+                      </div>
+                    </div>
+                    <div class="calendar-pairing-buttons">
+                      <button id="calendar-pairing-timing-save" class="btn" type="button">Save check-in/out</button>
+                    </div>
+                  </div>
+                  <div class="calendar-pairing-inline-add">
+                    <div class="calendar-pairing-inline-title">Add flight(s)</div>
+                    <div class="calendar-pairing-flight-rows" id="calendar-pairing-detail-flight-rows" aria-label="Add flight rows"></div>
+                    <div class="calendar-pairing-flight-add">
+                      <button id="calendar-pairing-detail-add-flight-row" class="btn btn-secondary" type="button">+ Add flight row</button>
+                    </div>
+                    <div class="calendar-pairing-buttons">
+                      <button id="calendar-pairing-add-flight" class="btn btn-secondary" type="button">Add flight(s)</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="calendar-pairing-edit-footer">
+                  <button id="calendar-pairing-edit-toggle" class="btn btn-secondary calendar-pairing-edit-toggle" type="button" aria-expanded="false">Edit pairing</button>
+                </div>
                 <div class="muted-note" id="calendar-pairing-status" aria-live="polite"></div>
               </div>
             </div>

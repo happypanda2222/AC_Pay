@@ -4368,6 +4368,7 @@ let calendarDetailEventId = null;
 let calendarDetailSource = 'main';
 let calendarPairingId = null;
 let calendarPairingSourceDateKey = null;
+let calendarPairingEditMode = false;
 let calendarDayDetailDateKey = null;
 let calendarCreditDetailOpen = false;
 let calendarBlockGrowthDetailOpen = false;
@@ -7937,6 +7938,11 @@ function addCalendarPairingFlightRowToContainer(container, { focusField = false 
   newRow.querySelectorAll('input').forEach((input) => {
     input.value = '';
   });
+  const defaultDate = container.dataset?.defaultDate || '';
+  const dateInput = newRow.querySelector('[data-field="flight-date"]');
+  if (dateInput && defaultDate){
+    dateInput.value = defaultDate;
+  }
   container.appendChild(newRow);
   if (focusField){
     newRow.querySelector('[data-field="flight-number"]')?.focus();
@@ -7955,37 +7961,35 @@ function serializeCalendarPairingFlightRows({ dateKey, pairingId, rowsContainer 
   const rows = Array.from(container.querySelectorAll('.calendar-pairing-flight-row'));
   const events = [];
   rows.forEach((row, index) => {
+    const dateRaw = row.querySelector('[data-field="flight-date"]')?.value || '';
     const flightNumber = row.querySelector('[data-field="flight-number"]')?.value || '';
     const route = row.querySelector('[data-field="route-legs"]')?.value || '';
     const departRaw = row.querySelector('[data-field="depart-time"]')?.value || '';
     const arriveRaw = row.querySelector('[data-field="arrive-time"]')?.value || '';
-    const blockRaw = row.querySelector('[data-field="block-minutes"]')?.value || '';
-    const creditRaw = row.querySelector('[data-field="credit-minutes"]')?.value || '';
-    const hasAnyValue = [flightNumber, route, departRaw, arriveRaw, blockRaw, creditRaw]
+    const hasAnyValue = [flightNumber, route, departRaw, arriveRaw]
       .some(value => String(value || '').trim());
     if (!hasAnyValue) return;
+    const normalizedDateKey = normalizeCalendarDateKey(dateRaw || dateKey);
+    if (!normalizedDateKey){
+      throw new Error(`Row ${index + 1}: Date must be YYYY-MM-DD.`);
+    }
     const flightInfo = parseCalendarPairingFlightNumber(flightNumber);
     if (flightInfo?.error){
       throw new Error(`Row ${index + 1}: ${flightInfo.error}`);
     }
     const departureMinutes = departRaw ? parseTimeToMinutes(departRaw) : null;
-    if (departRaw && !Number.isFinite(departureMinutes)){
+    if (!Number.isFinite(departureMinutes)){
       throw new Error(`Row ${index + 1}: Departure time must be HH:MM.`);
     }
     const arrivalMinutes = arriveRaw ? parseTimeToMinutes(arriveRaw) : null;
-    if (arriveRaw && !Number.isFinite(arrivalMinutes)){
+    if (!Number.isFinite(arrivalMinutes)){
       throw new Error(`Row ${index + 1}: Arrival time must be HH:MM.`);
     }
-    const blockMinutes = blockRaw ? parseDurationToMinutes(blockRaw) : null;
-    if (blockRaw && !Number.isFinite(blockMinutes)){
-      throw new Error(`Row ${index + 1}: Block must be H:MM.`);
-    }
-    const creditMinutes = creditRaw ? parseDurationToMinutes(creditRaw) : null;
-    if (creditRaw && !Number.isFinite(creditMinutes)){
-      throw new Error(`Row ${index + 1}: Credit must be H:MM.`);
-    }
+    const overnightMinutes = arrivalMinutes < departureMinutes ? arrivalMinutes + 1440 : arrivalMinutes;
+    const blockMinutes = Math.max(0, overnightMinutes - departureMinutes);
+    const creditMinutes = blockMinutes;
     const result = buildCalendarManualEvent({
-      dateKey,
+      dateKey: normalizedDateKey,
       prefix: flightInfo.prefix,
       number: flightInfo.number,
       route,
@@ -8013,15 +8017,17 @@ function applyManualPairingLayoverDurations({
 } = {}){
   const normalizedStartKey = normalizeCalendarDateKey(startKey);
   if (!normalizedStartKey || !Array.isArray(pairingFlights) || pairingFlights.length < 2) return;
-  const dayStartMs = getDateKeyStartMs(normalizedStartKey);
-  if (!Number.isFinite(dayStartMs)) return;
   const flightEntries = pairingFlights.map((event) => {
-    const timing = getCalendarEventTiming(event, normalizedStartKey);
+    const eventDateKey = normalizeCalendarDateKey(event?.date) || normalizedStartKey;
+    const timing = getCalendarEventTiming(event, eventDateKey);
     if (!timing || !Number.isFinite(timing.startMs) || !Number.isFinite(timing.endMs)) return null;
     const sortMinutes = Number.isFinite(timing.departureMinutes)
       ? timing.departureMinutes
       : timing.arrivalMinutes;
-    const sortStartMs = Number.isFinite(sortMinutes) ? dayStartMs + (sortMinutes * 60000) : timing.startMs;
+    const eventStartMs = getDateKeyStartMs(eventDateKey);
+    const sortStartMs = Number.isFinite(sortMinutes) && Number.isFinite(eventStartMs)
+      ? eventStartMs + (sortMinutes * 60000)
+      : timing.startMs;
     return {
       event,
       timing,
@@ -9561,6 +9567,14 @@ function renderCalendarPairingDetail(pairingId){
             }
           });
         }
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'calendar-pairing-flight-delete';
+        deleteButton.textContent = 'Delete';
+        deleteButton.dataset.action = 'delete-pairing-flight';
+        deleteButton.dataset.eventId = event.id;
+        deleteButton.dataset.dateKey = dateKey;
+        flight.appendChild(deleteButton);
         flights.appendChild(flight);
       });
     } else {
@@ -9588,6 +9602,31 @@ function renderCalendarPairingDetail(pairingId){
         if (!updated || calendarPairingId !== pairingId) return;
         renderCalendarPairingDetail(pairingId);
       });
+    }
+  }
+}
+
+function setCalendarPairingEditMode(isEditing){
+  calendarPairingEditMode = Boolean(isEditing);
+  const detailEl = document.getElementById('modern-calendar-pairing-detail');
+  const editPanel = document.getElementById('calendar-pairing-edit-panel');
+  const editToggle = document.getElementById('calendar-pairing-edit-toggle');
+  if (detailEl){
+    detailEl.classList.toggle('calendar-pairing-editing', calendarPairingEditMode);
+  }
+  if (editPanel){
+    editPanel.classList.toggle('hidden', !calendarPairingEditMode);
+    editPanel.setAttribute('aria-hidden', String(!calendarPairingEditMode));
+  }
+  if (editToggle){
+    editToggle.textContent = calendarPairingEditMode ? 'Done editing' : 'Edit pairing';
+    editToggle.setAttribute('aria-expanded', String(calendarPairingEditMode));
+    editToggle.setAttribute('aria-pressed', String(calendarPairingEditMode));
+  }
+  if (calendarPairingEditMode){
+    const rowsContainer = document.getElementById('calendar-pairing-detail-flight-rows');
+    if (rowsContainer && !rowsContainer.querySelector('.calendar-pairing-flight-row')){
+      addCalendarPairingFlightRowToContainer(rowsContainer);
     }
   }
 }
@@ -9734,8 +9773,17 @@ function openCalendarPairingDetail(pairingId, sourceDateKey = null){
   if (!pairingId || !mainEl || !detailEl) return;
   calendarPairingId = pairingId;
   calendarPairingSourceDateKey = sourceDateKey ? normalizeCalendarDateKey(sourceDateKey) : null;
+  calendarPairingEditMode = false;
   renderCalendarPairingDetail(pairingId);
-  resetCalendarPairingFlightRows(document.getElementById('calendar-pairing-detail-flight-rows'));
+  const detailRows = document.getElementById('calendar-pairing-detail-flight-rows');
+  if (detailRows){
+    const pairingDays = getCalendarPairingDays(pairingId);
+    detailRows.dataset.defaultDate = calendarPairingSourceDateKey && pairingDays.includes(calendarPairingSourceDateKey)
+      ? calendarPairingSourceDateKey
+      : (pairingDays[0] || '');
+  }
+  resetCalendarPairingFlightRows(detailRows);
+  setCalendarPairingEditMode(false);
   mainEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('modern-calendar-detail')?.classList.add('hidden');
@@ -9755,6 +9803,8 @@ function closeCalendarPairingDetail(){
   if (detailEl) detailEl.classList.add('hidden');
   calendarPairingId = null;
   calendarPairingSourceDateKey = null;
+  calendarPairingEditMode = false;
+  setCalendarPairingEditMode(false);
   flushCalendarRenderIfNeeded();
 }
 
@@ -9767,42 +9817,142 @@ function addCalendarManualFlightsToPairing({ pairingId, dateKey, flights } = {})
   if (!pairingId) return { error: 'Pairing not found.' };
   const pairingDays = getCalendarPairingDays(pairingId);
   if (!pairingDays.length) return { error: 'Pairing days not found.' };
-  const normalizedDateKey = normalizeCalendarDateKey(dateKey);
-  const targetDateKey = normalizedDateKey && pairingDays.includes(normalizedDateKey)
-    ? normalizedDateKey
-    : pairingDays[0];
-  if (!targetDateKey) return { error: 'Select a valid pairing date.' };
   if (!Array.isArray(flights) || !flights.length) return { error: 'Add at least one flight.' };
-  const existingDay = calendarState.eventsByDate?.[targetDateKey];
-  const existingPairingId = String(existingDay?.pairing?.pairingId || '').trim();
-  if (existingPairingId && existingPairingId !== pairingId){
-    return { error: 'That date already belongs to another pairing.' };
-  }
-  const pairingNumber = String(existingDay?.pairing?.pairingNumber || '').trim()
-    || String(calendarState.eventsByDate?.[getCalendarPairingDays(pairingId)[0]]?.pairing?.pairingNumber || '').trim();
-  const nextDay = existingDay && typeof existingDay === 'object' ? existingDay : {};
-  if (!Array.isArray(nextDay.events)) nextDay.events = [];
-  if (!nextDay.pairing || typeof nextDay.pairing !== 'object'){
-    nextDay.pairing = { pairingId, pairingNumber, pairingDays: [] };
-  } else {
-    nextDay.pairing.pairingId = pairingId;
-    if (!nextDay.pairing.pairingNumber && pairingNumber){
-      nextDay.pairing.pairingNumber = pairingNumber;
-    }
-    if (!Array.isArray(nextDay.pairing.pairingDays)) nextDay.pairing.pairingDays = [];
-  }
-  nextDay.sourceMonthKey = typeof nextDay.sourceMonthKey === 'string'
-    ? nextDay.sourceMonthKey
-    : targetDateKey.slice(0, 7);
-  nextDay.layover = nextDay.layover && typeof nextDay.layover === 'object'
-    ? nextDay.layover
-    : { hotel: '', durationMinutes: null };
+  const fallbackDateKey = normalizeCalendarDateKey(dateKey) || pairingDays[0];
+  if (!fallbackDateKey) return { error: 'Select a valid pairing date.' };
+  const pairingNumberFallback = String(calendarState.eventsByDate?.[pairingDays[0]]?.pairing?.pairingNumber || '').trim();
+  const flightsByDate = new Map();
   flights.forEach((event) => {
-    event.pairingId = pairingId;
-    nextDay.events.push(event);
+    const normalizedDateKey = normalizeCalendarDateKey(event?.date) || fallbackDateKey;
+    if (!normalizedDateKey || !pairingDays.includes(normalizedDateKey)){
+      throw new Error('Flight date must fall within the pairing range.');
+    }
+    if (!flightsByDate.has(normalizedDateKey)) flightsByDate.set(normalizedDateKey, []);
+    event.date = normalizedDateKey;
+    flightsByDate.get(normalizedDateKey).push(event);
   });
-  calendarState.eventsByDate[targetDateKey] = nextDay;
-  return { dateKey: targetDateKey, count: flights.length };
+  flightsByDate.forEach((events, targetDateKey) => {
+    const existingDay = calendarState.eventsByDate?.[targetDateKey];
+    const existingPairingId = String(existingDay?.pairing?.pairingId || '').trim();
+    if (existingPairingId && existingPairingId !== pairingId){
+      throw new Error('That date already belongs to another pairing.');
+    }
+    const pairingNumber = String(existingDay?.pairing?.pairingNumber || '').trim() || pairingNumberFallback;
+    const nextDay = existingDay && typeof existingDay === 'object' ? existingDay : {};
+    if (!Array.isArray(nextDay.events)) nextDay.events = [];
+    if (!nextDay.pairing || typeof nextDay.pairing !== 'object'){
+      nextDay.pairing = { pairingId, pairingNumber, pairingDays: [] };
+    } else {
+      nextDay.pairing.pairingId = pairingId;
+      if (!nextDay.pairing.pairingNumber && pairingNumber){
+        nextDay.pairing.pairingNumber = pairingNumber;
+      }
+      if (!Array.isArray(nextDay.pairing.pairingDays)) nextDay.pairing.pairingDays = [];
+    }
+    nextDay.sourceMonthKey = typeof nextDay.sourceMonthKey === 'string'
+      ? nextDay.sourceMonthKey
+      : targetDateKey.slice(0, 7);
+    nextDay.layover = nextDay.layover && typeof nextDay.layover === 'object'
+      ? nextDay.layover
+      : { hotel: '', durationMinutes: null };
+    events.forEach((event) => {
+      event.pairingId = pairingId;
+      nextDay.events.push(event);
+    });
+    calendarState.eventsByDate[targetDateKey] = nextDay;
+  });
+  return { count: flights.length };
+}
+
+function pruneCalendarEmptyPairingDay(dateKey){
+  const day = calendarState.eventsByDate?.[dateKey];
+  if (!day) return;
+  const hasEvents = Array.isArray(day.events) && day.events.length > 0;
+  const layover = day.layover;
+  const hasLayover = Boolean(layover)
+    && (Number.isFinite(layover?.durationMinutes) || (typeof layover?.hotel === 'string' && layover.hotel.trim()));
+  const hasPlaceholders = Boolean(day.checkoutPlaceholderFromDateKey)
+    || Boolean(layover?.placeholderFromDateKey);
+  const hasCheckTimes = Number.isFinite(day.checkInMinutes) || Number.isFinite(day.checkOutMinutes);
+  const hasOverrides = Number.isFinite(day.tafbMinutes)
+    || Number.isFinite(day.dpgMinutes)
+    || Number.isFinite(day.thgMinutes)
+    || Number.isFinite(day?.pairing?.tripCreditMinutes)
+    || Number.isFinite(day?.pairing?.tripTafbMinutes);
+  if (!hasEvents && !hasLayover && !hasPlaceholders && !hasCheckTimes && !hasOverrides){
+    delete calendarState.eventsByDate[dateKey];
+  }
+}
+
+function clearCalendarPairingPlaceholders(pairingId){
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    if (!day || !day.pairing || day.pairing.pairingId !== pairingId) return;
+    const hasEvents = Array.isArray(day.events) && day.events.length > 0;
+    if (hasEvents) return;
+    if (day.checkoutPlaceholderFromDateKey){
+      delete day.checkoutPlaceholderFromDateKey;
+      if (!Number.isFinite(day.checkOutMinutes)) delete day.checkOutMinutes;
+    }
+    if (day.layover?.placeholderFromDateKey){
+      delete day.layover;
+    } else if (day.layover && !String(day.layover.hotel || '').trim()){
+      delete day.layover;
+    }
+    pruneCalendarEmptyPairingDay(dateKey);
+  });
+}
+
+function getCalendarPairingEvents(pairingId){
+  const events = [];
+  Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
+    (day?.events || []).forEach((event) => {
+      const eventPairingId = getCalendarPairingIdForEvent(event, dateKey);
+      if (eventPairingId === pairingId){
+        events.push(event);
+      }
+    });
+  });
+  return events;
+}
+
+function deleteCalendarPairingFlight(eventId){
+  const entry = findCalendarEventById(eventId);
+  if (!entry) return { error: 'Flight not found.' };
+  const pairingId = getCalendarPairingIdForEvent(entry.event, entry.dateKey);
+  const day = calendarState.eventsByDate?.[entry.dateKey];
+  if (!day || !Array.isArray(day.events)) return { error: 'Flight not found.' };
+  day.events = day.events.filter(event => event?.id !== eventId);
+  if (!day.events.length) delete day.events;
+  pruneCalendarEmptyPairingDay(entry.dateKey);
+  if (pairingId){
+    clearCalendarPairingPlaceholders(pairingId);
+    const pairingDays = getCalendarPairingDays(pairingId);
+    pairingDays.forEach((dateKey) => {
+      const day = calendarState.eventsByDate?.[dateKey];
+      if (!day?.layover) return;
+      if (!String(day.layover.hotel || '').trim()){
+        delete day.layover;
+      }
+    });
+    const pairingFlights = getCalendarPairingEvents(pairingId);
+    if (pairingFlights.length){
+      applyManualPairingLayoverDurations({
+        pairingId,
+        pairingFlights,
+        startKey: pairingDays[0],
+        eventsByDate: calendarState.eventsByDate
+      });
+    }
+    updateCalendarPairingMetrics(calendarState.eventsByDate);
+  }
+  calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
+  saveCalendarState();
+  renderCalendarIfVisible();
+  refreshCalendarPairingDetail();
+  refreshCalendarCreditDetail();
+  refreshCalendarTafbDetail();
+  refreshCalendarDayDetail();
+  return { pairingId };
 }
 
 function refreshCalendarPairingDetailForEvent(eventId){
@@ -10568,6 +10718,10 @@ function initCalendar(){
       pairingToggle.setAttribute('aria-pressed', String(isOpen));
     }
     if (isOpen){
+      const startInput = document.getElementById('modern-calendar-pairing-start');
+      if (pairingRowContainer && startInput?.value){
+        pairingRowContainer.dataset.defaultDate = startInput.value;
+      }
       if (pairingRowContainer && !pairingRowContainer.querySelector('.calendar-pairing-flight-row')){
         addCalendarPairingFlightRowToContainer(pairingRowContainer);
       }
@@ -10577,6 +10731,18 @@ function initCalendar(){
   if (pairingRowAdd){
     pairingRowAdd.addEventListener('click', () => {
       addCalendarPairingFlightRowToContainer(pairingRowContainer, { focusField: true });
+    });
+  }
+  const pairingStartInput = document.getElementById('modern-calendar-pairing-start');
+  if (pairingStartInput && pairingRowContainer){
+    pairingStartInput.addEventListener('change', () => {
+      const value = pairingStartInput.value || '';
+      if (value){
+        pairingRowContainer.dataset.defaultDate = value;
+        pairingRowContainer.querySelectorAll('[data-field="flight-date"]').forEach((input) => {
+          if (!input.value) input.value = value;
+        });
+      }
     });
   }
   if (pairingDetailRowAdd){
@@ -10670,6 +10836,23 @@ function initCalendar(){
         setCalendarStatus(err?.message || 'Unable to read flight rows.');
         return;
       }
+      const normalizedStartKey = normalizeCalendarDateKey(startKey);
+      const normalizedEndKey = normalizeCalendarDateKey(endKey || startKey);
+      const pairingRange = normalizedStartKey && normalizedEndKey
+        ? getCalendarDateKeysInRange(normalizedStartKey, normalizedEndKey)
+        : [];
+      if (pairingFlights.length && !pairingRange.length){
+        setCalendarStatus('Enter valid start/end dates first.');
+        return;
+      }
+      const pairingRangeSet = new Set(pairingRange);
+      if (pairingFlights.length){
+        const outOfRange = pairingFlights.find(event => !pairingRangeSet.has(normalizeCalendarDateKey(event?.date)));
+        if (outOfRange){
+          setCalendarStatus('Flight dates must fall within the pairing range.');
+          return;
+        }
+      }
       const tripCreditMinutes = tripCreditRaw ? parseDurationToMinutes(tripCreditRaw) : null;
       if (tripCreditRaw && !Number.isFinite(tripCreditMinutes)){
         setCalendarStatus('Trip credit must be H:MM.');
@@ -10697,16 +10880,23 @@ function initCalendar(){
         return;
       }
       if (pairingFlights.length){
-        const normalizedDateKey = normalizeCalendarDateKey(startKey);
-        const targetDay = calendarState.eventsByDate?.[normalizedDateKey];
-        if (targetDay){
+        const flightsByDate = new Map();
+        pairingFlights.forEach((event) => {
+          const eventDateKey = normalizeCalendarDateKey(event?.date);
+          if (!eventDateKey) return;
+          if (!flightsByDate.has(eventDateKey)) flightsByDate.set(eventDateKey, []);
+          flightsByDate.get(eventDateKey).push(event);
+        });
+        flightsByDate.forEach((events, eventDateKey) => {
+          const targetDay = calendarState.eventsByDate?.[eventDateKey];
+          if (!targetDay) return;
           if (!Array.isArray(targetDay.events)) targetDay.events = [];
-          pairingFlights.forEach((event) => {
+          events.forEach((event) => {
             event.pairingId = result.pairingId;
-            event.date = normalizedDateKey;
+            event.date = eventDateKey;
             targetDay.events.push(event);
           });
-        }
+        });
         applyManualPairingLayoverDurations({
           pairingId: result.pairingId,
           pairingFlights,
@@ -11129,6 +11319,20 @@ function initCalendar(){
       closeCalendarPairingDetail();
     });
   }
+  const pairingEditToggle = document.getElementById('calendar-pairing-edit-toggle');
+  if (pairingEditToggle){
+    pairingEditToggle.addEventListener('click', () => {
+      if (!calendarPairingId) return;
+      const rowsContainer = document.getElementById('calendar-pairing-detail-flight-rows');
+      if (rowsContainer){
+        const pairingDays = getCalendarPairingDays(calendarPairingId);
+        rowsContainer.dataset.defaultDate = calendarPairingSourceDateKey && pairingDays.includes(calendarPairingSourceDateKey)
+          ? calendarPairingSourceDateKey
+          : (pairingDays[0] || '');
+      }
+      setCalendarPairingEditMode(!calendarPairingEditMode);
+    });
+  }
   const pairingTimingSave = document.getElementById('calendar-pairing-timing-save');
   if (pairingTimingSave){
     pairingTimingSave.addEventListener('click', () => {
@@ -11192,19 +11396,20 @@ function initCalendar(){
         if (statusEl) statusEl.textContent = err?.message || 'Unable to read flight rows.';
         return;
       }
-      const result = addCalendarManualFlightsToPairing({
-        pairingId: calendarPairingId,
-        dateKey: sourceDateKey,
-        flights: pairingFlights
-      });
-      if (result?.error){
-        if (statusEl) statusEl.textContent = result.error;
+      try {
+        addCalendarManualFlightsToPairing({
+          pairingId: calendarPairingId,
+          dateKey: sourceDateKey,
+          flights: pairingFlights
+        });
+      } catch (err){
+        if (statusEl) statusEl.textContent = err?.message || 'Unable to add flights.';
         return;
       }
       applyManualPairingLayoverDurations({
         pairingId: calendarPairingId,
         pairingFlights,
-        startKey: sourceDateKey,
+        startKey: pairingDaysList[0],
         eventsByDate: calendarState.eventsByDate
       });
       recomputeCalendarPairingMetricsForPairing(calendarPairingId);
@@ -11223,6 +11428,24 @@ function initCalendar(){
   if (pairingDays){
     pairingDays.addEventListener('click', (event) => {
       const target = event.target;
+      const deleteButton = target instanceof Element ? target.closest('[data-action="delete-pairing-flight"]') : null;
+      if (deleteButton && calendarPairingEditMode){
+        const eventId = deleteButton.getAttribute('data-event-id');
+        if (!eventId) return;
+        const statusEl = document.getElementById('calendar-pairing-status');
+        const result = deleteCalendarPairingFlight(eventId);
+        if (result?.error){
+          if (statusEl) statusEl.textContent = result.error;
+          return;
+        }
+        const remainingDays = result?.pairingId ? getCalendarPairingDays(result.pairingId) : [];
+        if (!remainingDays.length){
+          closeCalendarPairingDetail();
+          return;
+        }
+        if (statusEl) statusEl.textContent = 'Flight removed.';
+        return;
+      }
       const wxButton = target instanceof Element ? target.closest('[data-calendar-wx-airport]') : null;
       if (wxButton){
         const depCode = wxButton.getAttribute('data-calendar-wx-dep');
@@ -14442,7 +14665,7 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Pairing credit uses TRIP credit minus CNX (non-PP) plus block growth only when TRIP credit is available; otherwise it sums each day’s credit. When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
+    pairingCredit: 'Pairing credit uses TRIP credit minus CNX (non-PP) plus block growth only when TRIP credit is available; otherwise it sums each day’s credit. Manual flights use block minutes from departure/arrival times (overnight handled) and credit equals block. When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. Monthly totals apply the same TRIP override rules, exclude CNX (non-PP) credits from TRIP totals, and add vacation credit once (CNX PP credits remain included).',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
     creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Monthly totals use TRIP credit minus CNX (non-PP) credits when available; otherwise they sum daily credits (CNX PP credits remain included). When manual check-in/out edits set TAFB (no TRIP TAFB), pairing credit floors at TAFB/4. Non-pairing days always use daily credit totals, and vacation credit is added once.',
     tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings always use check-in/out times (no TRIP TAFB override). When manual check-in/out edits set TAFB, pairing credit floors at TAFB/4. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel).',
