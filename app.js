@@ -7978,6 +7978,84 @@ function serializeCalendarPairingFlightRows({ dateKey, pairingId } = {}){
   return { events };
 }
 
+function applyManualPairingLayoverDurations({
+  pairingId,
+  pairingFlights,
+  startKey,
+  eventsByDate = calendarState.eventsByDate
+} = {}){
+  const normalizedStartKey = normalizeCalendarDateKey(startKey);
+  if (!normalizedStartKey || !Array.isArray(pairingFlights) || pairingFlights.length < 2) return;
+  const dayStartMs = getDateKeyStartMs(normalizedStartKey);
+  if (!Number.isFinite(dayStartMs)) return;
+  const flightEntries = pairingFlights.map((event) => {
+    const timing = getCalendarEventTiming(event, normalizedStartKey);
+    if (!timing || !Number.isFinite(timing.startMs) || !Number.isFinite(timing.endMs)) return null;
+    const sortMinutes = Number.isFinite(timing.departureMinutes)
+      ? timing.departureMinutes
+      : timing.arrivalMinutes;
+    const sortStartMs = Number.isFinite(sortMinutes) ? dayStartMs + (sortMinutes * 60000) : timing.startMs;
+    return {
+      event,
+      timing,
+      sortStartMs
+    };
+  }).filter(Boolean);
+  if (flightEntries.length < 2) return;
+  flightEntries.sort((a, b) => a.sortStartMs - b.sortStartMs);
+  flightEntries.forEach((entry, index) => {
+    const nextEntry = flightEntries[index + 1];
+    if (!nextEntry) return;
+    let nextStartMs = nextEntry.timing.startMs;
+    const currentEndMs = entry.timing.endMs;
+    if (!Number.isFinite(nextStartMs) || !Number.isFinite(currentEndMs)) return;
+    let gapMinutes = Math.round((nextStartMs - currentEndMs) / 60000);
+    if (gapMinutes <= 0){
+      nextStartMs += 86400000;
+      gapMinutes = Math.round((nextStartMs - currentEndMs) / 60000);
+    }
+    if (gapMinutes <= 480) return;
+    const arrivalDateKey = getDateKeyFromMs(currentEndMs);
+    if (!arrivalDateKey) return;
+    const existingDay = eventsByDate?.[arrivalDateKey];
+    const nextDay = existingDay && typeof existingDay === 'object' ? existingDay : {};
+    if (!Array.isArray(nextDay.events)) nextDay.events = [];
+    if (!nextDay.sourceMonthKey && typeof arrivalDateKey === 'string' && arrivalDateKey.length >= 7){
+      nextDay.sourceMonthKey = arrivalDateKey.slice(0, 7);
+    }
+    if (pairingId){
+      const existingPairing = nextDay.pairing && typeof nextDay.pairing === 'object'
+        ? nextDay.pairing
+        : null;
+      if (!existingPairing){
+        const pairingNumber = String(eventsByDate?.[normalizedStartKey]?.pairing?.pairingNumber || '').trim();
+        nextDay.pairing = {
+          pairingId,
+          pairingNumber,
+          pairingDays: []
+        };
+      } else if (!existingPairing.pairingId){
+        existingPairing.pairingId = pairingId;
+      }
+    }
+    const existingLayover = nextDay.layover && typeof nextDay.layover === 'object'
+      ? nextDay.layover
+      : null;
+    const layover = existingLayover || { hotel: '', durationMinutes: null };
+    if (typeof layover.hotel !== 'string') layover.hotel = '';
+    const existingDuration = Number.isFinite(layover.durationMinutes) ? layover.durationMinutes : null;
+    if (!Number.isFinite(existingDuration) || gapMinutes > existingDuration){
+      layover.durationMinutes = gapMinutes;
+    }
+    const sourceDateKey = entry.event?.date || normalizedStartKey;
+    if (arrivalDateKey !== sourceDateKey && !layover.placeholderFromDateKey){
+      layover.placeholderFromDateKey = sourceDateKey;
+    }
+    nextDay.layover = layover;
+    eventsByDate[arrivalDateKey] = nextDay;
+  });
+}
+
 function getCalendarMonthCandidates(){
   const now = new Date();
   const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -10674,6 +10752,12 @@ function initCalendar(){
             targetDay.events.push(event);
           });
         }
+        applyManualPairingLayoverDurations({
+          pairingId: result.pairingId,
+          pairingFlights,
+          startKey,
+          eventsByDate: calendarState.eventsByDate
+        });
       }
       dedupeCalendarPairingIds(calendarState.eventsByDate);
       updateCalendarPairingMetrics(calendarState.eventsByDate);
@@ -10681,6 +10765,9 @@ function initCalendar(){
       ensureCalendarSelection();
       saveCalendarState();
       renderCalendar();
+      if (calendarPairingId === result.pairingId){
+        renderCalendarPairingDetail(result.pairingId);
+      }
       setCalendarStatus('Pairing added.');
       [
         'modern-calendar-pairing-start',
