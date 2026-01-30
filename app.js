@@ -10428,7 +10428,7 @@ function initCalendar(){
       pairingToggle.setAttribute('aria-pressed', String(isOpen));
     }
     if (isOpen){
-      document.getElementById('modern-calendar-pairing-number')?.focus();
+      document.getElementById('modern-calendar-pairing-start')?.focus();
     }
   };
   if (insertToggle){
@@ -10502,7 +10502,6 @@ function initCalendar(){
   const pairingSave = document.getElementById('modern-calendar-pairing-save');
   if (pairingSave){
     pairingSave.addEventListener('click', () => {
-      const pairingNumber = document.getElementById('modern-calendar-pairing-number')?.value || '';
       const startKey = document.getElementById('modern-calendar-pairing-start')?.value || '';
       const endKey = document.getElementById('modern-calendar-pairing-end')?.value || '';
       const tripCreditRaw = document.getElementById('modern-calendar-pairing-trip-credit')?.value || '';
@@ -10530,7 +10529,6 @@ function initCalendar(){
         return;
       }
       const result = createCalendarPairingSkeleton({
-        pairingNumber,
         startKey,
         endKey,
         tripCreditMinutes,
@@ -10550,7 +10548,6 @@ function initCalendar(){
       renderCalendar();
       setCalendarStatus('Pairing added.');
       [
-        'modern-calendar-pairing-number',
         'modern-calendar-pairing-start',
         'modern-calendar-pairing-end',
         'modern-calendar-pairing-trip-credit',
