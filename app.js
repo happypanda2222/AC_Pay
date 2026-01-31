@@ -9687,7 +9687,10 @@ function renderCalendarPairingDetail(pairingId){
         if (flightCancellationClass) flight.classList.add(flightCancellationClass);
         const route = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '';
         const label = event.label || event.identifiers?.join(', ') || 'Flight';
-        flight.textContent = route ? `${label} · ${route}` : label;
+        const blockText = Number.isFinite(event.blockMinutes)
+          ? ` · Block ${formatDurationMinutes(event.blockMinutes)}`
+          : '';
+        flight.textContent = route ? `${label} · ${route}${blockText}` : `${label}${blockText}`;
         if (Array.isArray(event?.segments) && event.segments.length){
           const now = Date.now();
           const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
@@ -11164,7 +11167,6 @@ function initCalendar(){
     pairingSave.addEventListener('click', () => {
       const startKey = document.getElementById('modern-calendar-pairing-start')?.value || '';
       const endKey = document.getElementById('modern-calendar-pairing-end')?.value || '';
-      const tripCreditRaw = document.getElementById('modern-calendar-pairing-trip-credit')?.value || '';
       let pairingFlights = [];
       try {
         const serialized = serializeCalendarPairingFlightRows({ dateKey: startKey, pairingId: '' });
@@ -11190,15 +11192,9 @@ function initCalendar(){
           return;
         }
       }
-      const tripCreditMinutes = tripCreditRaw ? parseDurationToMinutes(tripCreditRaw) : null;
-      if (tripCreditRaw && !Number.isFinite(tripCreditMinutes)){
-        setCalendarStatus('Trip credit must be H:MM.');
-        return;
-      }
       const result = createCalendarPairingSkeleton({
         startKey,
-        endKey,
-        tripCreditMinutes
+        endKey
       });
       if (result?.error){
         setCalendarStatus(result.error);
@@ -11242,8 +11238,7 @@ function initCalendar(){
       setCalendarStatus('Pairing added.');
       [
         'modern-calendar-pairing-start',
-        'modern-calendar-pairing-end',
-        'modern-calendar-pairing-trip-credit'
+        'modern-calendar-pairing-end'
       ].forEach((id) => {
         const input = document.getElementById(id);
         if (input) input.value = '';
