@@ -6023,6 +6023,10 @@ async function syncCalendarToCloud(){
   };
   const sendCalendarPayload = async (bodyPayload) => {
     try {
+      console.info(
+        'Calendar sync payload eventsByDate keys',
+        Object.keys(eventsByDate)
+      );
       return await fetch(endpoint, {
         method: 'PUT',
         headers: {
@@ -10269,6 +10273,22 @@ function deleteCalendarPairing(pairingId){
     }
     pruneCalendarEmptyPairingDay(dateKey);
   });
+  const remainingPairingDates = Object.entries(calendarState.eventsByDate || {})
+    .filter(([dateKey, day]) => {
+      if (!day || typeof day !== 'object') return false;
+      const dayPairingId = String(day?.pairing?.pairingId || '').trim();
+      if (dayPairingId === pairingId) return true;
+      if (!Array.isArray(day.events)) return false;
+      return day.events.some((event) => getCalendarPairingIdForEvent(event, dateKey) === pairingId);
+    })
+    .map(([dateKey]) => dateKey);
+  if (remainingPairingDates.length){
+    console.warn(
+      'Calendar pairing delete still present in eventsByDate',
+      pairingId,
+      remainingPairingDates
+    );
+  }
   clearCalendarPairingPlaceholders(pairingId);
   updateCalendarPairingMetrics(calendarState.eventsByDate);
   calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
