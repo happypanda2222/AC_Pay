@@ -7651,21 +7651,12 @@ function parsePastedScheduleText(text){
     const dayEvent = buildCalendarEventFromText(currentDateKey, currentLines, currentPairing);
     if (dayEvent){
       if (currentPairing?.pairingId){
-        const pairingSnapshot = {
-          pairingId: currentPairing.pairingId,
-          pairingNumber: currentPairing.pairingNumber || '',
-          pairingDays: currentPairing.pairingDays || []
-        };
-        if (!dayEvent.pairing || dayEvent.pairing.pairingId !== currentPairing.pairingId){
-          dayEvent.pairing = pairingSnapshot;
-        } else {
-          if (!dayEvent.pairing.pairingNumber){
-            dayEvent.pairing.pairingNumber = pairingSnapshot.pairingNumber;
-          }
-          if (!Array.isArray(dayEvent.pairing.pairingDays)){
-            dayEvent.pairing.pairingDays = pairingSnapshot.pairingDays;
-          }
+        if (!dayEvent.pairing){
+          dayEvent.pairing = {};
         }
+        dayEvent.pairing.pairingId = currentPairing.pairingId;
+        dayEvent.pairing.pairingNumber = currentPairing.pairingNumber || '';
+        dayEvent.pairing.pairingDays = currentPairing.pairingDays || [];
         if (Array.isArray(dayEvent.events)){
           dayEvent.events.forEach((event) => {
             if (event && typeof event === 'object'){
