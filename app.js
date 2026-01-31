@@ -4689,10 +4689,15 @@ function normalizeCalendarState(){
       return event;
     }).filter(Boolean);
     const pairingIdFromEvents = getCalendarPairingIdFromEvents(day.events);
+    const hasExplicitPairingMarker = Boolean(
+      day.pairing && typeof day.pairing === 'object' && day.pairing.pairingId
+    );
     if (!day.pairing || typeof day.pairing !== 'object'){
-      day.pairing = pairingIdFromEvents
-        ? { pairingId: pairingIdFromEvents, pairingNumber: '', pairingDays: [] }
-        : inferCalendarDayPairing(day, dateKey);
+      if (pairingIdFromEvents){
+        day.pairing = { pairingId: pairingIdFromEvents, pairingNumber: '', pairingDays: [] };
+      } else if (day.events.length > 0 || hasExplicitPairingMarker){
+        day.pairing = inferCalendarDayPairing(day, dateKey);
+      }
     }
     if (day.pairing){
       if (!day.pairing.pairingId && pairingIdFromEvents){
