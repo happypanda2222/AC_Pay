@@ -7604,18 +7604,59 @@ function parsePastedScheduleText(text){
   let currentDateKey = null;
   let currentLines = [];
   let currentPairing = null;
-  let pairingCounter = 0;
   let pairingNeedsReset = false;
-  const parseSessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
+  const computeStablePairingHash = (value) => {
+    const input = String(value || '');
+    let hash = 0;
+    for (let index = 0; index < input.length; index += 1){
+      hash = ((hash << 5) - hash) + input.charCodeAt(index);
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(36);
+  };
+  const getFirstPairingIdentifier = (dayEvent) => {
+    if (!dayEvent || !Array.isArray(dayEvent.events)) return '';
+    for (const event of dayEvent.events){
+      const identifiers = Array.isArray(event?.identifiers) ? event.identifiers : [];
+      if (identifiers.length) return String(identifiers[0]);
+      if (event?.label) return String(event.label);
+    }
+    return '';
+  };
+  const updateCurrentPairingId = (pairing, nextPairingId) => {
+    if (!pairing || !nextPairingId || pairing.pairingId === nextPairingId) return;
+    pairing.pairingId = nextPairingId;
+    (pairing.pairingDays || []).forEach((dateKey) => {
+      const day = eventsByDate?.[dateKey];
+      if (!day) return;
+      if (!day.pairing) day.pairing = {};
+      day.pairing.pairingId = nextPairingId;
+      if (Array.isArray(day.events)){
+        day.events = day.events.map((event) => {
+          if (!event || typeof event !== 'object') return event;
+          return { ...event, pairingId: nextPairingId };
+        });
+      }
+    });
+  };
+  const buildStablePairingId = ({ pairingNumber, startDateKey, dayEvent }) => {
+    const normalizedNumber = pairingNumber ? pairingNumber.toUpperCase() : '';
+    const safeStartDate = startDateKey || '';
+    if (normalizedNumber){
+      return `PAIR-${normalizedNumber}-${safeStartDate}`;
+    }
+    const firstIdentifier = getFirstPairingIdentifier(dayEvent);
+    const hashSeed = `${firstIdentifier}-${safeStartDate}`;
+    const pairingHash = computeStablePairingHash(hashSeed);
+    return `PAIR-${pairingHash}-${safeStartDate}`;
+  };
   const startPairing = (pairingNumber) => {
-    const pairingLabel = pairingNumber || 'PAIR';
-    pairingCounter += 1;
-    const pairingId = `${pairingLabel}-${parseSessionId}-${pairingCounter}`;
     currentPairing = {
-      pairingId,
+      pairingId: '',
       pairingNumber: pairingNumber || '',
-      pairingDays: []
+      pairingDays: [],
+      pairingStartDate: '',
+      pairingSeedIdentifier: ''
     };
     return currentPairing;
   };
@@ -7632,6 +7673,13 @@ function parsePastedScheduleText(text){
       }
       if (!currentPairing.pairingNumber){
         currentPairing.pairingNumber = normalizedNumber;
+        if (currentPairing.pairingStartDate){
+          const updatedPairingId = buildStablePairingId({
+            pairingNumber: normalizedNumber,
+            startDateKey: currentPairing.pairingStartDate
+          });
+          updateCurrentPairingId(currentPairing, updatedPairingId);
+        }
       }
     }
     return currentPairing;
@@ -7641,6 +7689,21 @@ function parsePastedScheduleText(text){
     if (!currentDateKey) return;
     const dayEvent = buildCalendarEventFromText(currentDateKey, currentLines, currentPairing);
     if (dayEvent){
+      if (currentPairing){
+        if (!currentPairing.pairingStartDate){
+          currentPairing.pairingStartDate = currentDateKey;
+        }
+        if (!currentPairing.pairingSeedIdentifier){
+          currentPairing.pairingSeedIdentifier = getFirstPairingIdentifier(dayEvent);
+        }
+        if (!currentPairing.pairingId){
+          currentPairing.pairingId = buildStablePairingId({
+            pairingNumber: currentPairing.pairingNumber,
+            startDateKey: currentPairing.pairingStartDate,
+            dayEvent
+          });
+        }
+      }
       if (currentPairing?.pairingId){
         if (!dayEvent.pairing){
           dayEvent.pairing = {};
@@ -11237,6 +11300,26 @@ function initCalendar(){
         const parsedMonthSet = new Set(parsedMonths);
         setCalendarSourceMonthKey(eventsByDate);
         const retainedEvents = {};
+        const normalizePairingNumber = (value) => String(value || '').trim().toUpperCase();
+        const applyPairingIdToDay = (day, pairingId, pairingNumber) => {
+          if (!day || !pairingId) return day;
+          const updatedDay = {
+            ...day,
+            pairing: {
+              ...(day?.pairing || {}),
+              pairingId,
+              pairingNumber: pairingNumber || day?.pairing?.pairingNumber || '',
+              pairingDays: []
+            }
+          };
+          if (Array.isArray(updatedDay.events)){
+            updatedDay.events = updatedDay.events.map((event) => {
+              if (!event || typeof event !== 'object') return event;
+              return { ...event, pairingId };
+            });
+          }
+          return updatedDay;
+        };
         Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
           const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
             ? day.sourceMonthKey.slice(0, 7)
@@ -11248,6 +11331,12 @@ function initCalendar(){
         Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
           const existingDay = calendarState.eventsByDate?.[dateKey];
           const existingPairingId = existingDay?.pairing?.pairingId;
+          const incomingPairingNumber = normalizePairingNumber(day?.pairing?.pairingNumber);
+          const existingPairingNumber = normalizePairingNumber(existingDay?.pairing?.pairingNumber);
+          if (existingPairingId && incomingPairingNumber && incomingPairingNumber === existingPairingNumber){
+            mergedEventsByDate[dateKey] = applyPairingIdToDay(day, existingPairingId, existingPairingNumber);
+            return;
+          }
           if (existingPairingId){
             const existingPairingDays = getCalendarPairingDays(existingPairingId);
             const hasOutOfRangeDay = existingPairingDays.some((pairingDayKey) => {
@@ -11256,22 +11345,7 @@ function initCalendar(){
             });
             if (hasOutOfRangeDay){
               const pairingNumber = existingDay?.pairing?.pairingNumber || '';
-              const preservedDay = {
-                ...day,
-                pairing: {
-                  ...(day?.pairing || {}),
-                  pairingId: existingPairingId,
-                  pairingNumber: pairingNumber || day?.pairing?.pairingNumber || '',
-                  pairingDays: []
-                }
-              };
-              if (Array.isArray(preservedDay.events)){
-                preservedDay.events = preservedDay.events.map((event) => {
-                  if (!event || typeof event !== 'object') return event;
-                  return { ...event, pairingId: existingPairingId };
-                });
-              }
-              mergedEventsByDate[dateKey] = preservedDay;
+              mergedEventsByDate[dateKey] = applyPairingIdToDay(day, existingPairingId, pairingNumber);
               return;
             }
           }
