@@ -11333,6 +11333,22 @@ function initCalendar(){
             return !parsedMonthSet.has(pairingDayKey.slice(0, 7));
           });
         };
+        const findAdjacentOutOfRangePairing = (dateKey) => {
+          const adjacentOffsets = [-1, 1];
+          for (const offset of adjacentOffsets){
+            const adjacentKey = getAdjacentDateKey(dateKey, offset);
+            if (!adjacentKey) continue;
+            const adjacentDay = calendarState.eventsByDate?.[adjacentKey];
+            const adjacentPairingId = adjacentDay?.pairing?.pairingId;
+            if (adjacentPairingId && hasAdjacentOutOfRangeDay(adjacentPairingId, dateKey)){
+              return {
+                pairingId: adjacentPairingId,
+                pairingNumber: adjacentDay?.pairing?.pairingNumber || ''
+              };
+            }
+          }
+          return null;
+        };
         Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
           const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
             ? day.sourceMonthKey.slice(0, 7)
@@ -11345,6 +11361,17 @@ function initCalendar(){
           const existingDay = calendarState.eventsByDate?.[dateKey];
           const existingPairingId = existingDay?.pairing?.pairingId;
           const incomingPairingId = day?.pairing?.pairingId;
+          if (!existingPairingId && incomingPairingId){
+            const adjacentPairing = findAdjacentOutOfRangePairing(dateKey);
+            if (adjacentPairing){
+              mergedEventsByDate[dateKey] = applyPairingIdToDay(
+                day,
+                adjacentPairing.pairingId,
+                adjacentPairing.pairingNumber
+              );
+              return;
+            }
+          }
           if (existingPairingId && incomingPairingId && existingPairingId === incomingPairingId){
             mergedEventsByDate[dateKey] = applyPairingIdToDay(
               day,
