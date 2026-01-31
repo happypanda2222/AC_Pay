@@ -10255,6 +10255,7 @@ function deleteCalendarPairingFlight(eventId){
 function deleteCalendarPairing(pairingId){
   if (!pairingId) return { error: 'Pairing not found.' };
   const pairingDays = getCalendarPairingDays(pairingId);
+  const pairingDaySet = new Set(pairingDays);
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day || typeof day !== 'object') return;
     const dayPairingId = String(day?.pairing?.pairingId || '').trim();
@@ -10267,14 +10268,19 @@ function deleteCalendarPairing(pairingId){
       }
       if (!day.events.length) delete day.events;
     }
-    if (dayPairingId === pairingId){
-      delete day.pairing;
+    if (pairingDaySet.has(dateKey)){
       delete day.checkInMinutes;
       delete day.checkOutMinutes;
       delete day.checkoutPlaceholderFromDateKey;
       if (day.layover?.placeholderFromDateKey){
         delete day.layover;
       }
+      delete day.tafbMinutes;
+      delete day.dpgMinutes;
+      delete day.thgMinutes;
+    }
+    if (dayPairingId === pairingId || (!dayPairingId && pairingDaySet.has(dateKey))){
+      delete day.pairing;
     }
     pruneCalendarEmptyPairingDay(dateKey);
   });
