@@ -4862,8 +4862,7 @@ function dedupeCalendarPairingIds(targetEventsByDate = calendarState.eventsByDat
     if (!pairingMap.has(pairingId)) pairingMap.set(pairingId, []);
     pairingMap.get(pairingId).push({
       dateKey,
-      day,
-      sourceMonthKey: typeof day?.sourceMonthKey === 'string' ? day.sourceMonthKey : ''
+      day
     });
   });
 
@@ -4874,12 +4873,10 @@ function dedupeCalendarPairingIds(targetEventsByDate = calendarState.eventsByDat
     let currentBlock = null;
     let lastDateKey = null;
     sortedEntries.forEach((entry) => {
-      const entryMonthKey = entry.sourceMonthKey || '';
       const contiguous = lastDateKey && areDateKeysContiguous(lastDateKey, entry.dateKey);
       if (!currentBlock || !contiguous){
         currentBlock = {
           index: blocks.length + 1,
-          sourceMonthKey: entryMonthKey,
           entries: []
         };
         blocks.push(currentBlock);
@@ -4889,11 +4886,9 @@ function dedupeCalendarPairingIds(targetEventsByDate = calendarState.eventsByDat
     });
 
     if (blocks.length < 2) return;
-    const hasMultipleMonths = new Set(blocks.map(block => block.sourceMonthKey || 'unknown')).size > 1;
 
     blocks.forEach((block) => {
       const suffixParts = [];
-      if (hasMultipleMonths) suffixParts.push(block.sourceMonthKey || 'unknown');
       if (blocks.length > 1) suffixParts.push(`B${block.index}`);
       const suffix = suffixParts.filter(Boolean).join('-');
       const newPairingId = suffix ? `${pairingId}-${suffix}` : pairingId;
