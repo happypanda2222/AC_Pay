@@ -4873,13 +4873,10 @@ function dedupeCalendarPairingIds(targetEventsByDate = calendarState.eventsByDat
     const blocks = [];
     let currentBlock = null;
     let lastDateKey = null;
-    let lastSourceMonthKey = null;
-
     sortedEntries.forEach((entry) => {
       const entryMonthKey = entry.sourceMonthKey || '';
       const contiguous = lastDateKey && areDateKeysContiguous(lastDateKey, entry.dateKey);
-      const sameMonth = lastSourceMonthKey === entryMonthKey;
-      if (!currentBlock || !contiguous || !sameMonth){
+      if (!currentBlock || !contiguous){
         currentBlock = {
           index: blocks.length + 1,
           sourceMonthKey: entryMonthKey,
@@ -4889,7 +4886,6 @@ function dedupeCalendarPairingIds(targetEventsByDate = calendarState.eventsByDat
       }
       currentBlock.entries.push(entry);
       lastDateKey = entry.dateKey;
-      lastSourceMonthKey = entryMonthKey;
     });
 
     if (blocks.length < 2) return;
@@ -8327,6 +8323,7 @@ function deleteCalendarMonth(monthKey){
     delete calendarState.blockMonthsByMonthKey[normalized];
   }
   ensureCalendarSelection();
+  normalizeCalendarState();
   saveCalendarState();
   renderCalendar();
   return true;
