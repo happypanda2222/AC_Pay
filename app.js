@@ -4694,13 +4694,27 @@ function normalizeCalendarState(){
     );
     if (!day.pairing || typeof day.pairing !== 'object'){
       if (pairingIdFromEvents){
+        console.log('[normalizeCalendarState] pairing from events', {
+          dateKey,
+          pairingIdFromEvents,
+          eventCount: day.events.length
+        });
         day.pairing = { pairingId: pairingIdFromEvents, pairingNumber: '', pairingDays: [] };
       } else if (day.events.length > 0 || hasExplicitPairingMarker){
+        console.log('[normalizeCalendarState] inferring pairing', {
+          dateKey,
+          hasExplicitPairingMarker,
+          eventCount: day.events.length
+        });
         day.pairing = inferCalendarDayPairing(day, dateKey);
       }
     }
     if (day.pairing){
       if (!day.pairing.pairingId && pairingIdFromEvents){
+        console.log('[normalizeCalendarState] filling missing pairingId', {
+          dateKey,
+          pairingIdFromEvents
+        });
         day.pairing.pairingId = pairingIdFromEvents;
       }
       day.pairing.pairingId = String(day.pairing.pairingId || '').trim();
@@ -5107,6 +5121,7 @@ function getCalendarPairingOrderedEvents(pairingId){
   pairingDays.forEach((dateKey, dayIndex) => {
     const day = calendarState.eventsByDate?.[dateKey];
     (day?.events || []).forEach((event, eventIndex) => {
+      if (isPairingMarkerEvent(event)) return;
       const timing = getCalendarEventTiming(event, dateKey);
       pairingEvents.push({ event, dateKey, dayIndex, eventIndex, timing });
     });
@@ -5401,6 +5416,10 @@ function getCalendarPairingIdFromEvents(events){
     .map(event => String(event?.pairingId || '').trim())
     .filter(Boolean);
   return pairingIds[0] || '';
+}
+
+function isPairingMarkerEvent(event){
+  return Boolean(event?.isPairingMarker);
 }
 
 function hydrateCalendarPairingDays(targetEventsByDate = calendarState.eventsByDate){
@@ -7080,7 +7099,7 @@ function getCalendarPairingLayoverLabel(day, dateKey){
   const layover = day?.layover;
   const hasLayover = Boolean(layover)
     && (Number.isFinite(layover.durationMinutes) || (typeof layover.hotel === 'string' && layover.hotel.trim()));
-  const hasEvents = Array.isArray(day?.events) && day.events.length;
+  const hasEvents = (day?.events || []).some(event => !isPairingMarkerEvent(event));
   if (hasLayover && !hasEvents){
     const priorArrivalLabel = getCalendarPairingPriorArrivalCode(day, dateKey);
     if (priorArrivalLabel) return priorArrivalLabel;
@@ -7854,6 +7873,32 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     && !Number.isFinite(thgMinutes)
     && !Number.isFinite(dayTafbMinutes)){
     return null;
+  }
+
+  if (pairing && !pairing.pairingId){
+    pairing.pairingId = pairingContext?.pairingId || `PAIR-${dateKey}`;
+  }
+  if (pairing?.pairingId && !events.length){
+    const markerId = `${dateKey}-pairing-marker-${pairing.pairingId}`;
+    const markerIdentifiers = pairing.pairingNumber ? [`Pairing ${pairing.pairingNumber}`] : [];
+    events.push({
+      id: markerId,
+      date: dateKey,
+      label: 'Pairing',
+      identifiers: markerIdentifiers,
+      deadhead: false,
+      dutyMinutes: null,
+      creditMinutes: null,
+      blockMinutes: null,
+      legs: [],
+      segments: [],
+      departureMinutes: null,
+      arrivalMinutes: null,
+      cancellation: null,
+      blockGrowthMinutes: 0,
+      pairingId: pairing.pairingId,
+      isPairingMarker: true
+    });
   }
 
   if (Number.isFinite(dutyMinutes)) dayTafbMinutes = dutyMinutes;
@@ -9076,7 +9121,7 @@ function renderCalendar(){
     }
     const dateKey = buildCalendarDateKeyFromDate(current);
     const dayData = calendarState.eventsByDate?.[dateKey];
-    const dayEvents = dayData?.events || [];
+    const dayEvents = (dayData?.events || []).filter(event => !isPairingMarkerEvent(event));
     const hasHotel = getCalendarHotelsForDate(dateKey).length > 0;
     const isCnxDay = dayEvents.some(event => {
       const cancellation = String(event?.cancellation || '').toUpperCase();
@@ -9652,8 +9697,10 @@ function renderCalendarPairingDetail(pairingId){
     if (!day) return;
     const nextDateKey = pairingDays[index + 1];
     const nextDay = nextDateKey ? calendarState.eventsByDate?.[nextDateKey] : null;
-    const hasEvents = Array.isArray(day.events) && day.events.length > 0;
-    const hasNextFlights = Array.isArray(nextDay?.events) && nextDay.events.length > 0;
+    const dayEvents = (day.events || []).filter(event => !isPairingMarkerEvent(event));
+    const nextDayEvents = (nextDay?.events || []).filter(event => !isPairingMarkerEvent(event));
+    const hasEvents = dayEvents.length > 0;
+    const hasNextFlights = nextDayEvents.length > 0;
     const layoverParts = [];
     const layoverDurationMinutes = day.layover?.durationMinutes;
     const hasLayoverDuration = Number.isFinite(layoverDurationMinutes);
@@ -9696,7 +9743,7 @@ function renderCalendarPairingDetail(pairingId){
     const flights = document.createElement('div');
     flights.className = 'calendar-pairing-day-flights';
     if (hasEvents){
-      day.events.forEach((event) => {
+      dayEvents.forEach((event) => {
         const flight = document.createElement('div');
         flight.className = 'calendar-pairing-flight';
         if (isDeadheadEvent(event)) flight.classList.add('is-deadhead');
@@ -9919,10 +9966,11 @@ function renderCalendarDayDetail(dateKey){
   }
   titleEl.textContent = `${getCalendarPairingLabel(day, dateKey)} · ${formatCalendarDateLabel(dateKey)}`;
   const blocks = [];
+  const dayEvents = (day?.events || []).filter(event => !isPairingMarkerEvent(event));
   const creditExtras = getCalendarDayCreditExtras(day);
   const dayCreditTotal = getCalendarDayCreditTotal(dateKey, day);
   const dayTafbTotal = getCalendarDayTafbTotal(dateKey, day);
-  if ((day?.events?.length || creditExtras.length) && Number.isFinite(dayCreditTotal)){
+  if ((dayEvents.length || creditExtras.length) && Number.isFinite(dayCreditTotal)){
     blocks.push(`<div class="block"><div class="label">Total credit</div><div class="value">${escapeHtml(formatDurationMinutes(dayCreditTotal))}</div></div>`);
   }
   if (dayTafbTotal){
@@ -9937,7 +9985,7 @@ function renderCalendarDayDetail(dateKey){
   if (day.layover?.hotel){
     blocks.push(`<div class="block"><div class="label">Hotel</div><div class="value">${escapeHtml(day.layover.hotel)}</div></div>`);
   }
-  const flightsHtml = (day.events || []).map((event) => {
+  const flightsHtml = dayEvents.map((event) => {
     const route = event.legs?.length ? event.legs.map(leg => `${leg.from}-${leg.to}`).join(' ') : '';
     const label = event.label || event.identifiers?.join(', ') || 'Flight';
     const meta = route ? ` · ${route}` : '';
@@ -10127,6 +10175,7 @@ function getCalendarPairingEvents(pairingId){
   const events = [];
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
     (day?.events || []).forEach((event) => {
+      if (isPairingMarkerEvent(event)) return;
       const eventPairingId = getCalendarPairingIdForEvent(event, dateKey);
       if (eventPairingId === pairingId){
         events.push(event);
