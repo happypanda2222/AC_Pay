@@ -11292,12 +11292,24 @@ function initCalendar(){
       pasteInput.value = '';
       setCalendarStatus('Parsing schedule…');
       try {
-        const { eventsByDate, statusMessage, parsedMonths } = parsePastedScheduleText(pastedText);
+        const { eventsByDate, statusMessage, parsedMonths, parsedDateKeys } = parsePastedScheduleText(pastedText);
         if (!parsedMonths.length){
           setCalendarStatus(statusMessage || 'No calendar events found in pasted schedule.');
           return;
         }
         const parsedMonthSet = new Set(parsedMonths);
+        const parsedMonthDayCounts = (parsedDateKeys || []).reduce((acc, dateKey) => {
+          const monthKey = typeof dateKey === 'string' ? dateKey.slice(0, 7) : '';
+          if (!monthKey) return acc;
+          acc[monthKey] = (acc[monthKey] || 0) + 1;
+          return acc;
+        }, {});
+        const replaceMonths = new Set(
+          parsedMonths.filter((monthKey) => {
+            const count = parsedMonthDayCounts[monthKey] || 0;
+            return parsedMonths.length === 1 || count >= 7;
+          })
+        );
         setCalendarSourceMonthKey(eventsByDate);
         const retainedEvents = {};
         const applyPairingIdToDay = (day, pairingId, pairingNumber) => {
@@ -11333,11 +11345,27 @@ function initCalendar(){
             return !parsedMonthSet.has(pairingDayKey.slice(0, 7));
           });
         };
+        const findAdjacentOutOfRangePairing = (dateKey) => {
+          const adjacentOffsets = [-1, 1];
+          for (const offset of adjacentOffsets){
+            const adjacentKey = getAdjacentDateKey(dateKey, offset);
+            if (!adjacentKey) continue;
+            const adjacentDay = calendarState.eventsByDate?.[adjacentKey];
+            const adjacentPairingId = adjacentDay?.pairing?.pairingId;
+            if (adjacentPairingId && hasAdjacentOutOfRangeDay(adjacentPairingId, dateKey)){
+              return {
+                pairingId: adjacentPairingId,
+                pairingNumber: adjacentDay?.pairing?.pairingNumber || ''
+              };
+            }
+          }
+          return null;
+        };
         Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
           const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
             ? day.sourceMonthKey.slice(0, 7)
             : (typeof dateKey === 'string' ? dateKey.slice(0, 7) : '');
-          if (parsedMonthSet.has(monthKey)) return;
+          if (replaceMonths.has(monthKey)) return;
           retainedEvents[dateKey] = day;
         });
         const mergedEventsByDate = { ...retainedEvents };
@@ -11345,6 +11373,17 @@ function initCalendar(){
           const existingDay = calendarState.eventsByDate?.[dateKey];
           const existingPairingId = existingDay?.pairing?.pairingId;
           const incomingPairingId = day?.pairing?.pairingId;
+          if (!existingPairingId && incomingPairingId){
+            const adjacentPairing = findAdjacentOutOfRangePairing(dateKey);
+            if (adjacentPairing){
+              mergedEventsByDate[dateKey] = applyPairingIdToDay(
+                day,
+                adjacentPairing.pairingId,
+                adjacentPairing.pairingNumber
+              );
+              return;
+            }
+          }
           if (existingPairingId && incomingPairingId && existingPairingId === incomingPairingId){
             mergedEventsByDate[dateKey] = applyPairingIdToDay(
               day,
