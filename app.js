@@ -11321,6 +11321,23 @@ function initCalendar(){
           setCalendarStatus('Offline. Sync queued.');
           return;
         }
+        const hasPendingDebounce = Boolean(calendarAutoSyncTimer);
+        let hasQueuedSync = false;
+        try {
+          hasQueuedSync = Boolean(localStorage.getItem(CALENDAR_SYNC_PENDING_KEY));
+        } catch (err){
+          console.warn('Failed to read calendar sync pending flag', err);
+        }
+        const isDirty = hasPendingDebounce || hasQueuedSync;
+        if (isDirty){
+          const pushResult = await syncCalendarToCloud();
+          if (pushResult?.queued){
+            setCalendarStatus('Offline. Sync queued.');
+          } else {
+            setCalendarStatus(pushResult?.statusMessage || 'Synced to cloud.');
+          }
+          return;
+        }
         const pullResult = await loadCalendarFromCloud({ skipConfirm: true });
         renderCalendar();
         setCalendarStatus(pullResult?.statusMessage || 'Synced.');
