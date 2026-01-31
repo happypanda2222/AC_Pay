@@ -11244,7 +11244,40 @@ function initCalendar(){
           if (parsedMonthSet.has(monthKey)) return;
           retainedEvents[dateKey] = day;
         });
-        calendarState.eventsByDate = { ...retainedEvents, ...eventsByDate };
+        const mergedEventsByDate = { ...retainedEvents };
+        Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
+          const existingDay = calendarState.eventsByDate?.[dateKey];
+          const existingPairingId = existingDay?.pairing?.pairingId;
+          if (existingPairingId){
+            const existingPairingDays = getCalendarPairingDays(existingPairingId);
+            const hasOutOfRangeDay = existingPairingDays.some((pairingDayKey) => {
+              if (typeof pairingDayKey !== 'string' || pairingDayKey.length < 7) return false;
+              return !parsedMonthSet.has(pairingDayKey.slice(0, 7));
+            });
+            if (hasOutOfRangeDay){
+              const pairingNumber = existingDay?.pairing?.pairingNumber || '';
+              const preservedDay = {
+                ...day,
+                pairing: {
+                  ...(day?.pairing || {}),
+                  pairingId: existingPairingId,
+                  pairingNumber: pairingNumber || day?.pairing?.pairingNumber || '',
+                  pairingDays: []
+                }
+              };
+              if (Array.isArray(preservedDay.events)){
+                preservedDay.events = preservedDay.events.map((event) => {
+                  if (!event || typeof event !== 'object') return event;
+                  return { ...event, pairingId: existingPairingId };
+                });
+              }
+              mergedEventsByDate[dateKey] = preservedDay;
+              return;
+            }
+          }
+          mergedEventsByDate[dateKey] = day;
+        });
+        calendarState.eventsByDate = mergedEventsByDate;
         normalizeCalendarState();
         calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
         ensureCalendarSelection();
