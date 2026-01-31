@@ -8244,11 +8244,13 @@ function getCalendarMonthCandidates(){
 
 function deleteCalendarMonth(monthKey){
   const normalized = normalizeCalendarMonthKey(monthKey);
-  if (!normalized) return;
-  const prefix = `${normalized}-`;
+  const selectedNormalized = normalizeCalendarMonthKey(calendarState.selectedMonth);
+  if (!normalized) return false;
+  if (selectedNormalized && normalized !== selectedNormalized) return false;
   const nextEvents = {};
   Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-    if (dateKey.startsWith(prefix)) return;
+    const normalizedDateKey = normalizeCalendarDateKey(dateKey);
+    if (normalizedDateKey && normalizedDateKey.slice(0, 7) === normalized) return;
     nextEvents[dateKey] = day;
   });
   calendarState.eventsByDate = nextEvents;
@@ -8262,6 +8264,7 @@ function deleteCalendarMonth(monthKey){
   ensureCalendarSelection();
   saveCalendarState();
   renderCalendar();
+  return true;
 }
 
 function ensureCalendarSelection(){
@@ -10878,15 +10881,16 @@ function getCalendarDeleteMonthOverlay(){
   });
   addTapListener(overlay.querySelector('[data-calendar-delete-month-cancel]'), closeCalendarDeleteMonthOverlay);
   addTapListener(overlay.querySelector('[data-calendar-delete-month-confirm]'), () => {
-    const monthKey = calendarDeleteMonthState.monthKey;
-    if (!monthKey){
+    const requestedMonthKey = normalizeCalendarMonthKey(calendarDeleteMonthState.monthKey);
+    const selectedMonthKey = normalizeCalendarMonthKey(calendarState.selectedMonth);
+    if (!requestedMonthKey || !selectedMonthKey || requestedMonthKey !== selectedMonthKey){
       closeCalendarDeleteMonthOverlay();
       return;
     }
     const skipBox = overlay.querySelector('#calendar-delete-month-skip');
     setCalendarDeleteMonthSkipConfirm(Boolean(skipBox?.checked));
-    const label = formatCalendarMonthLabel(monthKey);
-    deleteCalendarMonth(monthKey);
+    const label = formatCalendarMonthLabel(selectedMonthKey);
+    deleteCalendarMonth(selectedMonthKey);
     setCalendarStatus(`Deleted ${label}.`);
     closeCalendarDeleteMonthOverlay();
   });
@@ -11005,9 +11009,12 @@ function initCalendar(){
     deleteMonthButton.addEventListener('click', () => {
       if (!calendarState.selectedMonth) return;
       if (getCalendarDeleteMonthSkipConfirm()){
-        const label = formatCalendarMonthLabel(calendarState.selectedMonth);
-        deleteCalendarMonth(calendarState.selectedMonth);
-        setCalendarStatus(`Deleted ${label}.`);
+        const selectedMonthKey = normalizeCalendarMonthKey(calendarState.selectedMonth);
+        if (!selectedMonthKey) return;
+        const label = formatCalendarMonthLabel(selectedMonthKey);
+        if (deleteCalendarMonth(selectedMonthKey)){
+          setCalendarStatus(`Deleted ${label}.`);
+        }
         return;
       }
       openCalendarDeleteMonthOverlay(calendarState.selectedMonth);
