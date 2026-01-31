@@ -11339,7 +11339,9 @@ function initCalendar(){
             const adjacentKey = getAdjacentDateKey(dateKey, offset);
             if (!adjacentKey) continue;
             const adjacentDay = calendarState.eventsByDate?.[adjacentKey];
-            const adjacentPairingId = adjacentDay?.pairing?.pairingId;
+            const adjacentPairingId = String(
+              adjacentDay?.pairing?.pairingId || getCalendarPairingIdFromEvents(adjacentDay?.events) || ''
+            ).trim();
             if (adjacentPairingId && hasAdjacentOutOfRangeDay(adjacentPairingId, dateKey)){
               return {
                 pairingId: adjacentPairingId,
@@ -11359,8 +11361,12 @@ function initCalendar(){
         const mergedEventsByDate = { ...retainedEvents };
         Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
           const existingDay = calendarState.eventsByDate?.[dateKey];
-          const existingPairingId = existingDay?.pairing?.pairingId;
-          const incomingPairingId = day?.pairing?.pairingId;
+          const existingPairingId = String(
+            existingDay?.pairing?.pairingId || getCalendarPairingIdFromEvents(existingDay?.events) || ''
+          ).trim();
+          const incomingPairingId = String(
+            day?.pairing?.pairingId || getCalendarPairingIdFromEvents(day?.events) || ''
+          ).trim();
           if (!existingPairingId && incomingPairingId){
             const adjacentPairing = findAdjacentOutOfRangePairing(dateKey);
             if (adjacentPairing){
