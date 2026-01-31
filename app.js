@@ -8184,22 +8184,27 @@ function recomputeCalendarPairingLayovers(pairingId, eventsByDate = calendarStat
   if (!pairingId || !eventsByDate) return;
   const pairingDays = getCalendarPairingDaysFromEvents(eventsByDate, pairingId);
   if (!pairingDays.length) return;
-  const pairingDaySet = new Set(pairingDays);
+  const pairingDaySet = new Set(pairingDays.map(dayKey => normalizeCalendarDateKey(dayKey)).filter(Boolean));
+  const touchedDays = new Set();
+  pairingDays.forEach((dateKey) => {
+    const day = eventsByDate?.[dateKey];
+    if (!day?.layover) return;
+    delete day.layover;
+    touchedDays.add(dateKey);
+  });
   Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day?.layover?.placeholderFromDateKey) return;
     const sourceKey = normalizeCalendarDateKey(day.layover.placeholderFromDateKey);
     if (day?.pairing?.pairingId === pairingId || (sourceKey && pairingDaySet.has(sourceKey))){
       delete day.layover;
+      touchedDays.add(dateKey);
+    }
+  });
+  if (eventsByDate === calendarState.eventsByDate){
+    touchedDays.forEach((dateKey) => {
       pruneCalendarEmptyPairingDay(dateKey);
-    }
-  });
-  pairingDays.forEach((dateKey) => {
-    const day = eventsByDate?.[dateKey];
-    if (!day) return;
-    if (day.layover?.placeholderFromDateKey){
-      delete day.layover;
-    }
-  });
+    });
+  }
   clearCalendarPairingPlaceholders(pairingId);
   const pairingFlights = getCalendarPairingEvents(pairingId);
   if (pairingFlights.length >= 2){
@@ -10220,6 +10225,9 @@ function deleteCalendarPairingFlight(eventId){
       return deleteCalendarPairing(pairingId);
     }
     recomputeCalendarPairingLayovers(pairingId, calendarState.eventsByDate);
+    getCalendarPairingDaysFromEvents(calendarState.eventsByDate, pairingId).forEach((dateKey) => {
+      pruneCalendarEmptyPairingDay(dateKey);
+    });
     updateCalendarPairingMetrics(calendarState.eventsByDate);
   }
   calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
@@ -10261,7 +10269,7 @@ function deleteCalendarPairing(pairingId){
   clearCalendarPairingPlaceholders(pairingId);
   updateCalendarPairingMetrics(calendarState.eventsByDate);
   calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
-  saveCalendarState();
+  saveCalendarState({ bumpUpdatedAt: true });
   if (getCalendarSyncToken() && getCalendarSyncEndpoint()){
     triggerCalendarAutoSync();
   }
