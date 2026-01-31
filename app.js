@@ -7605,14 +7605,10 @@ function parsePastedScheduleText(text){
   let currentLines = [];
   let currentPairing = null;
   let pairingNeedsReset = false;
-  const computeStablePairingHash = (value) => {
-    const input = String(value || '');
-    let hash = 0;
-    for (let index = 0; index < input.length; index += 1){
-      hash = ((hash << 5) - hash) + input.charCodeAt(index);
-      hash |= 0;
-    }
-    return Math.abs(hash).toString(36);
+  const normalizePairingToken = (value, { preserveDashes = false } = {}) => {
+    const token = String(value || '').trim().toUpperCase();
+    const pattern = preserveDashes ? /[^A-Z0-9-]/g : /[^A-Z0-9]/g;
+    return token.replace(pattern, '');
   };
   const getFirstPairingIdentifier = (dayEvent) => {
     if (!dayEvent || !Array.isArray(dayEvent.events)) return '';
@@ -7640,16 +7636,17 @@ function parsePastedScheduleText(text){
     });
   };
   const buildStablePairingId = ({ pairingNumber, startDateKey, dayEvent, seedIdentifier }) => {
-    const normalizedNumber = pairingNumber ? pairingNumber.toUpperCase() : '';
-    const safeStartDate = startDateKey || '';
-    const pairingLabel = normalizedNumber || 'N/A';
-    if (normalizedNumber){
-      return `PAIR-${normalizedNumber}-${safeStartDate}`;
-    }
+    const normalizedNumber = normalizePairingToken(pairingNumber);
+    const safeStartDate = normalizePairingToken(startDateKey, { preserveDashes: true }) || 'UNKNOWN';
     const firstIdentifier = seedIdentifier || getFirstPairingIdentifier(dayEvent);
-    const hashSeed = `${pairingLabel}|${safeStartDate}|${firstIdentifier || ''}`;
-    const pairingHash = computeStablePairingHash(hashSeed);
-    return `PAIR-${pairingLabel}-${safeStartDate}-${pairingHash}`;
+    const normalizedIdentifier = normalizePairingToken(firstIdentifier) || 'NA';
+    const checkInMinutes = Number.isFinite(dayEvent?.checkInMinutes)
+      ? String(dayEvent.checkInMinutes)
+      : 'NA';
+    if (normalizedNumber){
+      return `PAIR-${normalizedNumber}-${safeStartDate}-${normalizedIdentifier}-${checkInMinutes}`;
+    }
+    return `PAIR-${safeStartDate}-${normalizedIdentifier}-${checkInMinutes}`;
   };
   const startPairing = (pairingNumber) => {
     currentPairing = {
@@ -11303,7 +11300,6 @@ function initCalendar(){
         const parsedMonthSet = new Set(parsedMonths);
         setCalendarSourceMonthKey(eventsByDate);
         const retainedEvents = {};
-        const normalizePairingNumber = (value) => String(value || '').trim().toUpperCase();
         const applyPairingIdToDay = (day, pairingId, pairingNumber) => {
           if (!day || !pairingId) return day;
           const updatedDay = {
@@ -11337,22 +11333,6 @@ function initCalendar(){
             return !parsedMonthSet.has(pairingDayKey.slice(0, 7));
           });
         };
-        const findAdjacentPairingId = (dateKey, pairingNumber) => {
-          if (!pairingNumber) return '';
-          const offsets = [-1, 1];
-          for (const offset of offsets){
-            const adjacentKey = getAdjacentDateKey(dateKey, offset);
-            if (!adjacentKey || adjacentKey.length < 7) continue;
-            if (parsedMonthSet.has(adjacentKey.slice(0, 7))) continue;
-            const adjacentDay = calendarState.eventsByDate?.[adjacentKey];
-            const adjacentPairingNumber = normalizePairingNumber(adjacentDay?.pairing?.pairingNumber);
-            if (adjacentPairingNumber && adjacentPairingNumber === pairingNumber){
-              const adjacentPairingId = adjacentDay?.pairing?.pairingId;
-              if (adjacentPairingId) return adjacentPairingId;
-            }
-          }
-          return '';
-        };
         Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
           const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
             ? day.sourceMonthKey.slice(0, 7)
@@ -11364,18 +11344,22 @@ function initCalendar(){
         Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
           const existingDay = calendarState.eventsByDate?.[dateKey];
           const existingPairingId = existingDay?.pairing?.pairingId;
-          const incomingPairingNumber = normalizePairingNumber(day?.pairing?.pairingNumber);
-          const existingPairingNumber = normalizePairingNumber(existingDay?.pairing?.pairingNumber);
-          const pairingNumbersMatch = incomingPairingNumber
-            && existingPairingNumber
-            && incomingPairingNumber === existingPairingNumber;
-          if (existingPairingId && pairingNumbersMatch && hasAdjacentOutOfRangeDay(existingPairingId, dateKey)){
-            mergedEventsByDate[dateKey] = applyPairingIdToDay(day, existingPairingId, existingPairingNumber);
+          const incomingPairingId = day?.pairing?.pairingId;
+          if (existingPairingId && incomingPairingId && existingPairingId === incomingPairingId){
+            mergedEventsByDate[dateKey] = applyPairingIdToDay(
+              day,
+              existingPairingId,
+              existingDay?.pairing?.pairingNumber || ''
+            );
             return;
           }
-          const adjacentPairingId = findAdjacentPairingId(dateKey, incomingPairingNumber);
-          if (adjacentPairingId){
-            mergedEventsByDate[dateKey] = applyPairingIdToDay(day, adjacentPairingId, incomingPairingNumber);
+          if (existingPairingId && incomingPairingId && existingPairingId !== incomingPairingId
+            && hasAdjacentOutOfRangeDay(existingPairingId, dateKey)){
+            mergedEventsByDate[dateKey] = applyPairingIdToDay(
+              day,
+              existingPairingId,
+              existingDay?.pairing?.pairingNumber || ''
+            );
             return;
           }
           mergedEventsByDate[dateKey] = day;
