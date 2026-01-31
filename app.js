@@ -7639,16 +7639,17 @@ function parsePastedScheduleText(text){
       }
     });
   };
-  const buildStablePairingId = ({ pairingNumber, startDateKey, dayEvent }) => {
+  const buildStablePairingId = ({ pairingNumber, startDateKey, dayEvent, seedIdentifier }) => {
     const normalizedNumber = pairingNumber ? pairingNumber.toUpperCase() : '';
     const safeStartDate = startDateKey || '';
+    const pairingLabel = normalizedNumber || 'N/A';
     if (normalizedNumber){
       return `PAIR-${normalizedNumber}-${safeStartDate}`;
     }
-    const firstIdentifier = getFirstPairingIdentifier(dayEvent);
-    const hashSeed = `${firstIdentifier}-${safeStartDate}`;
+    const firstIdentifier = seedIdentifier || getFirstPairingIdentifier(dayEvent);
+    const hashSeed = `${pairingLabel}|${safeStartDate}|${firstIdentifier || ''}`;
     const pairingHash = computeStablePairingHash(hashSeed);
-    return `PAIR-${pairingHash}-${safeStartDate}`;
+    return `PAIR-${pairingLabel}-${safeStartDate}-${pairingHash}`;
   };
   const startPairing = (pairingNumber) => {
     currentPairing = {
@@ -7676,7 +7677,8 @@ function parsePastedScheduleText(text){
         if (currentPairing.pairingStartDate){
           const updatedPairingId = buildStablePairingId({
             pairingNumber: normalizedNumber,
-            startDateKey: currentPairing.pairingStartDate
+            startDateKey: currentPairing.pairingStartDate,
+            seedIdentifier: currentPairing.pairingSeedIdentifier
           });
           updateCurrentPairingId(currentPairing, updatedPairingId);
         }
@@ -7700,7 +7702,8 @@ function parsePastedScheduleText(text){
           currentPairing.pairingId = buildStablePairingId({
             pairingNumber: currentPairing.pairingNumber,
             startDateKey: currentPairing.pairingStartDate,
-            dayEvent
+            dayEvent,
+            seedIdentifier: currentPairing.pairingSeedIdentifier
           });
         }
       }
@@ -11320,6 +11323,36 @@ function initCalendar(){
           }
           return updatedDay;
         };
+        const getAdjacentDateKey = (dateKey, offsetDays) => {
+          const startMs = getDateKeyStartMs(dateKey);
+          if (!Number.isFinite(startMs)) return null;
+          return buildCalendarDateKeyFromDate(new Date(startMs + (offsetDays * 86400000)));
+        };
+        const hasAdjacentOutOfRangeDay = (pairingId, dateKey) => {
+          if (!pairingId) return false;
+          const pairingDays = getCalendarPairingDays(pairingId);
+          return pairingDays.some((pairingDayKey) => {
+            if (typeof pairingDayKey !== 'string' || pairingDayKey.length < 7) return false;
+            if (!areDateKeysContiguous(pairingDayKey, dateKey)) return false;
+            return !parsedMonthSet.has(pairingDayKey.slice(0, 7));
+          });
+        };
+        const findAdjacentPairingId = (dateKey, pairingNumber) => {
+          if (!pairingNumber) return '';
+          const offsets = [-1, 1];
+          for (const offset of offsets){
+            const adjacentKey = getAdjacentDateKey(dateKey, offset);
+            if (!adjacentKey || adjacentKey.length < 7) continue;
+            if (parsedMonthSet.has(adjacentKey.slice(0, 7))) continue;
+            const adjacentDay = calendarState.eventsByDate?.[adjacentKey];
+            const adjacentPairingNumber = normalizePairingNumber(adjacentDay?.pairing?.pairingNumber);
+            if (adjacentPairingNumber && adjacentPairingNumber === pairingNumber){
+              const adjacentPairingId = adjacentDay?.pairing?.pairingId;
+              if (adjacentPairingId) return adjacentPairingId;
+            }
+          }
+          return '';
+        };
         Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
           const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
             ? day.sourceMonthKey.slice(0, 7)
@@ -11333,21 +11366,17 @@ function initCalendar(){
           const existingPairingId = existingDay?.pairing?.pairingId;
           const incomingPairingNumber = normalizePairingNumber(day?.pairing?.pairingNumber);
           const existingPairingNumber = normalizePairingNumber(existingDay?.pairing?.pairingNumber);
-          if (existingPairingId && incomingPairingNumber && incomingPairingNumber === existingPairingNumber){
+          const pairingNumbersMatch = incomingPairingNumber
+            && existingPairingNumber
+            && incomingPairingNumber === existingPairingNumber;
+          if (existingPairingId && pairingNumbersMatch && hasAdjacentOutOfRangeDay(existingPairingId, dateKey)){
             mergedEventsByDate[dateKey] = applyPairingIdToDay(day, existingPairingId, existingPairingNumber);
             return;
           }
-          if (existingPairingId){
-            const existingPairingDays = getCalendarPairingDays(existingPairingId);
-            const hasOutOfRangeDay = existingPairingDays.some((pairingDayKey) => {
-              if (typeof pairingDayKey !== 'string' || pairingDayKey.length < 7) return false;
-              return !parsedMonthSet.has(pairingDayKey.slice(0, 7));
-            });
-            if (hasOutOfRangeDay){
-              const pairingNumber = existingDay?.pairing?.pairingNumber || '';
-              mergedEventsByDate[dateKey] = applyPairingIdToDay(day, existingPairingId, pairingNumber);
-              return;
-            }
+          const adjacentPairingId = findAdjacentPairingId(dateKey, incomingPairingNumber);
+          if (adjacentPairingId){
+            mergedEventsByDate[dateKey] = applyPairingIdToDay(day, adjacentPairingId, incomingPairingNumber);
+            return;
           }
           mergedEventsByDate[dateKey] = day;
         });
