@@ -10271,7 +10271,20 @@ function deleteCalendarPairing(pairingId){
   calendarState.months = buildCalendarMonths(calendarState.eventsByDate);
   saveCalendarState({ bumpUpdatedAt: true });
   if (getCalendarSyncToken() && getCalendarSyncEndpoint()){
-    triggerCalendarAutoSync();
+    if (navigator?.onLine === false){
+      triggerCalendarAutoSync();
+    } else {
+      syncCalendarToCloud()
+        .then((result) => {
+          if (result?.statusMessage){
+            setCalendarStatus(result.statusMessage);
+          }
+        })
+        .catch((err) => {
+          console.warn('Calendar sync after delete failed', err);
+          setCalendarStatus(`Sync error: ${err?.message || 'Sync failed.'}`);
+        });
+    }
   }
   renderCalendarIfVisible();
   refreshCalendarPairingDetail();
