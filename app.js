@@ -7662,22 +7662,27 @@ function parsePastedScheduleText(text){
       currentLines = [];
       return;
     }
-    const dateMatch = workingLine.match(/^(\d{1,2})\s*([A-Za-z]{3})\b/);
-    if (dateMatch){
+    const { dateKey: parsedDateKey, remainingLine } = extractDateTokenFromLine(
+      workingLine,
+      currentYear,
+      lastMonthIndex,
+      currentYear
+    );
+    if (parsedDateKey){
       finalizeDay();
-      const day = Number(dateMatch[1]);
-      const monthKey = dateMatch[2].toLowerCase();
-      if (!Object.prototype.hasOwnProperty.call(MONTH_NAME_TO_INDEX, monthKey)) return;
-      const monthIndex = MONTH_NAME_TO_INDEX[monthKey];
+      const [, parsedMonth, parsedDay] = parsedDateKey.split('-').map(Number);
+      const monthIndex = parsedMonth - 1;
       if (!yearMatch && lastMonthIndex !== null && monthIndex < lastMonthIndex){
         currentYear += 1;
       }
       lastMonthIndex = monthIndex;
       const yearForMonth = resolveCalendarYearForMonth(monthIndex, currentYear, currentYear);
-      const dateKey = `${yearForMonth}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      currentDateKey = dateKey;
+      currentDateKey = `${yearForMonth}-${String(parsedMonth).padStart(2, '0')}-${String(parsedDay).padStart(2, '0')}`;
       ensurePairing();
-      currentLines = [workingLine];
+      currentLines = [];
+      if (remainingLine){
+        currentLines.push(remainingLine);
+      }
       return;
     }
     if (currentDateKey){
