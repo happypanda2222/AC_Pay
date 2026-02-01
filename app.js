@@ -6401,8 +6401,10 @@ function getCalendarAllowedMonthMap(){
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
+  const prevMonthDate = new Date(currentYear, currentMonth - 1, 1);
   const nextMonthDate = new Date(currentYear, currentMonth + 1, 1);
   return new Map([
+    [prevMonthDate.getMonth(), prevMonthDate.getFullYear()],
     [currentMonth, currentYear],
     [nextMonthDate.getMonth(), nextMonthDate.getFullYear()]
   ]);
@@ -6410,10 +6412,8 @@ function getCalendarAllowedMonthMap(){
 
 function resolveCalendarYearForMonth(monthIndex, parsedYear, fallbackYear){
   const allowed = getCalendarAllowedMonthMap();
-  if (allowed.has(monthIndex)){
-    return allowed.get(monthIndex);
-  }
-  return Number.isFinite(parsedYear) ? parsedYear : fallbackYear;
+  if (allowed.has(monthIndex)) return allowed.get(monthIndex);
+  return NaN;
 }
 
 function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentYear){
