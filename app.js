@@ -7792,40 +7792,6 @@ function parsePastedScheduleText(text){
   };
 }
 
-function getCalendarReplaceMonths(parsedDateKeys, parsedMonths){
-  if (!Array.isArray(parsedMonths) || !parsedMonths.length) return [];
-  if (!Array.isArray(parsedDateKeys) || !parsedDateKeys.length) return parsedMonths.slice();
-  const monthStats = new Map();
-  parsedDateKeys.forEach((dateKey) => {
-    if (typeof dateKey !== 'string' || dateKey.length < 10) return;
-    const monthKey = dateKey.slice(0, 7);
-    const dayNumber = Number(dateKey.slice(8, 10));
-    if (!Number.isFinite(dayNumber)) return;
-    const existing = monthStats.get(monthKey) || { minDay: dayNumber, maxDay: dayNumber };
-    existing.minDay = Math.min(existing.minDay, dayNumber);
-    existing.maxDay = Math.max(existing.maxDay, dayNumber);
-    monthStats.set(monthKey, existing);
-  });
-  const sortedMonths = parsedMonths.slice().sort();
-  const replaceMonths = [];
-  const earlyOverlapMax = 7;
-  const lateOverlapMin = 22;
-  sortedMonths.forEach((monthKey, index) => {
-    const stats = monthStats.get(monthKey);
-    if (!stats){
-      replaceMonths.push(monthKey);
-      return;
-    }
-    const isFirst = index === 0;
-    const isLast = index === sortedMonths.length - 1;
-    const overlapAtStart = isLast && stats.maxDay <= earlyOverlapMax;
-    const overlapAtEnd = isFirst && stats.minDay >= lateOverlapMin;
-    if (overlapAtStart || overlapAtEnd) return;
-    replaceMonths.push(monthKey);
-  });
-  return replaceMonths.length ? replaceMonths : sortedMonths;
-}
-
 function buildCalendarEventFromText(dateKey, lines, pairingContext){
   if (!Array.isArray(lines) || !lines.length) return null;
   let summaryCreditMinutes = null;
@@ -11326,13 +11292,12 @@ function initCalendar(){
       pasteInput.value = '';
       setCalendarStatus('Parsing schedule…');
       try {
-        const { eventsByDate, statusMessage, parsedDateKeys, parsedMonths } = parsePastedScheduleText(pastedText);
+        const { eventsByDate, statusMessage, parsedMonths } = parsePastedScheduleText(pastedText);
         if (!parsedMonths.length){
           setCalendarStatus(statusMessage || 'No calendar events found in pasted schedule.');
           return;
         }
-        const replaceMonths = getCalendarReplaceMonths(parsedDateKeys, parsedMonths);
-        const replaceMonthSet = new Set(replaceMonths);
+        const parsedMonthSet = new Set(parsedMonths);
         setCalendarSourceMonthKey(eventsByDate);
         const retainedEvents = {};
         const applyPairingIdToDay = (day, pairingId, pairingNumber) => {
@@ -11365,7 +11330,7 @@ function initCalendar(){
           return pairingDays.some((pairingDayKey) => {
             if (typeof pairingDayKey !== 'string' || pairingDayKey.length < 7) return false;
             if (!areDateKeysContiguous(pairingDayKey, dateKey)) return false;
-            return !replaceMonthSet.has(pairingDayKey.slice(0, 7));
+            return !parsedMonthSet.has(pairingDayKey.slice(0, 7));
           });
         };
         const findAdjacentOutOfRangePairing = (dateKey) => {
@@ -11390,7 +11355,7 @@ function initCalendar(){
           const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
             ? day.sourceMonthKey.slice(0, 7)
             : (typeof dateKey === 'string' ? dateKey.slice(0, 7) : '');
-          if (replaceMonthSet.has(monthKey)) return;
+          if (parsedMonthSet.has(monthKey)) return;
           retainedEvents[dateKey] = day;
         });
         const mergedEventsByDate = { ...retainedEvents };
