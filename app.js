@@ -6409,11 +6409,13 @@ function getCalendarAllowedMonthMap(){
 }
 
 function resolveCalendarYearForMonth(monthIndex, parsedYear, fallbackYear){
+  if (Number.isFinite(parsedYear)) return parsedYear;
+  if (Number.isFinite(fallbackYear)) return fallbackYear;
   const allowed = getCalendarAllowedMonthMap();
   if (allowed.has(monthIndex)){
     return allowed.get(monthIndex);
   }
-  return Number.isFinite(parsedYear) ? parsedYear : fallbackYear;
+  return NaN;
 }
 
 function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentYear){
@@ -7597,9 +7599,22 @@ function parsePastedScheduleText(text){
   if (!raw){
     return { eventsByDate: {}, statusMessage: 'Paste schedule text to parse.' };
   }
+  const resolveSelectedMonthKey = () => {
+    const stored = normalizeCalendarMonthKey(calendarState.selectedMonth);
+    if (stored) return stored;
+    const monthSelect = document.getElementById('modern-calendar-month');
+    return normalizeCalendarMonthKey(monthSelect?.value);
+  };
+  const selectedMonthKey = resolveSelectedMonthKey();
+  const [selectedYear, selectedMonth] = selectedMonthKey
+    ? selectedMonthKey.split('-').map(Number)
+    : [NaN, NaN];
+  const baseMonthIndex = Number.isFinite(selectedMonth) ? selectedMonth - 1 : null;
   const yearMatch = raw.match(/\b(20\d{2})\b/);
-  let currentYear = yearMatch ? Number(yearMatch[1]) : new Date().getFullYear();
-  let lastMonthIndex = null;
+  let currentYear = yearMatch
+    ? Number(yearMatch[1])
+    : (Number.isFinite(selectedYear) ? selectedYear : new Date().getFullYear());
+  let lastMonthIndex = !yearMatch && Number.isFinite(baseMonthIndex) ? baseMonthIndex : null;
   const eventsByDate = {};
   let currentDateKey = null;
   let currentLines = [];
