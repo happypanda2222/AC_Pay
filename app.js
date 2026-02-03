@@ -6728,7 +6728,7 @@ function isFr24GateSyncReady(){
   return true;
 }
 
-function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey } = {}){
+function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey, force = false } = {}){
   const candidates = [];
   if (!eventsByDate || typeof eventsByDate !== 'object') return candidates;
   const nowMs = Date.now();
@@ -6742,7 +6742,7 @@ function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey } = 
     events.forEach((event) => {
       if (isPairingMarkerEvent(event)) return;
       if (event?.cancellation === 'CNX' || event?.cancellation === 'CNX PP') return;
-      if (event?.timeSource === 'manual' || event?.timeSource === 'fr24') return;
+      if (!force && (event?.timeSource === 'manual' || event?.timeSource === 'fr24')) return;
       if (hasRecentCalendarGateSyncFailure(event, nowMs)) return;
       const flightInfo = extractCalendarFlightIdentifier(event);
       if (!flightInfo) return;
@@ -6824,10 +6824,13 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes){
   return true;
 }
 
-async function runCalendarGateTimeAutoSync(){
+async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false } = {}){
   const { startKey, endKey } = getCalendarGateSyncWindow();
-  const candidates = collectCalendarGateSyncCandidates(calendarState.eventsByDate, { startKey, endKey });
-  if (!candidates.length) return { mutated: false, updatedCount: 0, failedCount: 0 };
+  const candidates = collectCalendarGateSyncCandidates(calendarState.eventsByDate, { startKey, endKey, force });
+  if (!candidates.length){
+    if (reportStatus) setCalendarStatus('No eligible flights to update.');
+    return { mutated: false, updatedCount: 0, failedCount: 0 };
+  }
   await ensureAirportTimezonesLoaded();
   let mutated = false;
   let updatedCount = 0;
@@ -6939,6 +6942,9 @@ async function runCalendarGateTimeAutoSync(){
     refreshCalendarTafbDetail();
     refreshCalendarBlockGrowthDetail();
   }
+  if (reportStatus){
+    setCalendarStatus(`Updated ${updatedCount} flight${updatedCount === 1 ? '' : 's'}${failedCount ? `, failed ${failedCount}` : ''}.`);
+  }
   return { mutated, updatedCount, failedCount };
 }
 
@@ -6970,6 +6976,34 @@ async function triggerCalendarGateTimeAutoSync(){
     await runCalendarGateTimeAutoSync();
   } catch (err){
     console.warn('Gate time auto-sync failed', err);
+  } finally {
+    calendarGateSyncInFlight = false;
+  }
+}
+
+async function triggerCalendarGateTimeForceSync(){
+  if (navigator?.onLine === false){
+    setCalendarStatus('Offline; unable to update flight times.');
+    return;
+  }
+  if (!isFr24GateSyncReady()){
+    setCalendarStatus('FlightRadar24 API not configured.');
+    return;
+  }
+  if (calendarGateSyncInFlight){
+    setCalendarStatus('Update already in progress.');
+    return;
+  }
+  clearCalendarGateTimeSyncStatuses();
+  calendarGateSyncLastMonthKey = '';
+  calendarGateSyncLastRunAt = 0;
+  calendarGateSyncInFlight = true;
+  setCalendarStatus('Updating flight times…');
+  try {
+    await runCalendarGateTimeAutoSync({ force: true, reportStatus: true });
+  } catch (err){
+    console.warn('Gate time force sync failed', err);
+    setCalendarStatus(err?.message || 'Update failed.');
   } finally {
     calendarGateSyncInFlight = false;
   }
@@ -13067,7 +13101,7 @@ function initCalendar(){
             day.sourceMonthKey = preferredMonthKey || ownMonthKey || null;
           }
         });
-        const retainedEvents = {};
+        const mergedEventsByDate = { ...(calendarState.eventsByDate || {}) };
         const applyPairingIdToDay = (day, pairingId, pairingNumber) => {
           if (!day || !pairingId) return day;
           const updatedDay = {
@@ -13124,18 +13158,14 @@ function initCalendar(){
           }
           return null;
         };
-        Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-          const monthKey = typeof dateKey === 'string' ? dateKey.slice(0, 7) : '';
-          if (targetMonthSet.has(monthKey)) return;
-          retainedEvents[dateKey] = day;
-        });
-        const mergedEventsByDate = { ...retainedEvents };
         Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
           const existingDay = calendarState.eventsByDate?.[dateKey];
           const incomingHasEvents = Array.isArray(day?.events) && day.events.length > 0;
           const existingHasEvents = Array.isArray(existingDay?.events) && existingDay.events.length > 0;
           if (!incomingHasEvents && existingHasEvents){
-            mergedEventsByDate[dateKey] = existingDay;
+            if (!mergedEventsByDate[dateKey]){
+              mergedEventsByDate[dateKey] = existingDay;
+            }
             return;
           }
           const existingPairingId = String(
@@ -13355,6 +13385,17 @@ function initCalendar(){
         setCalendarStatus(`Sync error: ${err?.message || 'Sync failed.'}`);
       } finally {
         syncButton.disabled = false;
+      }
+    });
+  }
+  const forceSyncButton = document.getElementById('modern-calendar-force-sync');
+  if (forceSyncButton){
+    forceSyncButton.addEventListener('click', async () => {
+      forceSyncButton.disabled = true;
+      try {
+        await triggerCalendarGateTimeForceSync();
+      } finally {
+        forceSyncButton.disabled = false;
       }
     });
   }
