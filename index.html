@@ -796,8 +796,8 @@
       z-index:20;
       box-sizing:border-box;
       opacity:0.9;
-      background:#22c55e;
-      border:1px solid #16a34a;
+      background:#16a34a;
+      border:1px solid #15803d;
     }
     .calendar-row-pairing-bars .calendar-bar-deadhead{
       position:absolute;
@@ -912,7 +912,7 @@
     }
     .calendar-bar.is-deadhead{
       border:1px solid #60a5fa;
-      background:repeating-linear-gradient(135deg, #2563eb 0 10px, #f8fafc 10px 16px);
+      background:linear-gradient(135deg, #2563eb 0 50%, #f8fafc 50% 100%);
       color:#0b0f1a;
     }
     .calendar-event.is-deadhead .calendar-event-meta{
@@ -1115,6 +1115,11 @@
       flex-direction:column;
       gap:8px;
     }
+    .calendar-detail-timing{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
     .calendar-pairing-day{
       width:100%;
       text-align:left;
@@ -1266,6 +1271,15 @@
     }
     .calendar-pairing-flight-field input{
       min-width:0;
+    }
+    .calendar-pairing-flight-toggle{
+      flex:0 0 auto;
+      min-width:90px;
+      align-items:flex-start;
+    }
+    .calendar-pairing-flight-toggle input{
+      width:20px;
+      height:20px;
     }
     .calendar-pairing-flight-remove{
       align-self:flex-end;
@@ -2154,7 +2168,7 @@
                 <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
                 <div class="metric-grid calendar-summary-grid">
                   <button class="metric-card actionable" id="modern-calendar-credit-card" type="button">
-                    <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses TRIP credit minus CNX (non-PP) plus block growth only when available; otherwise day summary credit is used when no per-flight credits are available, plus DPG/THG extras and vacation credit. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival); manual check-in/out edits (no TRIP TAFB) floor pairing credit at TAFB/4. Adding manual flights can expand the pairing date range, and removing flights shrinks the range to the remaining first/last flight dates. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals reflect per-flight credits when present (last H:MM on each flight line). CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses TRIP credit minus CNX (non-PP) plus block growth only when available; otherwise day summary credit is used when no per-flight credits are available, plus DPG/THG extras and vacation credit. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival); manual check-in/out edits (no TRIP TAFB) floor pairing credit at TAFB/4. Adding manual flights can expand the pairing date range, and removing flights shrinks the range to the remaining first/last flight dates. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs.</span></span></div>
+                    <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals use block time when it can be computed from departure/arrival with time-zone/DST awareness. Deadheads earn 50% of block, except deadheads ending after the original last-flight arrival on a CNX PP extension which earn full block. If block cannot be computed (missing time zones), stored credit/block values are used. CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses TRIP credit minus CNX (non-PP) plus block growth only when available; otherwise day summary credit is used when no per-flight credits are available, plus DPG/THG extras and vacation credit. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival); manual check-in/out edits (no TRIP TAFB) floor pairing credit at TAFB/4. Adding manual flights can expand the pairing date range, and removing flights shrinks the range to the remaining first/last flight dates. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals use block time when it can be computed from departure/arrival with time-zone/DST awareness. Deadheads earn 50% of block, except deadheads ending after the original last-flight arrival on a CNX PP extension which earn full block. If block cannot be computed (missing time zones), stored credit/block values are used. CNX removes that flight’s credit; CNX PP keeps it. Pairing detail uses TRIP credit minus CNX (non-PP) plus block growth only when available; otherwise day summary credit is used when no per-flight credits are available, plus DPG/THG extras and vacation credit. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival); manual check-in/out edits (no TRIP TAFB) floor pairing credit at TAFB/4. Adding manual flights can expand the pairing date range, and removing flights shrinks the range to the remaining first/last flight dates. If a block-month range is set, totals include days in that range, including the 3-day buffer outside the month when configured. The credit detail dollar figure uses the current pay rate from the pay tabs.</span></span></div>
                     <div class="metric-value" id="modern-calendar-total-credit">--</div>
                   </button>
                   <button class="metric-card actionable" id="modern-calendar-tafb-card" type="button">
@@ -2212,6 +2226,10 @@
                         <span>Arr</span>
                         <input type="time" data-field="arrive-time">
                       </label>
+                      <label class="calendar-pairing-flight-field calendar-pairing-flight-toggle">
+                        <span>Deadhead</span>
+                        <input type="checkbox" data-field="deadhead">
+                      </label>
                       <button class="btn btn-secondary calendar-pairing-flight-remove" type="button" data-action="remove-pairing-flight-row" aria-label="Remove flight row">×</button>
                     </div>
                   </div>
@@ -2239,6 +2257,10 @@
                       <label class="calendar-pairing-flight-field">
                         <span>Arr</span>
                         <input type="time" data-field="arrive-time">
+                      </label>
+                      <label class="calendar-pairing-flight-field calendar-pairing-flight-toggle">
+                        <span>Deadhead</span>
+                        <input type="checkbox" data-field="deadhead">
                       </label>
                       <button class="btn btn-secondary calendar-pairing-flight-remove" type="button" data-action="remove-pairing-flight-row" aria-label="Remove flight row">×</button>
                     </div>
@@ -2281,6 +2303,19 @@
                       <button class="btn btn-secondary" type="button" data-calendar-cancel="CNX PP">CNX PP</button>
                       <button class="btn btn-secondary calendar-detail-cancel-arrow" type="button" data-calendar-cancel-rest="true" aria-label="Cancel remaining pairing">→</button>
                     </div>
+                  </div>
+                  <div class="calendar-detail-timing" id="calendar-detail-timing">
+                    <div class="two-col">
+                      <div>
+                        <label for="calendar-flight-depart-time">Dep</label>
+                        <input id="calendar-flight-depart-time" type="time">
+                      </div>
+                      <div>
+                        <label for="calendar-flight-arrive-time">Arr</label>
+                        <input id="calendar-flight-arrive-time" type="time">
+                      </div>
+                    </div>
+                    <button id="calendar-flight-timing-save" class="btn" type="button">Save times</button>
                   </div>
                   <div class="calendar-detail-growth">
                     <label for="calendar-block-growth">Block growth (HH:MM)</label>
