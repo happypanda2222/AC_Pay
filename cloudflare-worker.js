@@ -18,7 +18,7 @@ function withCors(headers, origin) {
     next.set('Vary', 'Origin');
   }
   next.set('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
-  next.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-None-Match');
+  next.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-None-Match, X-API-Key, x-api-key, API-Version, Accept-Version');
   next.set('Access-Control-Expose-Headers', 'ETag, X-AC-Pay-Schema');
   return next;
 }
@@ -211,6 +211,30 @@ export default {
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: withCors({}, origin) });
+    }
+
+    if (url.pathname.startsWith('/fr24/')) {
+      if (request.method !== 'GET') {
+        return new Response('Method Not Allowed', { status: 405, headers: withCors({}, origin) });
+      }
+      const upstreamPath = url.pathname.replace(/^\/fr24\/?/, '');
+      const upstreamUrl = new URL(upstreamPath, 'https://fr24api.flightradar24.com/api/');
+      upstreamUrl.search = url.search;
+      const upstreamHeaders = new Headers();
+      const forwardHeader = (name) => {
+        const value = request.headers.get(name);
+        if (value) upstreamHeaders.set(name, value);
+      };
+      ['authorization', 'x-api-key', 'api-version', 'accept-version', 'accept'].forEach(forwardHeader);
+      const resp = await fetch(upstreamUrl.toString(), {
+        method: 'GET',
+        headers: upstreamHeaders,
+        cache: 'no-store'
+      });
+      const responseHeaders = withCors({
+        'Content-Type': resp.headers.get('Content-Type') || 'application/json'
+      }, origin);
+      return new Response(resp.body, { status: resp.status, headers: responseHeaders });
     }
 
     if (!url.pathname.startsWith('/sync/calendar')) {
