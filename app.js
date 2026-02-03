@@ -99,6 +99,8 @@ const CORS_PROXY_FALLBACKS = [
 ];
 const FR24_SUMMARY_LOOKBACK_HOURS = 72;
 const FLIGHTRADAR24_CONFIG_KEY = 'acpay.fr24.config';
+const FLIGHTRADAR24_AUTH_MODE_KEY = 'acpay.fr24.authmode';
+const FLIGHTRADAR24_PROXY_BASE_KEY = 'acpay.fr24.proxy';
 const FLIGHTRADAR24_DEFAULT_BASE = 'https://fr24api.flightradar24.com/api';
 const FLIGHTRADAR24_DEFAULT_VERSION = 'v1';
 const FLIGHTRADAR24_PUBLIC_BASE = 'https://api.flightradar24.com';
@@ -131,6 +133,63 @@ function normalizeFr24Headers(value){
     }
   });
   return clean;
+}
+
+function normalizeFr24AuthMode(value){
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'bearer') return 'bearer';
+  if (normalized === 'x-api-key' || normalized === 'xapikey') return 'x-api-key';
+  return 'auto';
+}
+
+function getFr24AuthMode(){
+  try {
+    const stored = localStorage.getItem(FLIGHTRADAR24_AUTH_MODE_KEY);
+    return normalizeFr24AuthMode(stored);
+  } catch (err){
+    console.warn('Failed to read FR24 auth mode', err);
+    return 'auto';
+  }
+}
+
+function setFr24AuthMode(value){
+  const normalized = normalizeFr24AuthMode(value);
+  try {
+    localStorage.setItem(FLIGHTRADAR24_AUTH_MODE_KEY, normalized);
+  } catch (err){
+    console.warn('Failed to store FR24 auth mode', err);
+  }
+  return normalized;
+}
+
+function normalizeFr24ProxyBase(value){
+  const normalized = normalizeProxyTarget(value);
+  if (!normalized) return '';
+  let cleaned = normalized.replace(/\/+$/, '');
+  if (cleaned.toLowerCase().endsWith('/fr24')){
+    cleaned = cleaned.slice(0, -5);
+  }
+  return cleaned;
+}
+
+function getFr24ProxyBase(){
+  try {
+    const stored = localStorage.getItem(FLIGHTRADAR24_PROXY_BASE_KEY);
+    return normalizeFr24ProxyBase(stored);
+  } catch (err){
+    console.warn('Failed to read FR24 proxy base', err);
+    return '';
+  }
+}
+
+function setFr24ProxyBase(value){
+  const normalized = normalizeFr24ProxyBase(value);
+  try {
+    localStorage.setItem(FLIGHTRADAR24_PROXY_BASE_KEY, normalized);
+  } catch (err){
+    console.warn('Failed to store FR24 proxy base', err);
+  }
+  return normalized;
 }
 
 function normalizeFr24BaseUrl(value){
@@ -179,6 +238,37 @@ function cloneFetchOptions(options){
   return cloned;
 }
 
+function mergeHeaderObjects(base = {}, extra = {}){
+  const headers = {};
+  const apply = (source) => {
+    if (!source) return;
+    if (source instanceof Headers){
+      source.forEach((value, key) => {
+        headers[key] = value;
+      });
+      return;
+    }
+    if (typeof source === 'object'){
+      Object.entries(source).forEach(([key, value]) => {
+        headers[key] = value;
+      });
+    }
+  };
+  apply(base);
+  apply(extra);
+  return headers;
+}
+
+function isFr24ProxyUrl(url){
+  const proxyBase = getFr24ProxyBase();
+  if (!proxyBase) return false;
+  try {
+    return new URL(url).origin === new URL(proxyBase).origin;
+  } catch (_err){
+    return false;
+  }
+}
+
 async function fetchWithCorsFallback(url, options = {}){
   const trimmedUrl = normalizeProxyTarget(url);
   if (!trimmedUrl) throw new Error('Missing URL for live data request.');
@@ -190,7 +280,7 @@ async function fetchWithCorsFallback(url, options = {}){
   const attempts = [];
   const seen = new Set();
   let lastError = null;
-  const proxies = CORS_PROXY_FALLBACKS
+  let proxies = CORS_PROXY_FALLBACKS
     .filter((proxy) => !hasAuthHeader || proxy.allowsAuth)
     .sort((a, b) => {
       // For FlightRadar24 calls in the browser, prioritize CORS-friendly proxies before direct
@@ -204,27 +294,70 @@ async function fetchWithCorsFallback(url, options = {}){
       } catch (_err){ /* noop */ }
       return 0;
     });
+  if (isFr24ProxyUrl(trimmedUrl)){
+    const direct = proxies.find((proxy) => proxy.label === 'direct');
+    proxies = direct ? [direct] : proxies;
+  }
   for (const proxy of proxies){
     const target = proxy.build(trimmedUrl);
     if (!target || seen.has(target)) continue;
     seen.add(target);
     try {
       const resp = await fetch(target, cloneFetchOptions(options));
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok){
+        let bodySnippet = '';
+        try {
+          bodySnippet = await resp.text();
+        } catch (_err){
+          bodySnippet = '';
+        }
+        const snippet = bodySnippet ? bodySnippet.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+        const err = new Error(`HTTP ${resp.status}${snippet ? `: ${snippet}` : ''}`);
+        err.status = resp.status;
+        err.kind = (resp.status === 401 || resp.status === 403) ? 'auth' : 'http';
+        throw err;
+      }
       return resp;
     } catch (err){
-      attempts.push(`${proxy.label}: ${err?.message || err}`);
+      const status = Number(err?.status);
+      const kind = err?.kind
+        || ((status === 401 || status === 403) ? 'auth' : (Number.isFinite(status) ? 'http' : 'network'));
+      attempts.push({
+        label: proxy.label,
+        message: err?.message || String(err),
+        status: Number.isFinite(status) ? status : null,
+        kind
+      });
       lastError = err;
     }
   }
   if (attempts.length){
     console.warn('Live data request failed across all proxies', { url: trimmedUrl, attempts, lastError });
   }
-  const attemptLabels = attempts.map(entry => entry.split(':')[0]).filter(Boolean);
-  const friendly = attempts.length
-    ? `Live data temporarily unavailable. Tried ${Array.from(new Set(attemptLabels)).join(', ')}.`
-    : 'Live data temporarily unavailable. Please try again later.';
+  const attemptLabels = attempts.map(entry => entry?.label).filter(Boolean);
+  const authAttempt = attempts.find(entry => entry?.kind === 'auth');
+  const httpAttempt = attempts.find(entry => entry?.kind === 'http' && entry?.status);
+  const networkAttempt = attempts.find(entry => entry?.kind === 'network');
+  let friendly = 'Live data temporarily unavailable.';
+  if (authAttempt){
+    friendly = 'Auth rejected (401/403).';
+  } else if (httpAttempt){
+    friendly = `HTTP ${httpAttempt.status}.`;
+  } else if (networkAttempt){
+    friendly = 'Network/CORS failure.';
+  }
+  if (attempts.length){
+    const tried = Array.from(new Set(attemptLabels)).join(', ');
+    if (tried){
+      friendly = `${friendly} Tried ${tried}.`;
+    }
+  }
   const error = new Error(friendly);
+  if (authAttempt?.status) error.status = authAttempt.status;
+  else if (httpAttempt?.status) error.status = httpAttempt.status;
+  if (authAttempt) error.kind = 'auth';
+  else if (httpAttempt) error.kind = 'http';
+  else if (networkAttempt) error.kind = 'network';
   if (attempts.length) error.attempts = attempts;
   if (lastError) error.cause = lastError;
   throw error;
@@ -271,11 +404,13 @@ function saveFr24ApiConfig(partial){
   }
 }
 
-function buildFr24Headers(){
+function buildFr24Headers({ authMode } = {}){
   const config = getFr24ApiConfig();
   const userHeaders = normalizeFr24Headers(config.headers);
   const headers = { Accept: 'application/json', ...userHeaders };
   const apiVersionHeader = config.apiVersion || FLIGHTRADAR24_DEFAULT_VERSION;
+  const token = config.apiToken ? config.apiToken.trim() : '';
+  const mode = normalizeFr24AuthMode(authMode ?? getFr24AuthMode());
   const setIfMissing = (name, value) => {
     if (!value) return;
     const exists = Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase());
@@ -283,7 +418,14 @@ function buildFr24Headers(){
       headers[name] = value;
     }
   };
-  setIfMissing('Authorization', config.apiToken ? `Bearer ${config.apiToken}` : null);
+  if (token){
+    if (mode === 'x-api-key'){
+      setIfMissing('X-API-Key', token);
+      setIfMissing('x-api-key', token);
+    } else {
+      setIfMissing('Authorization', `Bearer ${token}`);
+    }
+  }
   setIfMissing('Accept-Version', apiVersionHeader);
   setIfMissing('API-Version', apiVersionHeader);
   return headers;
@@ -291,13 +433,43 @@ function buildFr24Headers(){
 
 function buildFr24Url(path, params = {}){
   const { baseUrl } = getFr24ApiConfig();
-  const url = new URL(path, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
+  const proxyBase = getFr24ProxyBase();
+  const effectiveBase = proxyBase
+    ? `${proxyBase.replace(/\/+$/, '')}/fr24/`
+    : (baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
+  const url = new URL(path, effectiveBase);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== ''){
       url.searchParams.set(key, value);
     }
   });
   return url.toString();
+}
+
+async function fetchFr24WithAuthFallback(url, options = {}){
+  const mode = normalizeFr24AuthMode(getFr24AuthMode());
+  const modesToTry = mode === 'auto' ? ['bearer', 'x-api-key'] : [mode];
+  let lastError = null;
+  for (let idx = 0; idx < modesToTry.length; idx += 1){
+    const authMode = modesToTry[idx];
+    const baseHeaders = buildFr24Headers({ authMode });
+    const mergedHeaders = mergeHeaderObjects(baseHeaders, options.headers);
+    try {
+      const resp = await fetchWithCorsFallback(url, { ...options, headers: mergedHeaders });
+      if (mode === 'auto'){
+        setFr24AuthMode(authMode);
+      }
+      return resp;
+    } catch (err){
+      lastError = err;
+      const status = Number(err?.status);
+      const isAuthReject = status === 401 || status === 403;
+      if (!isAuthReject || idx === modesToTry.length - 1){
+        throw err;
+      }
+    }
+  }
+  throw lastError;
 }
 
 function extractFr24DataRows(payload){
@@ -387,6 +559,7 @@ function populateFr24ConfigForm(){
   const tokenInput = document.getElementById('fr24-token');
   const versionInput = document.getElementById('fr24-version');
   const extraHeadersInput = document.getElementById('fr24-extra-headers');
+  const proxyInput = document.getElementById('fr24-proxy-url');
   const statusEl = document.getElementById('fr24-status');
   if (baseInput) baseInput.value = config.baseUrl || FLIGHTRADAR24_DEFAULT_BASE;
   if (tokenInput) tokenInput.value = config.apiToken || '';
@@ -395,6 +568,7 @@ function populateFr24ConfigForm(){
     const headers = normalizeFr24Headers(config.headers);
     extraHeadersInput.value = Object.keys(headers).length ? JSON.stringify(headers, null, 2) : '';
   }
+  if (proxyInput) proxyInput.value = getFr24ProxyBase();
   if (statusEl){
     statusEl.textContent = 'Settings are saved locally and used for live fin tracking.';
   }
@@ -406,6 +580,7 @@ function handleFr24ConfigSave(){
   const tokenInput = document.getElementById('fr24-token');
   const versionInput = document.getElementById('fr24-version');
   const extraHeadersInput = document.getElementById('fr24-extra-headers');
+  const proxyInput = document.getElementById('fr24-proxy-url');
   let extraHeaders = {};
   if (extraHeadersInput && extraHeadersInput.value.trim()){
     try {
@@ -427,8 +602,10 @@ function handleFr24ConfigSave(){
     apiVersion: versionInput?.value?.trim() || FLIGHTRADAR24_DEFAULT_VERSION,
     headers: extraHeaders
   });
+  setFr24AuthMode('auto');
+  setFr24ProxyBase(proxyInput?.value ?? '');
   if (statusEl){
-    const authSummary = saved.apiToken ? 'Bearer token' : 'no credentials';
+    const authSummary = saved.apiToken ? 'token' : 'no credentials';
     statusEl.textContent = `Saved. Using ${saved.baseUrl} with ${authSummary}.`;
   }
 }
@@ -3582,7 +3759,7 @@ async function fetchFr24FlightSummary(input){
   let summaryError = null;
   try {
     const url = buildFr24Url('flight-summary/full', params);
-    const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+    const resp = await fetchFr24WithAuthFallback(url, { cache: 'no-store' });
     if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
     const json = await resp.json();
     const rows = extractFr24DataRows(json);
@@ -3636,7 +3813,7 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, fromMs, t
   if (normalizedReg) params.registrations = normalizedReg;
   if (normalizedFlight) params.flight = normalizedFlight;
   const url = buildFr24Url('flight-summary/full', params);
-  const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+  const resp = await fetchFr24WithAuthFallback(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
   const json = await resp.json();
   const rows = extractFr24DataRows(json);
@@ -3664,7 +3841,7 @@ async function fetchFr24HistoricFlightEventsLight(flightIds, eventTypes = FR24_G
     event_types: Array.isArray(eventTypes) ? eventTypes.join(',') : eventTypes
   };
   const url = buildFr24Url('historic/flight-events/light', params);
-  const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+  const resp = await fetchFr24WithAuthFallback(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
   const json = await resp.json();
   const rows = extractFr24DataRows(json);
@@ -3845,7 +4022,7 @@ async function fetchFr24LivePositionsFull(params = {}, { requireAuth = true } = 
     throw new Error('FlightRadar24 API token not configured. Add it in the FlightRadar24 API settings.');
   }
   const url = buildFr24Url('live/flight-positions/full', params);
-  const resp = await fetchWithCorsFallback(url, { headers, cache: 'no-store' });
+  const resp = await fetchFr24WithAuthFallback(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
   const json = await resp.json();
   const rows = extractFr24DataRows(json);
