@@ -6422,6 +6422,7 @@ function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentYear)
   const monthPattern = DATE_MONTH_PATTERN;
   const dowPattern = DATE_DOW_PATTERN;
   const monthRegex = new RegExp(`\\b${monthPattern}\\b`, 'i');
+  const hasMonthToken = monthRegex.test(line);
   const tokenPatterns = [
     new RegExp(`\\b${dowPattern}\\s+\\d{1,2}\\s+${monthPattern}\\s*(?:\\d{2,4})?\\b`, 'i'),
     new RegExp(`\\b\\d{1,2}\\s+${monthPattern}\\s*(?:\\d{2,4})?\\b`, 'i'),
@@ -6434,7 +6435,7 @@ function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentYear)
     const dateKey = parseDateFromLine(token, fallbackYear, currentMonth, currentYear);
     if (!dateKey) continue;
     const remainingLine = line.replace(token, ' ').replace(/\s+/g, ' ').trim();
-    return { dateKey, remainingLine };
+    return { dateKey, remainingLine, hasMonthToken: true };
   }
   const compactDowMatch = line.match(new RegExp(`\\b${dowPattern}\\d{1,2}\\b`, 'i'));
   if (compactDowMatch && monthRegex.test(line)){
@@ -6447,7 +6448,7 @@ function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentYear)
       }
       remainingLine = remainingLine.replace(/\b\d{2,4}\b/, ' ');
       remainingLine = remainingLine.replace(/\s+/g, ' ').trim();
-      return { dateKey, remainingLine };
+      return { dateKey, remainingLine, hasMonthToken: true };
     }
   }
   if (Number.isFinite(currentMonth)){
@@ -6457,11 +6458,31 @@ function extractDateTokenFromLine(line, fallbackYear, currentMonth, currentYear)
       const dateKey = parseDateFromLine(token, fallbackYear, currentMonth, currentYear);
       if (dateKey){
         const remainingLine = line.slice(dayOnlyMatch[0].length).trim();
-        return { dateKey, remainingLine };
+        return { dateKey, remainingLine, hasMonthToken: false };
       }
     }
   }
-  return { dateKey: null, remainingLine: line };
+  return { dateKey: null, remainingLine: line, hasMonthToken };
+}
+
+function inferCalendarYearFromText(text){
+  const raw = String(text || '').trim();
+  if (!raw) return NaN;
+  const monthTokenPattern = Object.keys(MONTH_NAME_TO_INDEX).join('|');
+  const monthPattern = `(?:${monthTokenPattern})`;
+  const dayMonthYear = new RegExp(`\\b\\d{1,2}\\s*${monthPattern}\\s*(20\\d{2})\\b`, 'i');
+  const monthDayYear = new RegExp(`\\b${monthPattern}\\s*\\d{1,2}\\s*(20\\d{2})\\b`, 'i');
+  const monthYearLine = new RegExp(`^\\s*${monthPattern}\\s*(20\\d{2})\\b`, 'i');
+  const lines = raw.split(/\r?\n/);
+  for (const line of lines){
+    let match = line.match(dayMonthYear);
+    if (match) return Number(match[1]);
+    match = line.match(monthDayYear);
+    if (match) return Number(match[1]);
+    match = line.match(monthYearLine);
+    if (match) return Number(match[1]);
+  }
+  return NaN;
 }
 
 function parseDateFromLine(line, fallbackYear, currentMonth, currentYear){
@@ -7610,11 +7631,13 @@ function parsePastedScheduleText(text){
     ? selectedMonthKey.split('-').map(Number)
     : [NaN, NaN];
   const baseMonthIndex = Number.isFinite(selectedMonth) ? selectedMonth - 1 : null;
-  const yearMatch = raw.match(/\b(20\d{2})\b/);
-  let currentYear = yearMatch
-    ? Number(yearMatch[1])
+  const inferredYear = inferCalendarYearFromText(raw);
+  const hasExplicitYear = Number.isFinite(inferredYear);
+  let currentYear = hasExplicitYear
+    ? inferredYear
     : (Number.isFinite(selectedYear) ? selectedYear : new Date().getFullYear());
-  let lastMonthIndex = !yearMatch && Number.isFinite(baseMonthIndex) ? baseMonthIndex : null;
+  let lastMonthIndex = !hasExplicitYear && Number.isFinite(baseMonthIndex) ? baseMonthIndex : null;
+  let hasParsedMonthToken = false;
   const eventsByDate = {};
   let currentDateKey = null;
   let currentLines = [];
@@ -7765,7 +7788,7 @@ function parsePastedScheduleText(text){
       currentLines = [];
       return;
     }
-    const { dateKey: parsedDateKey, remainingLine } = extractDateTokenFromLine(
+    const { dateKey: parsedDateKey, remainingLine, hasMonthToken } = extractDateTokenFromLine(
       workingLine,
       currentYear,
       lastMonthIndex,
@@ -7775,10 +7798,15 @@ function parsePastedScheduleText(text){
       finalizeDay();
       const [, parsedMonth, parsedDay] = parsedDateKey.split('-').map(Number);
       const monthIndex = parsedMonth - 1;
-      if (!yearMatch && lastMonthIndex !== null && monthIndex < lastMonthIndex){
+      if (!hasExplicitYear && hasParsedMonthToken && hasMonthToken && lastMonthIndex !== null && monthIndex < lastMonthIndex){
         currentYear += 1;
       }
-      lastMonthIndex = monthIndex;
+      if (hasMonthToken || lastMonthIndex === null){
+        lastMonthIndex = monthIndex;
+      }
+      if (hasMonthToken){
+        hasParsedMonthToken = true;
+      }
       const yearForMonth = resolveCalendarYearForMonth(monthIndex, currentYear, currentYear);
       currentDateKey = `${yearForMonth}-${String(parsedMonth).padStart(2, '0')}-${String(parsedDay).padStart(2, '0')}`;
       ensurePairing();
@@ -7797,12 +7825,20 @@ function parsePastedScheduleText(text){
     .filter(([, day]) => Array.isArray(day?.events) && day.events.length > 0)
     .map(([dateKey]) => dateKey);
   const parsedMonths = Array.from(new Set(parsedDateKeys.map(dateKey => dateKey.slice(0, 7)))).sort();
+  const parsedMonthCounts = {};
+  parsedDateKeys.forEach((dateKey) => {
+    if (typeof dateKey !== 'string' || dateKey.length < 7) return;
+    const monthKey = dateKey.slice(0, 7);
+    parsedMonthCounts[monthKey] = (parsedMonthCounts[monthKey] || 0) + 1;
+  });
   updateCalendarPairingMetrics(eventsByDate);
 
   return {
     eventsByDate,
     parsedDateKeys,
     parsedMonths,
+    parsedMonthCounts,
+    selectedMonthKey,
     statusMessage: Object.keys(eventsByDate).length ? '' : 'No calendar events found in pasted schedule.'
   };
 }
@@ -11307,12 +11343,47 @@ function initCalendar(){
       pasteInput.value = '';
       setCalendarStatus('Parsing schedule…');
       try {
-        const { eventsByDate, statusMessage, parsedMonths } = parsePastedScheduleText(pastedText);
+        const {
+          eventsByDate,
+          statusMessage,
+          parsedMonths,
+          parsedMonthCounts,
+          selectedMonthKey
+        } = parsePastedScheduleText(pastedText);
         if (!parsedMonths.length){
           setCalendarStatus(statusMessage || 'No calendar events found in pasted schedule.');
           return;
         }
         const parsedMonthSet = new Set(parsedMonths);
+        const normalizedSelectedMonthKey = normalizeCalendarMonthKey(selectedMonthKey);
+        const resolveTargetMonthKey = () => {
+          if (normalizedSelectedMonthKey && parsedMonthSet.has(normalizedSelectedMonthKey)){
+            return normalizedSelectedMonthKey;
+          }
+          let bestMonth = '';
+          let bestCount = -1;
+          Object.entries(parsedMonthCounts || {}).forEach(([monthKey, count]) => {
+            const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
+            if (!normalizedMonthKey) return;
+            const numericCount = Number(count) || 0;
+            if (numericCount > bestCount){
+              bestCount = numericCount;
+              bestMonth = normalizedMonthKey;
+            }
+          });
+          if (bestMonth) return bestMonth;
+          if (parsedMonths.length){
+            return normalizeCalendarMonthKey(parsedMonths[0]) || parsedMonths[0];
+          }
+          return '';
+        };
+        const targetMonthKey = resolveTargetMonthKey();
+        const targetMonthSet = targetMonthKey ? new Set([targetMonthKey]) : parsedMonthSet;
+        const isOutsideTargetMonth = (dateKey) => {
+          if (!dateKey || !targetMonthSet.size) return false;
+          const monthKey = typeof dateKey === 'string' ? dateKey.slice(0, 7) : '';
+          return monthKey ? !targetMonthSet.has(monthKey) : false;
+        };
         setCalendarSourceMonthKey(eventsByDate);
         const retainedEvents = {};
         const applyPairingIdToDay = (day, pairingId, pairingNumber) => {
@@ -11345,24 +11416,29 @@ function initCalendar(){
           return pairingDays.some((pairingDayKey) => {
             if (typeof pairingDayKey !== 'string' || pairingDayKey.length < 7) return false;
             if (!areDateKeysContiguous(pairingDayKey, dateKey)) return false;
-            return !parsedMonthSet.has(pairingDayKey.slice(0, 7));
+            return isOutsideTargetMonth(pairingDayKey);
           });
         };
-        const findAdjacentOutOfRangePairing = (dateKey) => {
+        const findAdjacentOutOfRangePairing = (dateKey, incomingPairingNumber) => {
+          const normalizedIncomingNumber = String(incomingPairingNumber || '').trim();
           const adjacentOffsets = [-1, 1];
           for (const offset of adjacentOffsets){
             const adjacentKey = getAdjacentDateKey(dateKey, offset);
-            if (!adjacentKey) continue;
+            if (!adjacentKey || !isOutsideTargetMonth(adjacentKey)) continue;
             const adjacentDay = calendarState.eventsByDate?.[adjacentKey];
             const adjacentPairingId = String(
               adjacentDay?.pairing?.pairingId || getCalendarPairingIdFromEvents(adjacentDay?.events) || ''
             ).trim();
-            if (adjacentPairingId && hasAdjacentOutOfRangeDay(adjacentPairingId, dateKey)){
-              return {
-                pairingId: adjacentPairingId,
-                pairingNumber: adjacentDay?.pairing?.pairingNumber || ''
-              };
+            if (!adjacentPairingId) continue;
+            const adjacentPairingNumber = String(adjacentDay?.pairing?.pairingNumber || '').trim();
+            if (normalizedIncomingNumber && adjacentPairingNumber
+              && normalizedIncomingNumber !== adjacentPairingNumber){
+              continue;
             }
+            return {
+              pairingId: adjacentPairingId,
+              pairingNumber: adjacentPairingNumber
+            };
           }
           return null;
         };
@@ -11370,20 +11446,27 @@ function initCalendar(){
           const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
             ? day.sourceMonthKey.slice(0, 7)
             : (typeof dateKey === 'string' ? dateKey.slice(0, 7) : '');
-          if (parsedMonthSet.has(monthKey)) return;
+          if (targetMonthSet.has(monthKey)) return;
           retainedEvents[dateKey] = day;
         });
         const mergedEventsByDate = { ...retainedEvents };
         Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
           const existingDay = calendarState.eventsByDate?.[dateKey];
+          const incomingHasEvents = Array.isArray(day?.events) && day.events.length > 0;
+          const existingHasEvents = Array.isArray(existingDay?.events) && existingDay.events.length > 0;
+          if (!incomingHasEvents && existingHasEvents){
+            mergedEventsByDate[dateKey] = existingDay;
+            return;
+          }
           const existingPairingId = String(
             existingDay?.pairing?.pairingId || getCalendarPairingIdFromEvents(existingDay?.events) || ''
           ).trim();
           const incomingPairingId = String(
             day?.pairing?.pairingId || getCalendarPairingIdFromEvents(day?.events) || ''
           ).trim();
+          const incomingPairingNumber = String(day?.pairing?.pairingNumber || '').trim();
           if (!existingPairingId && incomingPairingId){
-            const adjacentPairing = findAdjacentOutOfRangePairing(dateKey);
+            const adjacentPairing = findAdjacentOutOfRangePairing(dateKey, incomingPairingNumber);
             if (adjacentPairing){
               mergedEventsByDate[dateKey] = applyPairingIdToDay(
                 day,
