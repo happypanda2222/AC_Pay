@@ -604,6 +604,12 @@ function handleFr24ConfigSave(){
   });
   setFr24AuthMode('auto');
   setFr24ProxyBase(proxyInput?.value ?? '');
+  if (clearCalendarGateTimeSyncStatuses()){
+    saveCalendarState();
+  }
+  calendarGateSyncLastMonthKey = '';
+  calendarGateSyncLastRunAt = 0;
+  scheduleCalendarGateTimeAutoSync();
   if (statusEl){
     const authSummary = saved.apiToken ? 'token' : 'no credentials';
     statusEl.textContent = `Saved. Using ${saved.baseUrl} with ${authSummary}.`;
@@ -4969,6 +4975,9 @@ function normalizeCalendarState(){
       if (!Number.isFinite(event.blockMinutes)) event.blockMinutes = null;
       if (!Number.isFinite(event.departureMinutes)) event.departureMinutes = null;
       if (!Number.isFinite(event.arrivalMinutes)) event.arrivalMinutes = null;
+      if (!Number.isFinite(event.originalDepartureMinutes)) event.originalDepartureMinutes = null;
+      if (!Number.isFinite(event.originalArrivalMinutes)) event.originalArrivalMinutes = null;
+      if (!Number.isFinite(event.originalBlockMinutes)) event.originalBlockMinutes = null;
       return event;
     }).filter(Boolean);
     const pairingIdFromEvents = getCalendarPairingIdFromEvents(day.events);
@@ -6606,9 +6615,20 @@ function doesCalendarMonthOverlapGateSyncWindow(monthKey){
 }
 
 function hasRecentCalendarGateSyncFailure(event, nowMs = Date.now()){
-  const sync = event?.gateTimeSync;
-  if (!sync || sync.status !== 'failed' || !Number.isFinite(sync.at)) return false;
-  return (nowMs - sync.at) < CALENDAR_GATE_SYNC_FAILURE_RETRY_MS;
+  return false;
+}
+
+function clearCalendarGateTimeSyncStatuses(eventsByDate = calendarState.eventsByDate){
+  let updated = false;
+  Object.values(eventsByDate || {}).forEach((day) => {
+    (day?.events || []).forEach((event) => {
+      if (event?.gateTimeSync){
+        delete event.gateTimeSync;
+        updated = true;
+      }
+    });
+  });
+  return updated;
 }
 
 function extractCalendarFlightIdentifier(event){
@@ -6722,7 +6742,7 @@ function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey } = 
     events.forEach((event) => {
       if (isPairingMarkerEvent(event)) return;
       if (event?.cancellation === 'CNX' || event?.cancellation === 'CNX PP') return;
-      if (event?.timeSource) return;
+      if (event?.timeSource === 'manual' || event?.timeSource === 'fr24') return;
       if (hasRecentCalendarGateSyncFailure(event, nowMs)) return;
       const flightInfo = extractCalendarFlightIdentifier(event);
       if (!flightInfo) return;
@@ -7476,6 +7496,20 @@ function isDeadheadFullCreditOverride(event, dateKey){
   return timing.endMs > originalTimes.originalLastFlightEndMs;
 }
 
+function isDeadheadFullCreditOverrideForTimes(event, dateKey, departureMinutes, arrivalMinutes){
+  if (!isDeadheadEvent(event)) return false;
+  const resolvedDateKey = normalizeCalendarDateKey(dateKey || event?.date);
+  if (!resolvedDateKey) return false;
+  const pairingId = getCalendarPairingIdForEvent(event, resolvedDateKey);
+  if (!pairingId) return false;
+  if (!getCalendarPairingHasCnxPp(pairingId, calendarState.eventsByDate)) return false;
+  const originalTimes = getCalendarPairingOriginalTimes(pairingId, calendarState.eventsByDate);
+  if (!Number.isFinite(originalTimes?.originalLastFlightEndMs)) return false;
+  const timing = getCalendarEventTimingForMinutes(resolvedDateKey, departureMinutes, arrivalMinutes);
+  if (!Number.isFinite(timing?.endMs)) return false;
+  return timing.endMs > originalTimes.originalLastFlightEndMs;
+}
+
 function getCalendarEventBaseCreditMinutes(event, dateKey){
   const resolvedDateKey = normalizeCalendarDateKey(dateKey || event?.date);
   const blockMinutes = getCalendarEventBlockMinutes(event, resolvedDateKey);
@@ -7487,6 +7521,29 @@ function getCalendarEventBaseCreditMinutes(event, dateKey){
   }
   const storedCredit = Number(event?.creditMinutes);
   return Number.isFinite(storedCredit) ? storedCredit : 0;
+}
+
+function getCalendarEventBaseCreditMinutesForTimes(event, dateKey, departureMinutes, arrivalMinutes, options = {}){
+  const resolvedDateKey = normalizeCalendarDateKey(dateKey || event?.date);
+  if (!resolvedDateKey) return 0;
+  if (isCreditCancelled(event)) return 0;
+  let blockMinutes = computeCalendarEventBlockMinutesForTimes(event, resolvedDateKey, departureMinutes, arrivalMinutes);
+  if (!Number.isFinite(blockMinutes)){
+    const fallback = Number(options?.blockFallback);
+    if (Number.isFinite(fallback)){
+      blockMinutes = fallback;
+    } else if (Number.isFinite(event?.blockMinutes)){
+      blockMinutes = event.blockMinutes;
+    } else if (Number.isFinite(event?.creditMinutes)){
+      blockMinutes = event.creditMinutes;
+    } else {
+      blockMinutes = 0;
+    }
+  }
+  if (isDeadheadEvent(event) && !isDeadheadFullCreditOverrideForTimes(event, resolvedDateKey, departureMinutes, arrivalMinutes)){
+    return Math.round(blockMinutes * 0.5);
+  }
+  return Number.isFinite(blockMinutes) ? blockMinutes : 0;
 }
 
 function getCalendarEventCreditTotal(event, dateKey){
@@ -7719,6 +7776,25 @@ function getCalendarEventTiming(event, dateKey){
   };
 }
 
+function getCalendarEventTimingForMinutes(dateKey, departureMinutes, arrivalMinutes){
+  const dayStartMs = getDateKeyStartMs(dateKey);
+  if (!Number.isFinite(dayStartMs)) return null;
+  const depMinutes = Number(departureMinutes);
+  const arrMinutes = Number(arrivalMinutes);
+  if (!Number.isFinite(depMinutes) && !Number.isFinite(arrMinutes)) return null;
+  const startMinutes = Number.isFinite(depMinutes) ? depMinutes : arrMinutes;
+  let endMinutes = Number.isFinite(arrMinutes) ? arrMinutes : depMinutes;
+  if (Number.isFinite(depMinutes) && Number.isFinite(arrMinutes) && arrMinutes < depMinutes){
+    endMinutes = arrMinutes + 1440;
+  }
+  return {
+    startMs: dayStartMs + (startMinutes * 60000),
+    endMs: dayStartMs + (endMinutes * 60000),
+    departureMinutes: Number.isFinite(depMinutes) ? depMinutes : null,
+    arrivalMinutes: Number.isFinite(arrMinutes) ? arrMinutes : null
+  };
+}
+
 function getCalendarEventBoundaryAirports(event){
   const segments = Array.isArray(event?.segments) ? event.segments : [];
   if (segments.length){
@@ -7737,6 +7813,44 @@ function getCalendarEventBoundaryAirports(event){
     return { depCode, arrCode };
   }
   return { depCode: '', arrCode: '' };
+}
+
+function computeCalendarEventBlockMinutesForTimes(event, dateKey, departureMinutes, arrivalMinutes){
+  if (!Number.isFinite(departureMinutes) || !Number.isFinite(arrivalMinutes)) return NaN;
+  const resolvedDateKey = normalizeCalendarDateKey(dateKey || event?.date);
+  if (!resolvedDateKey) return NaN;
+  const parts = parseDateKeyParts(resolvedDateKey);
+  if (!parts) return NaN;
+  const { depCode, arrCode } = getCalendarEventBoundaryAirports(event);
+  if (!depCode || !arrCode) return NaN;
+  const depZone = getCachedAirportTimeZone(depCode);
+  const arrZone = getCachedAirportTimeZone(arrCode);
+  if (!depZone || !arrZone) return NaN;
+  const departureUtc = getUtcMsForZonedLocalTime({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    minutes: departureMinutes
+  }, depZone);
+  if (!Number.isFinite(departureUtc)) return NaN;
+  const offsets = [-1, 0, 1, 2];
+  const maxMinutes = 36 * 60;
+  let bestMinutes = NaN;
+  offsets.forEach((offsetDays) => {
+    const arrivalUtc = getUtcMsForZonedLocalTime({
+      year: parts.year,
+      month: parts.month,
+      day: parts.day,
+      minutes: arrivalMinutes + (offsetDays * 1440)
+    }, arrZone);
+    if (!Number.isFinite(arrivalUtc)) return;
+    const diffMinutes = Math.round((arrivalUtc - departureUtc) / 60000);
+    if (diffMinutes < 0 || diffMinutes > maxMinutes) return;
+    if (!Number.isFinite(bestMinutes) || diffMinutes < bestMinutes){
+      bestMinutes = diffMinutes;
+    }
+  });
+  return Number.isFinite(bestMinutes) ? bestMinutes : NaN;
 }
 
 function computeCalendarEventBlockMinutes(event, dateKey){
@@ -7777,6 +7891,42 @@ function computeCalendarEventBlockMinutes(event, dateKey){
     }
   });
   return Number.isFinite(bestMinutes) ? bestMinutes : NaN;
+}
+
+function ensureCalendarEventOriginalTimes(event, dateKey){
+  if (!event) return;
+  if (!Number.isFinite(event.originalDepartureMinutes)){
+    event.originalDepartureMinutes = Number.isFinite(event.departureMinutes)
+      ? event.departureMinutes
+      : null;
+  }
+  if (!Number.isFinite(event.originalArrivalMinutes)){
+    event.originalArrivalMinutes = Number.isFinite(event.arrivalMinutes)
+      ? event.arrivalMinutes
+      : null;
+  }
+  if (!Number.isFinite(event.originalBlockMinutes)){
+    const depMinutes = Number.isFinite(event.originalDepartureMinutes)
+      ? event.originalDepartureMinutes
+      : event.departureMinutes;
+    const arrMinutes = Number.isFinite(event.originalArrivalMinutes)
+      ? event.originalArrivalMinutes
+      : event.arrivalMinutes;
+    let blockMinutes = computeCalendarEventBlockMinutesForTimes(event, dateKey, depMinutes, arrMinutes);
+    if (!Number.isFinite(blockMinutes)){
+      const localMinutes = Number.isFinite(depMinutes) && Number.isFinite(arrMinutes)
+        ? Math.max(0, (arrMinutes < depMinutes ? arrMinutes + 1440 : arrMinutes) - depMinutes)
+        : NaN;
+      if (Number.isFinite(localMinutes)){
+        blockMinutes = localMinutes;
+      } else if (Number.isFinite(event.blockMinutes)){
+        blockMinutes = event.blockMinutes;
+      } else if (Number.isFinite(event.creditMinutes)){
+        blockMinutes = event.creditMinutes;
+      }
+    }
+    event.originalBlockMinutes = Number.isFinite(blockMinutes) ? blockMinutes : null;
+  }
 }
 
 function getCalendarPairingTafbMinutes(day, dateKey){
@@ -10531,6 +10681,12 @@ function renderCalendarDetail(event, dateKey){
     if (!code) return '<span class="calendar-airport-text">—</span>';
     return `<span class="calendar-airport-text">${escapeHtml(code)}</span>`;
   };
+  const originalDepartureMinutes = Number.isFinite(event?.originalDepartureMinutes)
+    ? event.originalDepartureMinutes
+    : null;
+  const originalArrivalMinutes = Number.isFinite(event?.originalArrivalMinutes)
+    ? event.originalArrivalMinutes
+    : null;
   const now = Date.now();
   const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
   const segmentsLabel = Array.isArray(event?.segments) && event.segments.length
@@ -10538,6 +10694,20 @@ function renderCalendarDetail(event, dateKey){
       .map((segment, index) => {
         const dep = Number.isFinite(segment.departureMinutes) ? formatMinutesToTime(segment.departureMinutes) : '--:--';
         const arr = Number.isFinite(segment.arrivalMinutes) ? formatMinutesToTime(segment.arrivalMinutes) : '--:--';
+        const depClass = index === 0
+          && Number.isFinite(originalDepartureMinutes)
+          && Number.isFinite(segment?.departureMinutes)
+          ? (segment.departureMinutes < originalDepartureMinutes
+            ? ' is-early'
+            : (segment.departureMinutes > originalDepartureMinutes ? ' is-late' : ''))
+          : '';
+        const arrClass = index === event.segments.length - 1
+          && Number.isFinite(originalArrivalMinutes)
+          && Number.isFinite(segment?.arrivalMinutes)
+          ? (segment.arrivalMinutes < originalArrivalMinutes
+            ? ' is-early'
+            : (segment.arrivalMinutes > originalArrivalMinutes ? ' is-late' : ''))
+          : '';
         const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
         const arrMinutes = getCalendarSegmentArrivalMinutes(segment);
         const arrMs = calendarDateKeyMinutesToMs(dateKey, arrMinutes);
@@ -10554,7 +10724,7 @@ function renderCalendarDetail(event, dateKey){
         const toTag = showTags
           ? buildAirportTag(segment.to, arrMs, index, 'arr', legData)
           : buildAirportText(segment.to);
-        return `<span class="calendar-segment-line">${fromTag}<span class="calendar-segment-time">${escapeHtml(dep)}</span><span class="calendar-segment-arrow">→</span>${toTag}<span class="calendar-segment-time">${escapeHtml(arr)}</span></span>`;
+        return `<span class="calendar-segment-line">${fromTag}<span class="calendar-segment-time${depClass}">${escapeHtml(dep)}</span><span class="calendar-segment-arrow">→</span>${toTag}<span class="calendar-segment-time${arrClass}">${escapeHtml(arr)}</span></span>`;
       })
       .join('<br>')
     : '';
@@ -10790,6 +10960,191 @@ function getCalendarPairingDutyDayCreditMinutes(pairingId, eventsByDate = calend
     if (!blockMinutes) return total;
     return total + Math.max(blockMinutes, DUTY_DAY_CREDIT_FLOOR_MINUTES);
   }, 0);
+}
+
+function buildCalendarDutyDayGroups(flightEntries){
+  const sorted = Array.isArray(flightEntries)
+    ? flightEntries.filter(entry => Number.isFinite(entry.startMs) && Number.isFinite(entry.endMs))
+      .slice()
+      .sort((a, b) => a.startMs - b.startMs)
+    : [];
+  if (!sorted.length) return [];
+  const groups = [];
+  let current = [];
+  let lastEntry = null;
+  sorted.forEach((entry) => {
+    if (!lastEntry){
+      current = [entry];
+      lastEntry = entry;
+      return;
+    }
+    const currentCheckOutMs = lastEntry.endMs + (15 * 60000);
+    const nextCheckInMs = entry.startMs - (75 * 60000);
+    const gapMinutes = Math.round((nextCheckInMs - currentCheckOutMs) / 60000);
+    if (gapMinutes > 480){
+      groups.push(current);
+      current = [entry];
+    } else {
+      current.push(entry);
+    }
+    lastEntry = entry;
+  });
+  if (current.length) groups.push(current);
+  return groups;
+}
+
+function recomputeCalendarBlockGrowthForEntries(flightEntries, { tafbFloorMinutes } = {}){
+  if (!Array.isArray(flightEntries) || !flightEntries.length) return;
+  flightEntries.forEach((entry) => {
+    const scheduled = Number(entry?.scheduledCredit);
+    const actual = Number(entry?.actualCredit);
+    entry.scheduledCredit = Number.isFinite(scheduled) ? Math.max(0, scheduled) : 0;
+    entry.actualCredit = Number.isFinite(actual) ? Math.max(0, actual) : 0;
+    entry.rawGrowth = Math.max(0, entry.actualCredit - entry.scheduledCredit);
+    entry.growth = 0;
+  });
+  const groups = buildCalendarDutyDayGroups(flightEntries);
+  let baselineDutyCredit = 0;
+  groups.forEach((group) => {
+    const actualTotal = group.reduce((sum, entry) => sum + entry.actualCredit, 0);
+    const scheduledTotal = group.reduce((sum, entry) => sum + entry.scheduledCredit, 0);
+    const rawTotal = group.reduce((sum, entry) => sum + entry.rawGrowth, 0);
+    if (actualTotal > 0){
+      baselineDutyCredit += Math.max(actualTotal, DUTY_DAY_CREDIT_FLOOR_MINUTES);
+    }
+    let allowed = 0;
+    if (actualTotal > DUTY_DAY_CREDIT_FLOOR_MINUTES){
+      if (scheduledTotal >= DUTY_DAY_CREDIT_FLOOR_MINUTES){
+        allowed = rawTotal;
+      } else {
+        allowed = Math.min(rawTotal, actualTotal - DUTY_DAY_CREDIT_FLOOR_MINUTES);
+      }
+    }
+    if (allowed <= 0) return;
+    const sorted = group.slice().sort((a, b) => a.startMs - b.startMs);
+    let remaining = allowed;
+    for (let i = sorted.length - 1; i >= 0 && remaining > 0; i -= 1){
+      const entry = sorted[i];
+      const take = Math.min(entry.rawGrowth, remaining);
+      entry.growth = take;
+      remaining -= take;
+    }
+  });
+  if (Number.isFinite(tafbFloorMinutes) && tafbFloorMinutes > baselineDutyCredit){
+    let remaining = Math.min(
+      tafbFloorMinutes - baselineDutyCredit,
+      flightEntries.reduce((sum, entry) => sum + (entry.growth || 0), 0)
+    );
+    if (remaining > 0){
+      const sorted = flightEntries.slice().sort((a, b) => a.startMs - b.startMs);
+      sorted.forEach((entry) => {
+        if (remaining <= 0) return;
+        if (!entry.growth) return;
+        const reduceBy = Math.min(entry.growth, remaining);
+        entry.growth -= reduceBy;
+        remaining -= reduceBy;
+      });
+    }
+  }
+}
+
+function recomputeCalendarBlockGrowthForPairing(pairingId, eventsByDate = calendarState.eventsByDate){
+  if (!pairingId || !eventsByDate) return;
+  const pairingDays = getCalendarPairingDaysFromEvents(eventsByDate, pairingId);
+  if (!pairingDays.length) return;
+  const flightEntries = [];
+  pairingDays.forEach((dateKey) => {
+    const day = eventsByDate?.[dateKey];
+    (day?.events || []).forEach((event) => {
+      if (isPairingMarkerEvent(event)) return;
+      const timing = getCalendarEventTiming(event, dateKey);
+      const dayStartMs = getDateKeyStartMs(dateKey);
+      const startMs = Number.isFinite(timing?.startMs) ? timing.startMs : dayStartMs;
+      const endMs = Number.isFinite(timing?.endMs) ? timing.endMs : startMs;
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return;
+      const depMinutes = Number.isFinite(event?.departureMinutes) ? event.departureMinutes : null;
+      const arrMinutes = Number.isFinite(event?.arrivalMinutes) ? event.arrivalMinutes : null;
+      const originalDep = Number.isFinite(event?.originalDepartureMinutes) ? event.originalDepartureMinutes : depMinutes;
+      const originalArr = Number.isFinite(event?.originalArrivalMinutes) ? event.originalArrivalMinutes : arrMinutes;
+      const scheduledCredit = getCalendarEventBaseCreditMinutesForTimes(
+        event,
+        dateKey,
+        originalDep,
+        originalArr,
+        { blockFallback: Number.isFinite(event?.originalBlockMinutes) ? event.originalBlockMinutes : null }
+      );
+      const actualCredit = getCalendarEventBaseCreditMinutesForTimes(
+        event,
+        dateKey,
+        depMinutes,
+        arrMinutes
+      );
+      flightEntries.push({
+        event,
+        dateKey,
+        startMs,
+        endMs,
+        scheduledCredit,
+        actualCredit
+      });
+    });
+  });
+  if (!flightEntries.length) return;
+  const pairingTafbMinutes = getCalendarPairingTafbFromEvents(pairingId, eventsByDate);
+  const tafbFloorMinutes = Number.isFinite(pairingTafbMinutes)
+    ? Math.floor(pairingTafbMinutes / 4)
+    : null;
+  recomputeCalendarBlockGrowthForEntries(flightEntries, { tafbFloorMinutes });
+  flightEntries.forEach((entry) => {
+    entry.event.blockGrowthMinutes = Math.max(0, Math.round(entry.growth || 0));
+  });
+}
+
+function recomputeCalendarBlockGrowthForDate(dateKey, eventsByDate = calendarState.eventsByDate){
+  const normalizedDateKey = normalizeCalendarDateKey(dateKey);
+  if (!normalizedDateKey || !eventsByDate) return;
+  const day = eventsByDate?.[normalizedDateKey];
+  if (!day) return;
+  const dayStartMs = getDateKeyStartMs(normalizedDateKey);
+  if (!Number.isFinite(dayStartMs)) return;
+  const flightEntries = [];
+  (day?.events || []).forEach((event) => {
+    if (isPairingMarkerEvent(event)) return;
+    const timing = getCalendarEventTiming(event, normalizedDateKey);
+    const startMs = Number.isFinite(timing?.startMs) ? timing.startMs : dayStartMs;
+    const endMs = Number.isFinite(timing?.endMs) ? timing.endMs : startMs;
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return;
+    const depMinutes = Number.isFinite(event?.departureMinutes) ? event.departureMinutes : null;
+    const arrMinutes = Number.isFinite(event?.arrivalMinutes) ? event.arrivalMinutes : null;
+    const originalDep = Number.isFinite(event?.originalDepartureMinutes) ? event.originalDepartureMinutes : depMinutes;
+    const originalArr = Number.isFinite(event?.originalArrivalMinutes) ? event.originalArrivalMinutes : arrMinutes;
+    const scheduledCredit = getCalendarEventBaseCreditMinutesForTimes(
+      event,
+      normalizedDateKey,
+      originalDep,
+      originalArr,
+      { blockFallback: Number.isFinite(event?.originalBlockMinutes) ? event.originalBlockMinutes : null }
+    );
+    const actualCredit = getCalendarEventBaseCreditMinutesForTimes(
+      event,
+      normalizedDateKey,
+      depMinutes,
+      arrMinutes
+    );
+    flightEntries.push({
+      event,
+      dateKey: normalizedDateKey,
+      startMs,
+      endMs,
+      scheduledCredit,
+      actualCredit
+    });
+  });
+  if (!flightEntries.length) return;
+  recomputeCalendarBlockGrowthForEntries(flightEntries);
+  flightEntries.forEach((entry) => {
+    entry.event.blockGrowthMinutes = Math.max(0, Math.round(entry.growth || 0));
+  });
 }
 
 function getCalendarPairingSummary(
@@ -11076,6 +11431,12 @@ function renderCalendarPairingDetail(pairingId){
         if (Array.isArray(event?.segments) && event.segments.length){
           const now = Date.now();
           const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
+          const originalDepMinutes = Number.isFinite(event?.originalDepartureMinutes)
+            ? event.originalDepartureMinutes
+            : null;
+          const originalArrMinutes = Number.isFinite(event?.originalArrivalMinutes)
+            ? event.originalArrivalMinutes
+            : null;
           event.segments.forEach((segment, segmentIndex) => {
             const depMs = calendarDateKeyMinutesToMs(dateKey, segment?.departureMinutes);
             const line = document.createElement('div');
@@ -11100,11 +11461,29 @@ function renderCalendarPairingDetail(pairingId){
             depTime.textContent = Number.isFinite(segment?.departureMinutes)
               ? formatMinutesToTime(segment.departureMinutes)
               : '--:--';
+            if (segmentIndex === 0
+              && Number.isFinite(originalDepMinutes)
+              && Number.isFinite(segment?.departureMinutes)){
+              if (segment.departureMinutes < originalDepMinutes){
+                depTime.classList.add('is-early');
+              } else if (segment.departureMinutes > originalDepMinutes){
+                depTime.classList.add('is-late');
+              }
+            }
             const arrTime = document.createElement('span');
             arrTime.className = 'calendar-segment-time';
             arrTime.textContent = Number.isFinite(segment?.arrivalMinutes)
               ? formatMinutesToTime(segment.arrivalMinutes)
               : '--:--';
+            if (segmentIndex === event.segments.length - 1
+              && Number.isFinite(originalArrMinutes)
+              && Number.isFinite(segment?.arrivalMinutes)){
+              if (segment.arrivalMinutes < originalArrMinutes){
+                arrTime.classList.add('is-early');
+              } else if (segment.arrivalMinutes > originalArrMinutes){
+                arrTime.classList.add('is-late');
+              }
+            }
             const arrow = document.createElement('span');
             arrow.className = 'calendar-segment-arrow';
             arrow.textContent = '→';
@@ -11549,6 +11928,7 @@ function applyCalendarEventTimingUpdate(entry, { departureMinutes, arrivalMinute
   }
   const event = entry.event;
   const dateKey = entry.dateKey;
+  ensureCalendarEventOriginalTimes(event, dateKey);
   const pairingId = getCalendarPairingIdForEvent(event, dateKey);
   const originalBaseline = pairingId
     ? getCalendarPairingBaselineSnapshot(pairingId, calendarState.eventsByDate)
@@ -11592,6 +11972,7 @@ function applyCalendarEventTimingUpdate(entry, { departureMinutes, arrivalMinute
       }
     }
     recomputeCalendarPairingLayovers(pairingId, calendarState.eventsByDate);
+    recomputeCalendarBlockGrowthForPairing(pairingId, calendarState.eventsByDate);
     recomputeCalendarPairingMetricsForPairing(pairingId, calendarState.eventsByDate);
     const hasStoredOriginal = Number.isFinite(existingOriginalTimes.originalLastFlightEndMs)
       || Number.isFinite(existingOriginalTimes.originalCheckOutMs);
@@ -11607,6 +11988,8 @@ function applyCalendarEventTimingUpdate(entry, { departureMinutes, arrivalMinute
         originalCheckOutMs: originalBaseline.checkOutMs
       }, calendarState.eventsByDate);
     }
+  } else {
+    recomputeCalendarBlockGrowthForDate(dateKey, calendarState.eventsByDate);
   }
   return { updated: true, pairingId };
 }
@@ -12674,7 +13057,16 @@ function initCalendar(){
           const monthKey = typeof dateKey === 'string' ? dateKey.slice(0, 7) : '';
           return monthKey ? !targetMonthSet.has(monthKey) : false;
         };
-        setCalendarSourceMonthKey(eventsByDate, targetMonthKey || normalizedSelectedMonthKey);
+        const preferredMonthKey = targetMonthKey || normalizedSelectedMonthKey || '';
+        Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
+          if (!day || typeof day !== 'object') return;
+          const ownMonthKey = typeof dateKey === 'string' && dateKey.length >= 7 ? dateKey.slice(0, 7) : '';
+          if (ownMonthKey && preferredMonthKey && ownMonthKey !== preferredMonthKey){
+            day.sourceMonthKey = ownMonthKey;
+          } else {
+            day.sourceMonthKey = preferredMonthKey || ownMonthKey || null;
+          }
+        });
         const retainedEvents = {};
         const applyPairingIdToDay = (day, pairingId, pairingNumber) => {
           if (!day || !pairingId) return day;
@@ -12733,9 +13125,7 @@ function initCalendar(){
           return null;
         };
         Object.entries(calendarState.eventsByDate || {}).forEach(([dateKey, day]) => {
-          const monthKey = typeof day?.sourceMonthKey === 'string' && day.sourceMonthKey.length >= 7
-            ? day.sourceMonthKey.slice(0, 7)
-            : (typeof dateKey === 'string' ? dateKey.slice(0, 7) : '');
+          const monthKey = typeof dateKey === 'string' ? dateKey.slice(0, 7) : '';
           if (targetMonthSet.has(monthKey)) return;
           retainedEvents[dateKey] = day;
         });
@@ -16759,9 +17149,9 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights can use actual gate departure/arrival times from FlightRadar24 historic events when available; those times are treated as manual edits and drive recalculations. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights can use actual gate departure/arrival times from FlightRadar24 historic events when available; those times are treated as manual edits and drive recalculations. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights can use actual gate departure/arrival times from FlightRadar24 historic events when available; those times are treated as manual edits and drive recalculations. If block cannot be computed, stored credit/block values are used. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights can use actual gate departure/arrival times from FlightRadar24 historic events when available; those times are treated as manual edits and drive recalculations. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
     postOriginalCredit: 'Minutes of credit after the original last-flight arrival when a CNX PP pairing is extended.',
     associatedTtg: 'Additional TTG from extending the pairing past the original check-out (original to new check-out) divided by 4; shown when pairing credit uses TAFB/4.',
     tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights can use actual gate departure/arrival times from FlightRadar24 historic events when available; those times update check-in/out and drive TAFB recalculations. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
