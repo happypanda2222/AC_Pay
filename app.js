@@ -6301,9 +6301,14 @@ function createCalendarPairingSkeleton({
   return { pairingId, pairingDays };
 }
 
-function setCalendarSourceMonthKey(eventsByDate){
+function setCalendarSourceMonthKey(eventsByDate, sourceMonthKey){
+  const normalizedSource = normalizeCalendarMonthKey(sourceMonthKey);
   Object.entries(eventsByDate || {}).forEach(([dateKey, day]) => {
     if (!day || typeof day !== 'object') return;
+    if (normalizedSource){
+      day.sourceMonthKey = normalizedSource;
+      return;
+    }
     if (typeof dateKey !== 'string' || dateKey.length < 7) return;
     day.sourceMonthKey = dateKey.slice(0, 7);
   });
@@ -11384,7 +11389,7 @@ function initCalendar(){
           const monthKey = typeof dateKey === 'string' ? dateKey.slice(0, 7) : '';
           return monthKey ? !targetMonthSet.has(monthKey) : false;
         };
-        setCalendarSourceMonthKey(eventsByDate);
+        setCalendarSourceMonthKey(eventsByDate, targetMonthKey || normalizedSelectedMonthKey);
         const retainedEvents = {};
         const applyPairingIdToDay = (day, pairingId, pairingNumber) => {
           if (!day || !pairingId) return day;
