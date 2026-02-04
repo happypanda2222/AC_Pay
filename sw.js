@@ -1,5 +1,5 @@
 // sw.js
-const CACHE = 'acpay-v559'; // ⬅️ bump this (v2, v3, ...) whenever you change assets
+const CACHE = 'acpay-v560'; // ⬅️ bump this (v2, v3, ...) whenever you change assets
 const ASSETS = [
   './',
   './index.html',
