@@ -116,6 +116,10 @@ const FR24_GATE_EVENT_TYPE_ALIASES = {
   on_block: 'gate_arrival',
   gate_arrived: 'gate_arrival'
 };
+const FR24_GATE_EVENT_TYPES_REQUEST = Array.from(new Set([
+  ...FR24_GATE_EVENT_TYPES,
+  ...Object.keys(FR24_GATE_EVENT_TYPE_ALIASES)
+]));
 const CALENDAR_GATE_SYNC_LOOKBACK_MONTHS = 2;
 const CALENDAR_GATE_SYNC_FAILURE_RETRY_MS = 24 * 60 * 60 * 1000;
 const FIN_FLIGHT_CACHE = new Map();
@@ -3990,7 +3994,7 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, callsigns
   return { flights: flightRows, registration: normalizedReg, flight: normalizedFlight };
 }
 
-async function fetchFr24HistoricFlightEventsLight(flightIds, eventTypes = FR24_GATE_EVENT_TYPES){
+async function fetchFr24HistoricFlightEventsLight(flightIds, eventTypes = FR24_GATE_EVENT_TYPES_REQUEST){
   const ids = Array.isArray(flightIds)
     ? flightIds.map((id) => String(id || '').trim()).filter(Boolean)
     : [];
@@ -7056,11 +7060,17 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes){
   if (!candidate){
     return { updated: false, reason: 'applyFailed' };
   }
-  if (!gateTimes
-    || !Number.isFinite(gateTimes.gate_departure)
-    || !Number.isFinite(gateTimes.gate_arrival)){
+  if (!gateTimes){
     setCalendarGateTimeSyncStatus(candidate.event, 'failed');
     return { updated: false, reason: 'missingGateEvents' };
+  }
+  const hasDeparture = Number.isFinite(gateTimes.gate_departure);
+  const hasArrival = Number.isFinite(gateTimes.gate_arrival);
+  if (!hasDeparture || !hasArrival){
+    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    if (!hasDeparture && !hasArrival) return { updated: false, reason: 'missingGateEvents' };
+    if (!hasDeparture) return { updated: false, reason: 'missingGateDeparture' };
+    return { updated: false, reason: 'missingGateArrival' };
   }
   const depZone = getCachedAirportTimeZone(candidate.depCode);
   const arrZone = getCachedAirportTimeZone(candidate.arrCode);
@@ -7112,6 +7122,8 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     summaryError: 0,
     historicError: 0,
     missingGateEvents: 0,
+    missingGateDeparture: 0,
+    missingGateArrival: 0,
     timezoneMissing: 0,
     dateMismatch: 0,
     applyFailed: 0
@@ -7265,7 +7277,7 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     const batch = flightIds.slice(i, i + FR24_HISTORIC_EVENTS_BATCH_SIZE);
     let historicEvents = [];
     try {
-      historicEvents = await fetchFr24HistoricFlightEventsLight(batch, FR24_GATE_EVENT_TYPES);
+      historicEvents = await fetchFr24HistoricFlightEventsLight(batch, FR24_GATE_EVENT_TYPES_REQUEST);
     } catch (err){
       console.warn('FR24 historic events lookup failed', err);
       batch.forEach((flightId) => {
@@ -7320,6 +7332,8 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
       const parts = [];
       if (noFr24Id) parts.push(`no FR24 id: ${noFr24Id}`);
       if (noGateEvents) parts.push(`no gate events: ${noGateEvents}`);
+      if (failureBuckets.missingGateDeparture) parts.push(`missing gate departure: ${failureBuckets.missingGateDeparture}`);
+      if (failureBuckets.missingGateArrival) parts.push(`missing gate arrival: ${failureBuckets.missingGateArrival}`);
       if (failureBuckets.summaryError) parts.push(`summary error: ${failureBuckets.summaryError}`);
       if (failureBuckets.summaryError && lastSummaryError){
         parts.push(`summary detail: ${lastSummaryError}`);
