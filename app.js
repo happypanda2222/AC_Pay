@@ -116,10 +116,7 @@ const FR24_GATE_EVENT_TYPE_ALIASES = {
   on_block: 'gate_arrival',
   gate_arrived: 'gate_arrival'
 };
-const FR24_GATE_EVENT_TYPES_REQUEST = Array.from(new Set([
-  ...FR24_GATE_EVENT_TYPES,
-  ...Object.keys(FR24_GATE_EVENT_TYPE_ALIASES)
-]));
+const FR24_GATE_EVENT_TYPES_REQUEST = [...FR24_GATE_EVENT_TYPES];
 const CALENDAR_GATE_SYNC_LOOKBACK_DAYS = 7;
 const CALENDAR_GATE_SYNC_FAILURE_RETRY_MS = 24 * 60 * 60 * 1000;
 const FIN_FLIGHT_CACHE = new Map();
