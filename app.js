@@ -3986,8 +3986,8 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, callsigns
     json = {};
   }
   const rows = extractFr24DataRows(json);
-  const flights = rows.map(mapFr24LightSummaryFlight).filter(Boolean);
-  return { flights, registration: normalizedReg, flight: normalizedFlight };
+  const flightRows = rows.map(mapFr24LightSummaryFlight).filter(Boolean);
+  return { flights: flightRows, registration: normalizedReg, flight: normalizedFlight };
 }
 
 async function fetchFr24HistoricFlightEventsLight(flightIds, eventTypes = FR24_GATE_EVENT_TYPES){
