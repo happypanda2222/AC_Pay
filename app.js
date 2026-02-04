@@ -3927,8 +3927,9 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, fromMs, t
   }
   const params = { limit: 200 };
   if (Number.isFinite(fromMs) && Number.isFinite(toMs)){
-    params.flight_datetime_from = formatFr24DateTimeUtc(new Date(fromMs));
-    params.flight_datetime_to = formatFr24DateTimeUtc(new Date(toMs));
+    const paddingMs = 6 * 60 * 60 * 1000;
+    params.flight_datetime_from = formatFr24DateTimeUtc(new Date(fromMs - paddingMs));
+    params.flight_datetime_to = formatFr24DateTimeUtc(new Date(toMs + paddingMs));
   }
   if (normalizedReg) params.registrations = normalizedReg;
   if (normalizedFlight){
