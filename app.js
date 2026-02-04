@@ -120,7 +120,7 @@ const FR24_GATE_EVENT_TYPES_REQUEST = Array.from(new Set([
   ...FR24_GATE_EVENT_TYPES,
   ...Object.keys(FR24_GATE_EVENT_TYPE_ALIASES)
 ]));
-const CALENDAR_GATE_SYNC_LOOKBACK_MONTHS = 2;
+const CALENDAR_GATE_SYNC_LOOKBACK_DAYS = 7;
 const CALENDAR_GATE_SYNC_FAILURE_RETRY_MS = 24 * 60 * 60 * 1000;
 const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
@@ -6852,11 +6852,8 @@ async function syncCalendarToCloud(){
 function getCalendarGateSyncWindow(){
   const today = new Date();
   const endKey = buildCalendarDateKeyFromDate(today);
-  const startDate = new Date(
-    today.getFullYear(),
-    today.getMonth() - CALENDAR_GATE_SYNC_LOOKBACK_MONTHS,
-    today.getDate()
-  );
+  const startDate = new Date(today);
+  startDate.setDate(startDate.getDate() - CALENDAR_GATE_SYNC_LOOKBACK_DAYS);
   const startKey = buildCalendarDateKeyFromDate(startDate);
   return { startKey, endKey };
 }
@@ -7162,30 +7159,28 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     if (candidate.fr24Id) continue;
     const departureUtcMs = getCalendarEventDepartureUtcMs(candidate.event, candidate.dateKey, candidate.depCode);
     const arrivalUtcMs = getCalendarEventArrivalUtcMs(candidate.event, candidate.dateKey, candidate.arrCode);
-    let fromMs = NaN;
-    let toMs = NaN;
-    if (Number.isFinite(departureUtcMs) && Number.isFinite(arrivalUtcMs)){
-      fromMs = departureUtcMs - (6 * 60 * 60 * 1000);
-      toMs = arrivalUtcMs + (6 * 60 * 60 * 1000);
-    } else if (Number.isFinite(departureUtcMs)){
-      fromMs = departureUtcMs - (6 * 60 * 60 * 1000);
-      toMs = departureUtcMs + (6 * 60 * 60 * 1000);
-    } else {
-      const startMs = getDateKeyStartMs(candidate.dateKey);
-      if (Number.isFinite(startMs)){
-        fromMs = startMs;
-        toMs = startMs + (24 * 60 * 60 * 1000);
-      }
-    }
-    candidate.summaryFromMs = fromMs;
-    candidate.summaryToMs = toMs;
     candidate.summaryDepartureUtcMs = departureUtcMs;
-    const groupKey = `${fromMs}|${toMs}`;
+    const groupKey = candidate.dateKey;
     const existingGroup = summaryGroups.get(groupKey);
     if (existingGroup){
+      if (Number.isFinite(departureUtcMs)){
+        existingGroup.minDepartureUtcMs = Number.isFinite(existingGroup.minDepartureUtcMs)
+          ? Math.min(existingGroup.minDepartureUtcMs, departureUtcMs)
+          : departureUtcMs;
+      }
+      if (Number.isFinite(arrivalUtcMs)){
+        existingGroup.maxArrivalUtcMs = Number.isFinite(existingGroup.maxArrivalUtcMs)
+          ? Math.max(existingGroup.maxArrivalUtcMs, arrivalUtcMs)
+          : arrivalUtcMs;
+      }
       existingGroup.candidates.push(candidate);
     } else {
-      summaryGroups.set(groupKey, { fromMs, toMs, candidates: [candidate] });
+      summaryGroups.set(groupKey, {
+        dateKey: candidate.dateKey,
+        minDepartureUtcMs: Number.isFinite(departureUtcMs) ? departureUtcMs : NaN,
+        maxArrivalUtcMs: Number.isFinite(arrivalUtcMs) ? arrivalUtcMs : NaN,
+        candidates: [candidate]
+      });
     }
   }
 
@@ -7234,6 +7229,28 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
   };
 
   for (const group of summaryGroups.values()){
+    const hasDeparture = Number.isFinite(group.minDepartureUtcMs);
+    const hasArrival = Number.isFinite(group.maxArrivalUtcMs);
+    let fromMs = NaN;
+    let toMs = NaN;
+    if (hasDeparture && hasArrival){
+      fromMs = group.minDepartureUtcMs - (2 * 60 * 60 * 1000);
+      toMs = group.maxArrivalUtcMs + (5 * 60 * 60 * 1000);
+    } else if (hasDeparture){
+      fromMs = group.minDepartureUtcMs - (2 * 60 * 60 * 1000);
+      toMs = group.minDepartureUtcMs + (5 * 60 * 60 * 1000);
+    } else if (hasArrival){
+      fromMs = group.maxArrivalUtcMs - (2 * 60 * 60 * 1000);
+      toMs = group.maxArrivalUtcMs + (5 * 60 * 60 * 1000);
+    } else {
+      const startMs = getDateKeyStartMs(group.dateKey);
+      if (Number.isFinite(startMs)){
+        fromMs = startMs;
+        toMs = startMs + (24 * 60 * 60 * 1000);
+      }
+    }
+    group.fromMs = fromMs;
+    group.toMs = toMs;
     const callsignSet = new Set();
     group.candidates.forEach((candidate) => {
       (candidate.callsignCandidates || []).forEach((value) => {
