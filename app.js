@@ -6610,7 +6610,8 @@ function setCalendarStatus(message = ''){
 const CALENDAR_FR24_DEBUG_LIMIT = 10;
 const calendarFr24Debug = {
   summary: [],
-  historic: []
+  historic: [],
+  match: []
 };
 
 function formatCalendarFr24DebugEntry(entry){
@@ -6630,6 +6631,7 @@ function formatCalendarFr24DebugEntry(entry){
 function renderCalendarFr24Debug(){
   const summaryEl = document.getElementById('calendar-fr24-debug-summary');
   const historicEl = document.getElementById('calendar-fr24-debug-historic');
+  const matchEl = document.getElementById('calendar-fr24-debug-match');
   if (summaryEl){
     summaryEl.textContent = calendarFr24Debug.summary.length
       ? calendarFr24Debug.summary.map(formatCalendarFr24DebugEntry).join('\n\n---\n\n')
@@ -6639,6 +6641,11 @@ function renderCalendarFr24Debug(){
     historicEl.textContent = calendarFr24Debug.historic.length
       ? calendarFr24Debug.historic.map(formatCalendarFr24DebugEntry).join('\n\n---\n\n')
       : 'No FR24 historic requests yet.';
+  }
+  if (matchEl){
+    matchEl.textContent = calendarFr24Debug.match.length
+      ? calendarFr24Debug.match.map(formatCalendarFr24DebugEntry).join('\n\n---\n\n')
+      : 'No FR24 match results yet.';
   }
 }
 
@@ -6920,6 +6927,23 @@ function buildFr24CallsignCandidates(prefix, number){
   return Array.from(new Set(candidates));
 }
 
+function canonicalizeFr24Callsign(value){
+  const raw = String(value || '').toUpperCase().replace(/\s+/g, '');
+  if (!raw) return '';
+  const mapping = { AC: 'ACA', RV: 'ROU', QK: 'JZA', ACA: 'ACA', ROU: 'ROU', JZA: 'JZA' };
+  const threeLetter = raw.match(/^([A-Z]{3})(\d{1,4})$/);
+  if (threeLetter){
+    const mapped = mapping[threeLetter[1]] || threeLetter[1];
+    return `${mapped}${threeLetter[2]}`;
+  }
+  const twoLetter = raw.match(/^([A-Z]{2})(\d{1,4})$/);
+  if (twoLetter){
+    const mapped = mapping[twoLetter[1]] || twoLetter[1];
+    return `${mapped}${twoLetter[2]}`;
+  }
+  return raw;
+}
+
 function chunkArray(list, size){
   const items = Array.isArray(list) ? list : [];
   const chunks = [];
@@ -7189,7 +7213,9 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     const candidateIds = Array.isArray(candidate.callsignCandidates)
       ? candidate.callsignCandidates.map(normalizeCallsign).filter(Boolean)
       : [];
-    return ids.some((id) => candidateIds.includes(id));
+    const canonicalFlightIds = ids.map(canonicalizeFr24Callsign).filter(Boolean);
+    const canonicalCandidates = candidateIds.map(canonicalizeFr24Callsign).filter(Boolean);
+    return canonicalFlightIds.some((id) => canonicalCandidates.includes(id));
   };
 
   const summaryRequestDelayMs = 450;
@@ -7280,6 +7306,13 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
         lastSummaryError = err?.message || lastSummaryError;
       }
     }
+    const summarizeFlight = (flight) => {
+      if (!flight) return '';
+      const dep = normalizeAirportCode(flight?.departure?.iata || flight?.departure?.icao || flight?.departure?.code);
+      const arr = normalizeAirportCode(flight?.arrival?.iata || flight?.arrival?.icao || flight?.arrival?.code);
+      const tag = flight?.callsign || flight?.flightNumber || flight?.flightCode || '';
+      return `${tag || '—'} (${flight?.fr24Id || 'no id'} ${dep || '?'}-${arr || '?'})`;
+    };
     group.candidates.forEach((candidate) => {
       if (candidate.fr24Id) return;
       const filteredFlights = flights.filter((flight) => matchesCandidateCallsign(flight, candidate));
@@ -7291,6 +7324,21 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
           departureUtcMs: candidate.summaryDepartureUtcMs
         }
       );
+      const candidateCallsigns = Array.isArray(candidate.callsignCandidates)
+        ? candidate.callsignCandidates.map((value) => canonicalizeFr24Callsign(value)).filter(Boolean)
+        : [];
+      const flightList = (filteredFlights.length ? filteredFlights : flights)
+        .map(summarizeFlight)
+        .filter(Boolean);
+      recordCalendarFr24Debug('match', {
+        url: '',
+        responseText: [
+          `${candidate.dateKey} ${candidate.depCode}-${candidate.arrCode}`,
+          `Callsigns: ${candidateCallsigns.join(', ') || '—'}`,
+          `Summary flights: ${flightList.join(' | ') || '—'}`,
+          `Match: ${bestFlight?.fr24Id ? bestFlight.fr24Id : 'no match'}`
+        ].join('\n')
+      });
       if (bestFlight?.fr24Id){
         candidate.fr24Id = bestFlight.fr24Id;
         candidate.event.fr24Id = bestFlight.fr24Id;
@@ -7316,6 +7364,12 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     flightsById.get(candidate.fr24Id).push(candidate);
   });
   const flightIds = Array.from(flightsById.keys());
+  if (!flightIds.length){
+    recordCalendarFr24Debug('historic', {
+      url: '',
+      responseText: `Skipped historic: no fr24_id assigned (${candidates.length} candidates).`
+    });
+  }
   for (let i = 0; i < flightIds.length; i += FR24_HISTORIC_EVENTS_BATCH_SIZE){
     const batch = flightIds.slice(i, i + FR24_HISTORIC_EVENTS_BATCH_SIZE);
     let historicEvents = [];
