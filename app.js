@@ -6936,7 +6936,8 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes){
     setCalendarGateTimeSyncStatus(candidate.event, 'failed');
     return { updated: false, reason: 'timezoneMissing' };
   }
-  if (depLocal.dateKey !== candidate.dateKey){
+  const depOffset = getDateKeyDayOffset(depLocal.dateKey, candidate.dateKey);
+  if (!Number.isFinite(depOffset) || Math.abs(depOffset) > 1){
     setCalendarGateTimeSyncStatus(candidate.event, 'failed');
     return { updated: false, reason: 'dateMismatch' };
   }
@@ -7115,15 +7116,14 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
       message += `, failed ${failedCount}`;
       const noFr24Id = failureBuckets.noFr24Id;
       const noGateEvents = failureBuckets.missingGateEvents;
-      const other = failureBuckets.summaryError
-        + failureBuckets.historicError
-        + failureBuckets.timezoneMissing
-        + failureBuckets.dateMismatch
-        + failureBuckets.applyFailed;
       const parts = [];
       if (noFr24Id) parts.push(`no FR24 id: ${noFr24Id}`);
       if (noGateEvents) parts.push(`no gate events: ${noGateEvents}`);
-      if (other) parts.push(`other: ${other}`);
+      if (failureBuckets.summaryError) parts.push(`summary error: ${failureBuckets.summaryError}`);
+      if (failureBuckets.historicError) parts.push(`historic error: ${failureBuckets.historicError}`);
+      if (failureBuckets.timezoneMissing) parts.push(`timezone missing: ${failureBuckets.timezoneMissing}`);
+      if (failureBuckets.dateMismatch) parts.push(`date mismatch: ${failureBuckets.dateMismatch}`);
+      if (failureBuckets.applyFailed) parts.push(`apply failed: ${failureBuckets.applyFailed}`);
       if (parts.length){
         message += ` (${parts.join(', ')})`;
       }
