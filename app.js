@@ -3046,8 +3046,17 @@ function mapFr24LiveSummaryFlight(entry){
 
 function mapFr24LightSummaryFlight(entry){
   if (!entry) return null;
-  const origin = entry?.airport?.origin || entry?.airport?.departure || entry?.origin || entry?.departure;
-  const destination = entry?.airport?.destination || entry?.airport?.arrival || entry?.airport?.destination_airport || entry?.destination || entry?.arrival;
+  const origin = entry?.airport?.origin
+    || entry?.airport?.departure
+    || entry?.origin
+    || entry?.departure
+    || entry?.orig;
+  const destination = entry?.airport?.destination
+    || entry?.airport?.arrival
+    || entry?.airport?.destination_airport
+    || entry?.destination
+    || entry?.arrival
+    || entry?.dest;
   const departure = mapFr24Airport(
     origin && typeof origin === 'object' && !Array.isArray(origin)
       ? origin
@@ -3927,9 +3936,8 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, fromMs, t
   }
   const params = {};
   if (Number.isFinite(fromMs) && Number.isFinite(toMs)){
-    const paddingMs = 6 * 60 * 60 * 1000;
-    params.flight_datetime_from = formatFr24DateTimeUtc(new Date(fromMs - paddingMs));
-    params.flight_datetime_to = formatFr24DateTimeUtc(new Date(toMs + paddingMs));
+    params.flight_datetime_from = formatFr24DateTimeUtc(new Date(fromMs));
+    params.flight_datetime_to = formatFr24DateTimeUtc(new Date(toMs));
   }
   if (normalizedReg) params.registrations = normalizedReg;
   if (normalizedFlight){
@@ -3985,7 +3993,20 @@ async function fetchFr24HistoricFlightEventsLight(flightIds, eventTypes = FR24_G
   if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
   const json = await resp.json();
   const rows = extractFr24DataRows(json);
-  return rows.map(normalizeFr24HistoricEvent).filter(Boolean);
+  const flattened = [];
+  rows.forEach((row) => {
+    if (!row || typeof row !== 'object') return;
+    const flightId = normalizeFr24FlightId(row);
+    if (Array.isArray(row.events)){
+      row.events.forEach((event) => {
+        if (!event || typeof event !== 'object') return;
+        flattened.push({ ...event, fr24_id: flightId });
+      });
+    } else {
+      flattened.push(row);
+    }
+  });
+  return flattened.map(normalizeFr24HistoricEvent).filter(Boolean);
 }
 
 function mapFr24LivePosition(entry){
@@ -6819,6 +6840,26 @@ function getCalendarEventDepartureUtcMs(event, dateKey, depCode){
   }, zone);
 }
 
+function getCalendarEventArrivalUtcMs(event, dateKey, arrCode){
+  const arrMinutes = Number(event?.arrivalMinutes);
+  if (!Number.isFinite(arrMinutes)) return NaN;
+  const depMinutes = Number(event?.departureMinutes);
+  const parts = parseDateKeyParts(dateKey);
+  if (!parts) return NaN;
+  const zone = getCachedAirportTimeZone(arrCode);
+  if (!zone) return NaN;
+  let arrivalMinutes = arrMinutes;
+  if (Number.isFinite(depMinutes) && arrMinutes < depMinutes){
+    arrivalMinutes = arrMinutes + 1440;
+  }
+  return getUtcMsForZonedLocalTime({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    minutes: arrivalMinutes
+  }, zone);
+}
+
 function selectBestFr24SummaryFlight(flights, { depCode, arrCode, departureUtcMs } = {}){
   const dep = normalizeAirportCode(depCode);
   const arr = normalizeAirportCode(arrCode);
@@ -7001,11 +7042,15 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
   for (const candidate of candidates){
     if (candidate.fr24Id) continue;
     const departureUtcMs = getCalendarEventDepartureUtcMs(candidate.event, candidate.dateKey, candidate.depCode);
+    const arrivalUtcMs = getCalendarEventArrivalUtcMs(candidate.event, candidate.dateKey, candidate.arrCode);
     let fromMs = NaN;
     let toMs = NaN;
-    if (Number.isFinite(departureUtcMs)){
-      fromMs = departureUtcMs - (12 * 60 * 60 * 1000);
-      toMs = departureUtcMs + (12 * 60 * 60 * 1000);
+    if (Number.isFinite(departureUtcMs) && Number.isFinite(arrivalUtcMs)){
+      fromMs = departureUtcMs - (6 * 60 * 60 * 1000);
+      toMs = arrivalUtcMs + (6 * 60 * 60 * 1000);
+    } else if (Number.isFinite(departureUtcMs)){
+      fromMs = departureUtcMs - (6 * 60 * 60 * 1000);
+      toMs = departureUtcMs + (6 * 60 * 60 * 1000);
     } else {
       const startMs = getDateKeyStartMs(candidate.dateKey);
       if (Number.isFinite(startMs)){
