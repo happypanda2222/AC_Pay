@@ -259,6 +259,9 @@
     .btn-primary{background:var(--btn-primary);color:var(--btn-primary-text);border:none;border-radius:12px;padding:14px 16px;font-weight:800;cursor:pointer;box-shadow:var(--btn-primary-shadow)}
     .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:6px}
     .calendar-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .calendar-debug{margin-top:12px;border:1px solid #1f2633;border-radius:12px;padding:12px;background:#0f1218}
+    .calendar-debug-grid{display:grid;gap:12px}
+    .calendar-debug pre{margin:8px 0 0;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.4;max-height:240px;overflow:auto;border:1px solid #1f2633;border-radius:8px;padding:8px;background:#0b121c}
     .metric-card{background:#0c101a;border:1px solid #1f2633;border-radius:12px;padding:12px}
     .metric-label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-bottom:4px}
     .metric-value{font-size:22px;font-weight:900;letter-spacing:.2px}
@@ -2294,6 +2297,19 @@
                   <span class="calendar-ios-toggle-thumb"></span>
                 </button>
               </div>
+              <details class="drawer calendar-debug" id="calendar-fr24-debug">
+                <summary>FR24 troubleshooting</summary>
+                <div class="calendar-debug-grid">
+                  <div>
+                    <div class="metric-label">Flight Summary Light</div>
+                    <pre id="calendar-fr24-debug-summary">No FR24 summary requests yet.</pre>
+                  </div>
+                  <div>
+                    <div class="metric-label">Historic Flight Events Light</div>
+                    <pre id="calendar-fr24-debug-historic">No FR24 historic requests yet.</pre>
+                  </div>
+                </div>
+              </details>
             </div>
             <div id="modern-calendar-detail" class="hidden">
               <div class="calendar-detail">
