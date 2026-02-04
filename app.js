@@ -110,9 +110,11 @@ const FR24_GATE_EVENT_TYPE_ALIASES = {
   gate_out: 'gate_departure',
   offblock: 'gate_departure',
   off_block: 'gate_departure',
+  gate_departed: 'gate_departure',
   gate_in: 'gate_arrival',
   onblock: 'gate_arrival',
-  on_block: 'gate_arrival'
+  on_block: 'gate_arrival',
+  gate_arrived: 'gate_arrival'
 };
 const CALENDAR_GATE_SYNC_LOOKBACK_MONTHS = 2;
 const CALENDAR_GATE_SYNC_FAILURE_RETRY_MS = 24 * 60 * 60 * 1000;
@@ -521,6 +523,15 @@ function formatFr24DateTimeUtc(date){
 
 function parseFr24Date(value){
   if (value === null || value === undefined) return null;
+  if (typeof value === 'number' && Number.isFinite(value)){
+    return normalizeFr24Timestamp(value);
+  }
+  if (typeof value === 'string'){
+    const trimmed = value.trim();
+    if (trimmed && /^\d+$/.test(trimmed)){
+      return normalizeFr24Timestamp(Number(trimmed));
+    }
+  }
   const parsed = Date.parse(value);
   if (Number.isFinite(parsed)) return Math.round(parsed / 1000);
   return normalizeFr24Timestamp(value);
@@ -545,15 +556,19 @@ function normalizeFr24HistoricEvent(entry){
     ?? entry.eventType
     ?? entry.type
     ?? entry.event?.type
+    ?? entry.event?.event_type
+    ?? entry.event?.eventType
     ?? ''
   );
-  const timestamp = normalizeFr24Timestamp(
+  const timestamp = parseFr24Date(
     entry.timestamp
     ?? entry.event_time
     ?? entry.eventTimestamp
     ?? entry.time
     ?? entry.ts
     ?? entry.event?.timestamp
+    ?? entry.event?.event_time
+    ?? entry.event?.eventTime
   );
   if (!flightId || !type || !Number.isFinite(timestamp)) return null;
   return { flightId, type, timestamp };
@@ -2934,7 +2949,12 @@ function extractFr24FlightId(entry){
     ?? entry?.flight_id
     ?? entry?.flightId
     ?? entry?.fr24Id
-    ?? entry?.id;
+    ?? entry?.id
+    ?? entry?.flight?.fr24_id
+    ?? entry?.flight?.flight_id
+    ?? entry?.flight?.id
+    ?? entry?.identification?.id
+    ?? entry?.identification?.row_id;
   if (raw === null || raw === undefined) return null;
   const text = String(raw).trim();
   return text ? text : null;
@@ -3026,14 +3046,26 @@ function mapFr24LiveSummaryFlight(entry){
 
 function mapFr24LightSummaryFlight(entry){
   if (!entry) return null;
-  const departure = mapFr24Airport(entry?.airport?.origin || entry?.airport?.departure || {
-    icao: entry.origin_icao ?? entry.orig_icao ?? entry.departure_icao ?? entry.departure_icao_actual,
-    iata: entry.origin_iata ?? entry.orig_iata ?? entry.departure_iata ?? entry.departure_iata_actual
-  });
-  const arrival = mapFr24Airport(entry?.airport?.destination || entry?.airport?.arrival || entry?.airport?.destination_airport || {
-    icao: entry.destination_icao_actual ?? entry.destination_icao ?? entry.dest_icao_actual ?? entry.dest_icao,
-    iata: entry.destination_iata_actual ?? entry.destination_iata ?? entry.dest_iata_actual ?? entry.dest_iata
-  });
+  const origin = entry?.airport?.origin || entry?.airport?.departure || entry?.origin || entry?.departure;
+  const destination = entry?.airport?.destination || entry?.airport?.arrival || entry?.airport?.destination_airport || entry?.destination || entry?.arrival;
+  const departure = mapFr24Airport(
+    origin && typeof origin === 'object' && !Array.isArray(origin)
+      ? origin
+      : {
+        icao: entry.origin_icao ?? entry.orig_icao ?? entry.departure_icao ?? entry.departure_icao_actual,
+        iata: entry.origin_iata ?? entry.orig_iata ?? entry.departure_iata ?? entry.departure_iata_actual,
+        code: typeof origin === 'string' ? origin : undefined
+      }
+  );
+  const arrival = mapFr24Airport(
+    destination && typeof destination === 'object' && !Array.isArray(destination)
+      ? destination
+      : {
+        icao: entry.destination_icao_actual ?? entry.destination_icao ?? entry.dest_icao_actual ?? entry.dest_icao,
+        iata: entry.destination_iata_actual ?? entry.destination_iata ?? entry.dest_iata_actual ?? entry.dest_iata,
+        code: typeof destination === 'string' ? destination : undefined
+      }
+  );
   const departureTime = parseFr24Date(
     entry.datetime_takeoff
     ?? entry.first_seen
