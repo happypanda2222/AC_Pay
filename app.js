@@ -3925,7 +3925,7 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, fromMs, t
   if (requiresAuth && !hasAuthHeader){
     throw new Error('FlightRadar24 API token not configured. Add it in the FlightRadar24 API settings.');
   }
-  const params = { limit: 200 };
+  const params = {};
   if (Number.isFinite(fromMs) && Number.isFinite(toMs)){
     const paddingMs = 6 * 60 * 60 * 1000;
     params.flight_datetime_from = formatFr24DateTimeUtc(new Date(fromMs - paddingMs));
@@ -3945,7 +3945,16 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, fromMs, t
   }
   const url = buildFr24Url('flight-summary/light', params);
   const resp = await fetchFr24WithAuthFallback(url, { cache: 'no-store' });
-  if (!resp.ok) throw new Error(`FlightRadar24 error ${resp.status}`);
+  if (!resp.ok){
+    let detail = '';
+    try {
+      detail = await resp.text();
+    } catch (err){
+      detail = '';
+    }
+    const suffix = detail ? `: ${detail}` : '';
+    throw new Error(`FlightRadar24 error ${resp.status}${suffix}`);
+  }
   const json = await resp.json();
   const rows = extractFr24DataRows(json);
   const flights = rows.map(mapFr24LightSummaryFlight).filter(Boolean);
@@ -6978,6 +6987,7 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     dateMismatch: 0,
     applyFailed: 0
   };
+  let lastSummaryError = '';
   const summaryCache = new Map();
   if (force){
     candidates.forEach((candidate) => {
@@ -7027,6 +7037,7 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
         } catch (err){
           console.warn('FR24 flight summary lookup failed', err);
           summaryErrors += 1;
+          lastSummaryError = err?.message || lastSummaryError;
           bestFlight = null;
         }
         summaryCache.set(cacheKey, bestFlight);
@@ -7120,6 +7131,9 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
       if (noFr24Id) parts.push(`no FR24 id: ${noFr24Id}`);
       if (noGateEvents) parts.push(`no gate events: ${noGateEvents}`);
       if (failureBuckets.summaryError) parts.push(`summary error: ${failureBuckets.summaryError}`);
+      if (failureBuckets.summaryError && lastSummaryError){
+        parts.push(`summary detail: ${lastSummaryError}`);
+      }
       if (failureBuckets.historicError) parts.push(`historic error: ${failureBuckets.historicError}`);
       if (failureBuckets.timezoneMissing) parts.push(`timezone missing: ${failureBuckets.timezoneMissing}`);
       if (failureBuckets.dateMismatch) parts.push(`date mismatch: ${failureBuckets.dateMismatch}`);
