@@ -106,6 +106,18 @@ const FLIGHTRADAR24_DEFAULT_VERSION = 'v1';
 const FLIGHTRADAR24_PUBLIC_BASE = 'https://api.flightradar24.com';
 const FR24_HISTORIC_EVENTS_BATCH_SIZE = 15;
 const FR24_GATE_EVENT_TYPES = ['gate_departure', 'gate_arrival'];
+const FR24_GATE_EVENT_TYPE_ALIASES = {
+  gate_out: 'gate_departure',
+  offblock: 'gate_departure',
+  off_block: 'gate_departure',
+  gate_in: 'gate_arrival',
+  onblock: 'gate_arrival',
+  on_block: 'gate_arrival'
+};
+const FR24_GATE_EVENT_TYPES_REQUEST = Array.from(new Set([
+  ...FR24_GATE_EVENT_TYPES,
+  ...Object.keys(FR24_GATE_EVENT_TYPE_ALIASES)
+]));
 const CALENDAR_GATE_SYNC_LOOKBACK_MONTHS = 2;
 const CALENDAR_GATE_SYNC_FAILURE_RETRY_MS = 24 * 60 * 60 * 1000;
 const FIN_FLIGHT_CACHE = new Map();
@@ -486,6 +498,8 @@ function extractFr24DataRows(payload){
   for (const candidate of candidates){
     if (!candidate || typeof candidate !== 'object') continue;
     if (Array.isArray(candidate)) return candidate;
+    if (Array.isArray(candidate.flights)) return candidate.flights;
+    if (Array.isArray(candidate.events)) return candidate.events;
     if (Array.isArray(candidate.data)) return candidate.data;
     if (candidate.data && typeof candidate.data === 'object' && !Array.isArray(candidate.data)){
       const values = Object.values(candidate.data).filter((item) => item !== undefined && item !== null);
@@ -516,18 +530,27 @@ function parseFr24Date(value){
   return normalizeFr24Timestamp(value);
 }
 
+function normalizeFr24GateEventType(value){
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return '';
+  const compact = raw.replace(/[\s-]+/g, '_');
+  return FR24_GATE_EVENT_TYPE_ALIASES[compact] || compact;
+}
+
 function normalizeFr24HistoricEvent(entry){
   if (!entry || typeof entry !== 'object') return null;
-  const flightId = extractFr24FlightId(entry)
-    || extractFr24FlightId(entry?.flight)
-    || extractFr24FlightId(entry?.flight_id);
-  const type = String(
+  const flightId = normalizeFr24FlightId(entry)
+    || normalizeFr24FlightId(entry?.flight)
+    || normalizeFr24FlightId(entry?.flight?.id)
+    || normalizeFr24FlightId(entry?.flight_id)
+    || normalizeFr24FlightId(entry?.event?.flight_id);
+  const type = normalizeFr24GateEventType(
     entry.event_type
     ?? entry.eventType
     ?? entry.type
     ?? entry.event?.type
     ?? ''
-  ).trim().toLowerCase();
+  );
   const timestamp = normalizeFr24Timestamp(
     entry.timestamp
     ?? entry.event_time
@@ -2921,6 +2944,14 @@ function extractFr24FlightId(entry){
   return text ? text : null;
 }
 
+function normalizeFr24FlightId(value){
+  const fromObject = extractFr24FlightId(value);
+  if (fromObject) return fromObject;
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
 function formatAirportCode(airport, mode = finAirportCodeMode){
   if (!airport) return '—';
   const preferred = mode === 'iata' ? (airport.iata || airport.icao || airport.code) : (airport.icao || airport.iata || airport.code);
@@ -2976,7 +3007,12 @@ function mapFr24LiveSummaryFlight(entry){
   const flightNumber = entry.callsign || entry.call_sign || entry.flight || entry.flight_number || '';
   const registration = normalizeRegistration(entry.reg || entry.registration || entry.aircraft_registration);
   const icao24 = normalizeRegistration(entry.hex || entry.icao24 || entry.mode_s);
-  const fr24Id = extractFr24FlightId(entry);
+  const fr24Id = normalizeFr24FlightId(entry)
+    || normalizeFr24FlightId(entry?.flight)
+    || normalizeFr24FlightId(entry?.identification)
+    || normalizeFr24FlightId(entry?.flight?.identification)
+    || normalizeFr24FlightId(entry?.flight?.id)
+    || normalizeFr24FlightId(entry?.identification?.id);
   if (!departure.code && !arrival.code && departureTime === null && arrivalTime === null && !flightNumber) return null;
   return {
     departure,
@@ -3827,7 +3863,7 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, fromMs, t
   return { flights, registration: normalizedReg, flight: normalizedFlight };
 }
 
-async function fetchFr24HistoricFlightEventsLight(flightIds, eventTypes = FR24_GATE_EVENT_TYPES){
+async function fetchFr24HistoricFlightEventsLight(flightIds, eventTypes = FR24_GATE_EVENT_TYPES_REQUEST){
   const ids = Array.isArray(flightIds)
     ? flightIds.map((id) => String(id || '').trim()).filter(Boolean)
     : [];
@@ -6790,27 +6826,35 @@ function mapHistoricGateEvents(events){
 }
 
 function applyGateTimesToCalendarCandidate(candidate, gateTimes){
-  if (!candidate || !gateTimes) return false;
-  if (!Number.isFinite(gateTimes.gate_departure) || !Number.isFinite(gateTimes.gate_arrival)){
+  if (!candidate){
+    return { updated: false, reason: 'applyFailed' };
+  }
+  if (!gateTimes
+    || !Number.isFinite(gateTimes.gate_departure)
+    || !Number.isFinite(gateTimes.gate_arrival)){
     setCalendarGateTimeSyncStatus(candidate.event, 'failed');
-    return false;
+    return { updated: false, reason: 'missingGateEvents' };
   }
   const depZone = getCachedAirportTimeZone(candidate.depCode);
   const arrZone = getCachedAirportTimeZone(candidate.arrCode);
+  if (!depZone || !arrZone){
+    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    return { updated: false, reason: 'timezoneMissing' };
+  }
   const depLocal = getLocalMinutesFromUtc(gateTimes.gate_departure, depZone);
   const arrLocal = getLocalMinutesFromUtc(gateTimes.gate_arrival, arrZone);
   if (!depLocal || !arrLocal){
     setCalendarGateTimeSyncStatus(candidate.event, 'failed');
-    return false;
+    return { updated: false, reason: 'timezoneMissing' };
   }
   if (depLocal.dateKey !== candidate.dateKey){
     setCalendarGateTimeSyncStatus(candidate.event, 'failed');
-    return false;
+    return { updated: false, reason: 'dateMismatch' };
   }
   const dayOffset = getDateKeyDayOffset(arrLocal.dateKey, depLocal.dateKey);
   if (!Number.isFinite(dayOffset) || dayOffset < 0 || dayOffset > 1){
     setCalendarGateTimeSyncStatus(candidate.event, 'failed');
-    return false;
+    return { updated: false, reason: 'dateMismatch' };
   }
   const result = applyCalendarEventTimingUpdate(
     { event: candidate.event, dateKey: candidate.dateKey },
@@ -6818,10 +6862,10 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes){
   );
   if (!result?.updated){
     setCalendarGateTimeSyncStatus(candidate.event, 'failed');
-    return false;
+    return { updated: false, reason: 'applyFailed' };
   }
   setCalendarGateTimeSyncStatus(candidate.event, 'success');
-  return true;
+  return { updated: true, reason: null };
 }
 
 async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false } = {}){
@@ -6835,6 +6879,15 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
   let mutated = false;
   let updatedCount = 0;
   let failedCount = 0;
+  const failureBuckets = {
+    noFr24Id: 0,
+    summaryError: 0,
+    historicError: 0,
+    missingGateEvents: 0,
+    timezoneMissing: 0,
+    dateMismatch: 0,
+    applyFailed: 0
+  };
   const summaryCache = new Map();
   for (const candidate of candidates){
     if (candidate.fr24Id) continue;
@@ -6852,12 +6905,15 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
       }
     }
     let resolvedId = null;
+    let summaryErrors = 0;
+    let summaryAttempts = 0;
     for (const callsign of candidate.callsignCandidates){
       const cacheKey = `${callsign}|${fromMs}|${toMs}|${candidate.depCode}|${candidate.arrCode}`;
       let bestFlight = null;
       if (summaryCache.has(cacheKey)){
         bestFlight = summaryCache.get(cacheKey);
       } else {
+        summaryAttempts += 1;
         try {
           const summary = await fetchFr24FlightSummaryForWindow({
             flight: callsign,
@@ -6871,6 +6927,7 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
           });
         } catch (err){
           console.warn('FR24 flight summary lookup failed', err);
+          summaryErrors += 1;
           bestFlight = null;
         }
         summaryCache.set(cacheKey, bestFlight);
@@ -6887,6 +6944,11 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     } else {
       setCalendarGateTimeSyncStatus(candidate.event, 'failed');
       failedCount += 1;
+      if (summaryAttempts && summaryErrors === summaryAttempts){
+        failureBuckets.summaryError += 1;
+      } else {
+        failureBuckets.noFr24Id += 1;
+      }
       mutated = true;
     }
   }
@@ -6903,7 +6965,7 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     const batch = flightIds.slice(i, i + FR24_HISTORIC_EVENTS_BATCH_SIZE);
     let historicEvents = [];
     try {
-      historicEvents = await fetchFr24HistoricFlightEventsLight(batch, FR24_GATE_EVENT_TYPES);
+      historicEvents = await fetchFr24HistoricFlightEventsLight(batch, FR24_GATE_EVENT_TYPES_REQUEST);
     } catch (err){
       console.warn('FR24 historic events lookup failed', err);
       batch.forEach((flightId) => {
@@ -6911,6 +6973,7 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
         list.forEach((candidate) => {
           setCalendarGateTimeSyncStatus(candidate.event, 'failed');
           failedCount += 1;
+          failureBuckets.historicError += 1;
           mutated = true;
         });
       });
@@ -6921,11 +6984,17 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
       const gateTimes = gateMap.get(flightId);
       const list = flightsById.get(flightId) || [];
       list.forEach((candidate) => {
-        const updated = applyGateTimesToCalendarCandidate(candidate, gateTimes);
-        if (updated){
+        const outcome = applyGateTimesToCalendarCandidate(candidate, gateTimes);
+        if (outcome?.updated){
           updatedCount += 1;
         } else {
           failedCount += 1;
+          const reason = outcome?.reason || 'applyFailed';
+          if (failureBuckets[reason] !== undefined){
+            failureBuckets[reason] += 1;
+          } else {
+            failureBuckets.applyFailed += 1;
+          }
         }
         mutated = true;
       });
@@ -6943,7 +7012,25 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     refreshCalendarBlockGrowthDetail();
   }
   if (reportStatus){
-    setCalendarStatus(`Updated ${updatedCount} flight${updatedCount === 1 ? '' : 's'}${failedCount ? `, failed ${failedCount}` : ''}.`);
+    let message = `Updated ${updatedCount} flight${updatedCount === 1 ? '' : 's'}`;
+    if (failedCount){
+      message += `, failed ${failedCount}`;
+      const noFr24Id = failureBuckets.noFr24Id;
+      const noGateEvents = failureBuckets.missingGateEvents;
+      const other = failureBuckets.summaryError
+        + failureBuckets.historicError
+        + failureBuckets.timezoneMissing
+        + failureBuckets.dateMismatch
+        + failureBuckets.applyFailed;
+      const parts = [];
+      if (noFr24Id) parts.push(`no FR24 id: ${noFr24Id}`);
+      if (noGateEvents) parts.push(`no gate events: ${noGateEvents}`);
+      if (other) parts.push(`other: ${other}`);
+      if (parts.length){
+        message += ` (${parts.join(', ')})`;
+      }
+    }
+    setCalendarStatus(`${message}.`);
   }
   return { mutated, updatedCount, failedCount };
 }
