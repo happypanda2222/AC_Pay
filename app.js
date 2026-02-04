@@ -257,6 +257,12 @@ function cloneFetchOptions(options){
   return cloned;
 }
 
+function sleepMs(duration){
+  const ms = Number(duration);
+  if (!Number.isFinite(ms) || ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function mergeHeaderObjects(base = {}, extra = {}){
   const headers = {};
   const apply = (source) => {
@@ -3981,7 +3987,20 @@ async function fetchFr24FlightSummaryForWindow({ flight, registration, callsigns
   recordCalendarFr24Debug('summary', { url, status: resp.status, responseText: rawText });
   if (!resp.ok){
     const suffix = rawText ? `: ${rawText}` : '';
-    throw new Error(`FlightRadar24 error ${resp.status}${suffix}`);
+    const err = new Error(`FlightRadar24 error ${resp.status}${suffix}`);
+    err.status = resp.status;
+    const retryAfter = resp.headers?.get ? resp.headers.get('Retry-After') : null;
+    if (retryAfter){
+      let retryAfterSeconds = Number(retryAfter);
+      if (!Number.isFinite(retryAfterSeconds)){
+        const parsed = Date.parse(retryAfter);
+        if (Number.isFinite(parsed)){
+          retryAfterSeconds = Math.max(0, Math.ceil((parsed - Date.now()) / 1000));
+        }
+      }
+      if (Number.isFinite(retryAfterSeconds)) err.retryAfterSeconds = retryAfterSeconds;
+    }
+    throw err;
   }
   let json = {};
   try {
@@ -7181,20 +7200,46 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     return ids.some((id) => candidateIds.includes(id));
   };
 
+  const summaryRequestDelayMs = 450;
+  const summaryRetryMax = 1;
+  let lastSummaryRequestAt = 0;
+  const waitForSummarySlot = async () => {
+    const now = Date.now();
+    const elapsed = now - lastSummaryRequestAt;
+    if (elapsed < summaryRequestDelayMs){
+      await sleepMs(summaryRequestDelayMs - elapsed);
+    }
+    lastSummaryRequestAt = Date.now();
+  };
+  const fetchSummaryWithBackoff = async (payload) => {
+    let lastError = null;
+    for (let attempt = 0; attempt <= summaryRetryMax; attempt += 1){
+      await waitForSummarySlot();
+      try {
+        return await fetchFr24FlightSummaryForWindow(payload);
+      } catch (err){
+        lastError = err;
+        const status = Number(err?.status || err?.statusCode || err?.httpStatus);
+        const message = String(err?.message || '');
+        const is429 = status === 429 || message.includes(' 429');
+        if (!is429 || attempt >= summaryRetryMax) break;
+        const retryAfterSeconds = Number(err?.retryAfterSeconds ?? err?.retryAfter);
+        const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? retryAfterSeconds * 1000
+          : 1500;
+        await sleepMs(retryDelayMs);
+      }
+    }
+    throw lastError;
+  };
+
   for (const group of summaryGroups.values()){
     const callsignSet = new Set();
-    const flightSet = new Set();
     group.candidates.forEach((candidate) => {
       (candidate.callsignCandidates || []).forEach((value) => {
         const code = normalizeCallsign(value);
         if (!code) return;
-        if (/^[A-Z]{3}\d{1,4}$/.test(code)){
-          callsignSet.add(code);
-        } else if (/^[A-Z]{2}\d{1,4}$/.test(code)){
-          flightSet.add(code);
-        } else {
-          callsignSet.add(code);
-        }
+        callsignSet.add(code);
       });
     });
     let flights = [];
@@ -7209,24 +7254,8 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     for (const batch of callsignBatches){
       groupSummaryAttempts += 1;
       try {
-        const summary = await fetchFr24FlightSummaryForWindow({
+        const summary = await fetchSummaryWithBackoff({
           callsigns: batch,
-          fromMs: group.fromMs,
-          toMs: group.toMs
-        });
-        pushFlights(summary?.flights);
-      } catch (err){
-        console.warn('FR24 flight summary lookup failed', err);
-        groupSummaryErrors += 1;
-        lastSummaryError = err?.message || lastSummaryError;
-      }
-    }
-    const flightBatches = chunkArray(Array.from(flightSet), 15);
-    for (const batch of flightBatches){
-      groupSummaryAttempts += 1;
-      try {
-        const summary = await fetchFr24FlightSummaryForWindow({
-          flights: batch,
           fromMs: group.fromMs,
           toMs: group.toMs
         });
