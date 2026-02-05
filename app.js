@@ -119,9 +119,17 @@ const FR24_GATE_EVENT_TYPE_ALIASES = {
 const FR24_GATE_EVENT_TYPES_REQUEST = [...FR24_GATE_EVENT_TYPES];
 const AIRLABS_FLIGHT_LOOKUP_BASE = 'https://airlabs.co/api/v9/flight';
 const AIRLABS_CALENDAR_API_KEY = 'f00a56b8-3215-4379-ba70-4164828ba806';
+const AEROAPI_CALENDAR_BASE = 'https://aeroapi.flightaware.com/aeroapi';
+const AEROAPI_CALENDAR_API_KEY = 'k3Jc2ketr1GZ03GKGMG7Bu3Lh03ID974';
 const CALENDAR_AIRLABS_REQUEST_DELAY_MS = 300;
-const CALENDAR_GATE_SYNC_LOOKBACK_DAYS = 7;
-const CALENDAR_GATE_SYNC_FAILURE_RETRY_MS = 24 * 60 * 60 * 1000;
+const CALENDAR_AEROAPI_REQUEST_DELAY_MS = 350;
+const CALENDAR_GATE_SYNC_LOOKBACK_DAYS = 14;
+const CALENDAR_GATE_SYNC_AIRLABS_MAX_AGE_MS = 20 * 60 * 60 * 1000;
+const CALENDAR_GATE_SYNC_AEROAPI_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const CALENDAR_GATE_SYNC_RETRY_DELAY_MS = 12 * 60 * 60 * 1000;
+const CALENDAR_GATE_SYNC_MAX_ATTEMPTS = 2;
+const CALENDAR_AEROAPI_MATCH_WINDOW_MS = 24 * 60 * 60 * 1000;
+const CALENDAR_AEROAPI_SEARCH_WINDOW_MS = 16 * 60 * 60 * 1000;
 const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
 const CALENDAR_STORAGE_KEY = 'acpay.calendar.schedule';
@@ -653,12 +661,6 @@ function handleFr24ConfigSave(){
   });
   setFr24AuthMode('auto');
   setFr24ProxyBase(proxyInput?.value ?? '');
-  if (clearCalendarGateTimeSyncStatuses()){
-    saveCalendarState();
-  }
-  calendarGateSyncLastMonthKey = '';
-  calendarGateSyncLastRunAt = 0;
-  scheduleCalendarGateTimeAutoSync();
   if (statusEl){
     const authSummary = saved.apiToken ? 'token' : 'no credentials';
     statusEl.textContent = `Saved. Using ${saved.baseUrl} with ${authSummary}.`;
@@ -4883,6 +4885,7 @@ let calendarGateSyncTimer = null;
 let calendarGateSyncInFlight = false;
 let calendarGateSyncLastMonthKey = '';
 let calendarGateSyncLastRunAt = 0;
+let calendarInitialCloudLoadSettled = false;
 let calendarHotelBarResizeObserver = null;
 const calendarWeatherCache = new Map();
 const calendarWeatherState = { weatherMap: {} };
@@ -6638,17 +6641,17 @@ function renderCalendarFr24Debug(){
   if (summaryEl){
     summaryEl.textContent = calendarFr24Debug.summary.length
       ? calendarFr24Debug.summary.map(formatCalendarFr24DebugEntry).join('\n\n---\n\n')
-      : 'No AirLabs lookup requests yet.';
+      : 'No calendar flight lookup requests yet.';
   }
   if (historicEl){
     historicEl.textContent = calendarFr24Debug.historic.length
       ? calendarFr24Debug.historic.map(formatCalendarFr24DebugEntry).join('\n\n---\n\n')
-      : 'No AirLabs responses yet.';
+      : 'No calendar provider responses yet.';
   }
   if (matchEl){
     matchEl.textContent = calendarFr24Debug.match.length
       ? calendarFr24Debug.match.map(formatCalendarFr24DebugEntry).join('\n\n---\n\n')
-      : 'No AirLabs match results yet.';
+      : 'No calendar match results yet.';
   }
 }
 
@@ -6875,7 +6878,53 @@ function doesCalendarMonthOverlapGateSyncWindow(monthKey){
 }
 
 function hasRecentCalendarGateSyncFailure(event, nowMs = Date.now()){
-  return false;
+  if (!event || typeof event !== 'object') return false;
+  const sync = event.gateTimeSync;
+  if (!sync || typeof sync !== 'object') return false;
+  if (String(sync.status || '').toLowerCase() !== 'failed') return false;
+  const attemptCount = Number(sync.attemptCount);
+  if (sync.retryExhausted || (Number.isFinite(attemptCount) && attemptCount >= CALENDAR_GATE_SYNC_MAX_ATTEMPTS)){
+    return true;
+  }
+  const nextRetryAt = Number(sync.nextRetryAt);
+  return Number.isFinite(nextRetryAt) && nextRetryAt > nowMs;
+}
+
+function getCalendarGateSyncAttemptCount(event){
+  const attempts = Number(event?.gateTimeSync?.attemptCount);
+  if (!Number.isFinite(attempts) || attempts <= 0) return 0;
+  return Math.max(0, Math.trunc(attempts));
+}
+
+function setCalendarGateTimeSyncFailure(event, { provider = '', reason = 'applyFailed', nowMs = Date.now() } = {}){
+  if (!event || typeof event !== 'object') return;
+  const nextAttemptCount = Math.min(
+    CALENDAR_GATE_SYNC_MAX_ATTEMPTS,
+    getCalendarGateSyncAttemptCount(event) + 1
+  );
+  const retryExhausted = nextAttemptCount >= CALENDAR_GATE_SYNC_MAX_ATTEMPTS;
+  event.gateTimeSync = {
+    status: 'failed',
+    provider: String(provider || '').trim().toLowerCase() || null,
+    reason: String(reason || '').trim() || 'applyFailed',
+    attemptedAt: nowMs,
+    attemptCount: nextAttemptCount,
+    nextRetryAt: retryExhausted ? null : (nowMs + CALENDAR_GATE_SYNC_RETRY_DELAY_MS),
+    retryExhausted
+  };
+}
+
+function setCalendarGateTimeSyncSuccess(event, { provider = '', nowMs = Date.now() } = {}){
+  if (!event || typeof event !== 'object') return;
+  event.gateTimeSync = {
+    status: 'success',
+    provider: String(provider || '').trim().toLowerCase() || null,
+    reason: null,
+    attemptedAt: nowMs,
+    attemptCount: getCalendarGateSyncAttemptCount(event),
+    nextRetryAt: null,
+    retryExhausted: false
+  };
 }
 
 function clearCalendarGateTimeSyncStatuses(eventsByDate = calendarState.eventsByDate){
@@ -6930,7 +6979,41 @@ function isCalendarAirlabsSyncReady(){
   return Boolean(String(AIRLABS_CALENDAR_API_KEY || '').trim());
 }
 
+function isCalendarAeroapiSyncReady(){
+  return Boolean(String(AEROAPI_CALENDAR_API_KEY || '').trim());
+}
+
+function isCalendarGateSyncReady(){
+  return isCalendarAirlabsSyncReady() || isCalendarAeroapiSyncReady();
+}
+
+function getCalendarEventArrivalMs(event, dateKey){
+  const normalizedDateKey = normalizeCalendarDateKey(dateKey || event?.date);
+  if (!normalizedDateKey) return NaN;
+  const dayStartMs = getDateKeyStartMs(normalizedDateKey);
+  if (!Number.isFinite(dayStartMs)) return NaN;
+  const arrivalMinutes = Number(event?.arrivalMinutes);
+  if (!Number.isFinite(arrivalMinutes)) return NaN;
+  const departureMinutes = Number(event?.departureMinutes);
+  const overnightMinutes = Number.isFinite(departureMinutes) && arrivalMinutes < departureMinutes
+    ? arrivalMinutes + 1440
+    : arrivalMinutes;
+  return dayStartMs + (overnightMinutes * 60000);
+}
+
+function getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs){
+  if (!Number.isFinite(arrivalAgeMs) || arrivalAgeMs <= 0) return 'skip';
+  if (arrivalAgeMs <= CALENDAR_GATE_SYNC_AIRLABS_MAX_AGE_MS){
+    return isCalendarAirlabsSyncReady() ? 'airlabs' : 'skip';
+  }
+  if (arrivalAgeMs <= CALENDAR_GATE_SYNC_AEROAPI_MAX_AGE_MS){
+    return isCalendarAeroapiSyncReady() ? 'aeroapi' : 'skip';
+  }
+  return 'skip';
+}
+
 let calendarAirlabsLastRequestAt = 0;
+let calendarAeroapiLastRequestAt = 0;
 
 async function waitForCalendarAirlabsRequestSlot(){
   const now = Date.now();
@@ -6941,7 +7024,16 @@ async function waitForCalendarAirlabsRequestSlot(){
   calendarAirlabsLastRequestAt = Date.now();
 }
 
-function parseAirlabsTimestamp(value){
+async function waitForCalendarAeroapiRequestSlot(){
+  const now = Date.now();
+  const elapsed = now - calendarAeroapiLastRequestAt;
+  if (elapsed < CALENDAR_AEROAPI_REQUEST_DELAY_MS){
+    await sleepMs(CALENDAR_AEROAPI_REQUEST_DELAY_MS - elapsed);
+  }
+  calendarAeroapiLastRequestAt = Date.now();
+}
+
+function parseCalendarApiTimestamp(value){
   if (value === null || value === undefined) return null;
   if (typeof value === 'number' && Number.isFinite(value)){
     return value > 1e12 ? Math.round(value / 1000) : Math.round(value);
@@ -6960,12 +7052,24 @@ function parseAirlabsTimestamp(value){
   return null;
 }
 
+function parseAirlabsTimestamp(value){
+  return parseCalendarApiTimestamp(value);
+}
+
+function parseAeroapiTimestamp(value){
+  return parseCalendarApiTimestamp(value);
+}
+
 function getAirlabsField(entry, path){
   if (!entry || !path) return null;
   return path.split('.').reduce((value, key) => {
     if (value === null || value === undefined || typeof value !== 'object') return null;
     return value[key];
   }, entry);
+}
+
+function getAeroapiField(entry, path){
+  return getAirlabsField(entry, path);
 }
 
 function extractAirlabsActualGateTimes(flight){
@@ -7011,6 +7115,196 @@ function extractAirlabsActualGateTimes(flight){
     gate_departure: Number.isFinite(gateDeparture) ? gateDeparture : null,
     gate_arrival: Number.isFinite(gateArrival) ? gateArrival : null
   };
+}
+
+function extractAeroapiActualGateTimes(flight){
+  const departurePaths = [
+    'actual_out',
+    'actual_out_utc',
+    'actual_departure_time',
+    'departure.actual_out',
+    'departure.actual_out_utc'
+  ];
+  const arrivalPaths = [
+    'actual_in',
+    'actual_in_utc',
+    'actual_arrival_time',
+    'arrival.actual_in',
+    'arrival.actual_in_utc'
+  ];
+  let gateDeparture = null;
+  for (const path of departurePaths){
+    const parsed = parseAeroapiTimestamp(getAeroapiField(flight, path));
+    if (Number.isFinite(parsed)){
+      gateDeparture = parsed;
+      break;
+    }
+  }
+  let gateArrival = null;
+  for (const path of arrivalPaths){
+    const parsed = parseAeroapiTimestamp(getAeroapiField(flight, path));
+    if (Number.isFinite(parsed)){
+      gateArrival = parsed;
+      break;
+    }
+  }
+  return {
+    gate_departure: Number.isFinite(gateDeparture) ? gateDeparture : null,
+    gate_arrival: Number.isFinite(gateArrival) ? gateArrival : null
+  };
+}
+
+function normalizeAeroapiAirportCode(value){
+  const normalized = normalizeAirportCode(String(value || '').trim().toUpperCase());
+  if (!normalized) return '';
+  if (normalized.length === 4){
+    return normalized.slice(-3);
+  }
+  return normalized;
+}
+
+function doesAeroapiAirportMatch(actualCode, expectedCode){
+  const expected = normalizeAeroapiAirportCode(expectedCode);
+  if (!expected) return true;
+  const actual = normalizeAeroapiAirportCode(actualCode);
+  if (!actual) return false;
+  return actual === expected;
+}
+
+function getCalendarAeroapiSearchWindow(arrivalMs){
+  const center = Number.isFinite(arrivalMs) ? arrivalMs : Date.now();
+  const start = new Date(center - CALENDAR_AEROAPI_SEARCH_WINDOW_MS);
+  const end = new Date(center + CALENDAR_AEROAPI_SEARCH_WINDOW_MS);
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString()
+  };
+}
+
+async function fetchCalendarAeroapiFlightHistory(flightIcao, { startIso, endIso } = {}){
+  const normalizedFlightIcao = normalizeCallsign(flightIcao);
+  if (!normalizedFlightIcao){
+    const err = new Error('Missing AeroAPI ident value.');
+    err.code = 'invalidFlight';
+    throw err;
+  }
+  await waitForCalendarAeroapiRequestSlot();
+  const urlObj = new URL(`${AEROAPI_CALENDAR_BASE}/history/flights/${encodeURIComponent(normalizedFlightIcao)}`);
+  urlObj.searchParams.set('ident_type', 'designator');
+  if (startIso) urlObj.searchParams.set('start', startIso);
+  if (endIso) urlObj.searchParams.set('end', endIso);
+  urlObj.searchParams.set('max_pages', '1');
+  const url = urlObj.toString();
+  let resp;
+  try {
+    resp = await fetchWithCorsFallback(url, {
+      cache: 'no-store',
+      headers: {
+        'x-apikey': AEROAPI_CALENDAR_API_KEY
+      }
+    });
+  } catch (err){
+    recordCalendarFr24Debug('summary', { url, responseText: err?.message || String(err) });
+    throw err;
+  }
+  let rawText = '';
+  try {
+    rawText = await resp.text();
+  } catch (_err){
+    rawText = '';
+  }
+  recordCalendarFr24Debug('summary', { url, status: resp.status, responseText: rawText });
+  let json = {};
+  try {
+    json = rawText ? JSON.parse(rawText) : {};
+  } catch (_err){
+    const err = new Error('AeroAPI response was not valid JSON.');
+    err.code = 'invalidJson';
+    throw err;
+  }
+  if (json?.error){
+    const detail = typeof json.error === 'string'
+      ? json.error
+      : (json.error?.message || json.error?.code || 'request failed');
+    const err = new Error(`AeroAPI error: ${detail}`);
+    err.code = 'aeroapiError';
+    throw err;
+  }
+  const flights = Array.isArray(json?.flights)
+    ? json.flights.filter((entry) => entry && typeof entry === 'object')
+    : [];
+  if (!flights.length){
+    const err = new Error('AeroAPI response missing flight data.');
+    err.code = 'noFlightData';
+    throw err;
+  }
+  recordCalendarFr24Debug('historic', {
+    url: '',
+    responseText: [
+      `Requested ident: ${normalizedFlightIcao}`,
+      `Records returned: ${flights.length}`
+    ].join('\n')
+  });
+  return flights;
+}
+
+function selectCalendarAeroapiHistoricalFlight(flights, candidate){
+  const list = Array.isArray(flights) ? flights : [];
+  if (!list.length){
+    return { flight: null, reason: 'noAeroapiMatch' };
+  }
+  const validIdents = new Set(
+    (candidate?.flightIcaoCandidates || [])
+      .map((value) => normalizeCallsign(value))
+      .filter(Boolean)
+  );
+  const matchingRecords = list.filter((entry) => {
+    const ident = normalizeCallsign(
+      getAeroapiField(entry, 'ident')
+      || getAeroapiField(entry, 'ident_icao')
+      || getAeroapiField(entry, 'flight_icao')
+    );
+    if (validIdents.size && ident && !validIdents.has(ident)) return false;
+    const depCode = getAeroapiField(entry, 'origin.code_iata')
+      || getAeroapiField(entry, 'origin.iata')
+      || getAeroapiField(entry, 'origin.code')
+      || getAeroapiField(entry, 'origin.code_icao');
+    const arrCode = getAeroapiField(entry, 'destination.code_iata')
+      || getAeroapiField(entry, 'destination.iata')
+      || getAeroapiField(entry, 'destination.code')
+      || getAeroapiField(entry, 'destination.code_icao');
+    if (!doesAeroapiAirportMatch(depCode, candidate?.depCode)) return false;
+    if (!doesAeroapiAirportMatch(arrCode, candidate?.arrCode)) return false;
+    return true;
+  });
+  if (!matchingRecords.length){
+    return { flight: null, reason: 'noAeroapiMatch' };
+  }
+  let bestRecord = null;
+  let bestDeltaMs = Infinity;
+  const scheduledArrivalMs = Number(candidate?.arrivalMs);
+  matchingRecords.forEach((entry) => {
+    const actualInSeconds = parseAeroapiTimestamp(
+      getAeroapiField(entry, 'actual_in')
+      || getAeroapiField(entry, 'actual_in_utc')
+      || getAeroapiField(entry, 'arrival.actual_in')
+      || getAeroapiField(entry, 'arrival.actual_in_utc')
+    );
+    if (!Number.isFinite(actualInSeconds) || !Number.isFinite(scheduledArrivalMs)) return;
+    const actualInMs = actualInSeconds * 1000;
+    const deltaMs = Math.abs(actualInMs - scheduledArrivalMs);
+    if (deltaMs < bestDeltaMs){
+      bestDeltaMs = deltaMs;
+      bestRecord = entry;
+    }
+  });
+  if (bestRecord){
+    if (bestDeltaMs > CALENDAR_AEROAPI_MATCH_WINDOW_MS){
+      return { flight: null, reason: 'dateMismatch' };
+    }
+    return { flight: bestRecord, reason: null };
+  }
+  return { flight: matchingRecords[0], reason: null };
 }
 
 async function fetchCalendarAirlabsFlight(flightIcao){
@@ -7082,7 +7376,6 @@ function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey, for
   const candidates = [];
   if (!eventsByDate || typeof eventsByDate !== 'object') return candidates;
   const nowMs = Date.now();
-  const todayKey = buildCalendarDateKeyFromDate(new Date());
   Object.entries(eventsByDate).forEach(([dateKey, day]) => {
     const normalizedDateKey = normalizeCalendarDateKey(dateKey);
     if (!normalizedDateKey) return;
@@ -7092,17 +7385,18 @@ function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey, for
     events.forEach((event) => {
       if (isPairingMarkerEvent(event)) return;
       if (event?.cancellation === 'CNX' || event?.cancellation === 'CNX PP') return;
-      if (!force && (event?.timeSource === 'manual' || event?.timeSource === 'airlabs')) return;
-      if (hasRecentCalendarGateSyncFailure(event, nowMs)) return;
+      if (event?.timeSource === 'manual' || event?.timeSource === 'airlabs' || event?.timeSource === 'aeroapi') return;
+      if (!force && hasRecentCalendarGateSyncFailure(event, nowMs)) return;
       const flightInfo = extractCalendarFlightIdentifier(event);
       if (!flightInfo) return;
       const { depCode, arrCode } = getCalendarEventBoundaryAirports(event);
       if (!depCode || !arrCode) return;
       const timing = getCalendarEventTiming(event, normalizedDateKey);
-      const isPast = Number.isFinite(timing?.endMs)
-        ? timing.endMs < nowMs
-        : normalizedDateKey < todayKey;
-      if (!isPast) return;
+      const arrivalMs = getCalendarEventArrivalMs(event, normalizedDateKey);
+      if (!Number.isFinite(arrivalMs)) return;
+      const arrivalAgeMs = nowMs - arrivalMs;
+      const provider = getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs);
+      if (provider === 'skip') return;
       const flightIcaoCandidates = buildCalendarAirlabsFlightIcaoCandidates(flightInfo.prefix, flightInfo.number);
       if (!flightIcaoCandidates.length) return;
       candidates.push({
@@ -7111,6 +7405,9 @@ function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey, for
         depCode,
         arrCode,
         timing,
+        provider,
+        arrivalMs,
+        arrivalAgeMs,
         flightIcaoCandidates
       });
     });
@@ -7118,23 +7415,21 @@ function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey, for
   return candidates;
 }
 
-function setCalendarGateTimeSyncStatus(event, status){
-  if (!event || !status) return;
-  event.gateTimeSync = { status, at: Date.now() };
-}
-
-function applyGateTimesToCalendarCandidate(candidate, gateTimes){
+function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'airlabs', nowMs = Date.now() } = {}){
   if (!candidate){
     return { updated: false, reason: 'applyFailed' };
   }
   if (!gateTimes){
-    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'missingActualTimes', nowMs });
     return { updated: false, reason: 'missingActualTimes' };
   }
   const hasDeparture = Number.isFinite(gateTimes.gate_departure);
   const hasArrival = Number.isFinite(gateTimes.gate_arrival);
   if (!hasDeparture || !hasArrival){
-    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    const reason = !hasDeparture && !hasArrival
+      ? 'missingActualTimes'
+      : (!hasDeparture ? 'missingActualDeparture' : 'missingActualArrival');
+    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason, nowMs });
     if (!hasDeparture && !hasArrival) return { updated: false, reason: 'missingActualTimes' };
     if (!hasDeparture) return { updated: false, reason: 'missingActualDeparture' };
     return { updated: false, reason: 'missingActualArrival' };
@@ -7142,34 +7437,34 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes){
   const depZone = getCachedAirportTimeZone(candidate.depCode);
   const arrZone = getCachedAirportTimeZone(candidate.arrCode);
   if (!depZone || !arrZone){
-    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'timezoneMissing', nowMs });
     return { updated: false, reason: 'timezoneMissing' };
   }
   const depLocal = getLocalMinutesFromUtc(gateTimes.gate_departure, depZone);
   const arrLocal = getLocalMinutesFromUtc(gateTimes.gate_arrival, arrZone);
   if (!depLocal || !arrLocal){
-    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'timezoneMissing', nowMs });
     return { updated: false, reason: 'timezoneMissing' };
   }
   const depOffset = getDateKeyDayOffset(depLocal.dateKey, candidate.dateKey);
   if (!Number.isFinite(depOffset) || Math.abs(depOffset) > 1){
-    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'dateMismatch', nowMs });
     return { updated: false, reason: 'dateMismatch' };
   }
   const dayOffset = getDateKeyDayOffset(arrLocal.dateKey, depLocal.dateKey);
   if (!Number.isFinite(dayOffset) || dayOffset < 0 || dayOffset > 1){
-    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'dateMismatch', nowMs });
     return { updated: false, reason: 'dateMismatch' };
   }
   const result = applyCalendarEventTimingUpdate(
     { event: candidate.event, dateKey: candidate.dateKey },
-    { departureMinutes: depLocal.minutes, arrivalMinutes: arrLocal.minutes, source: 'airlabs' }
+    { departureMinutes: depLocal.minutes, arrivalMinutes: arrLocal.minutes, source }
   );
   if (!result?.updated){
-    setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'applyFailed', nowMs });
     return { updated: false, reason: 'applyFailed' };
   }
-  setCalendarGateTimeSyncStatus(candidate.event, 'success');
+  setCalendarGateTimeSyncSuccess(candidate.event, { provider: source, nowMs });
   return { updated: true, reason: null };
 }
 
@@ -7186,6 +7481,9 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
   let failedCount = 0;
   const failureBuckets = {
     noAirlabsMatch: 0,
+    noAeroapiMatch: 0,
+    airlabsLookupError: 0,
+    aeroapiLookupError: 0,
     lookupError: 0,
     missingActualTimes: 0,
     missingActualDeparture: 0,
@@ -7196,16 +7494,40 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
   };
   let lastLookupError = '';
   for (const candidate of candidates){
+    const provider = candidate.provider === 'aeroapi' ? 'aeroapi' : 'airlabs';
     const attempts = [];
-    let flight = null;
+    let flightMatch = null;
+    let gateTimes = null;
     let selectedFlightIcao = '';
     let lookupErrorCount = 0;
     let noDataCount = 0;
+    let dateMismatchCount = 0;
     let candidateLastError = '';
+    const aeroapiWindow = provider === 'aeroapi'
+      ? getCalendarAeroapiSearchWindow(candidate.arrivalMs)
+      : null;
     for (const flightIcao of (candidate.flightIcaoCandidates || [])){
       attempts.push(flightIcao);
       try {
-        flight = await fetchCalendarAirlabsFlight(flightIcao);
+        if (provider === 'airlabs'){
+          const flight = await fetchCalendarAirlabsFlight(flightIcao);
+          flightMatch = flight;
+          gateTimes = extractAirlabsActualGateTimes(flight);
+          selectedFlightIcao = flightIcao;
+          break;
+        }
+        const historyFlights = await fetchCalendarAeroapiFlightHistory(flightIcao, aeroapiWindow || {});
+        const selected = selectCalendarAeroapiHistoricalFlight(historyFlights, candidate);
+        if (!selected?.flight){
+          if (selected?.reason === 'dateMismatch'){
+            dateMismatchCount += 1;
+          } else {
+            noDataCount += 1;
+          }
+          continue;
+        }
+        flightMatch = selected.flight;
+        gateTimes = extractAeroapiActualGateTimes(selected.flight);
         selectedFlightIcao = flightIcao;
         break;
       } catch (err){
@@ -7219,30 +7541,46 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
         }
       }
     }
-    if (!flight){
-      setCalendarGateTimeSyncStatus(candidate.event, 'failed');
+    if (!flightMatch){
       failedCount += 1;
+      const noMatchReason = provider === 'airlabs' ? 'noAirlabsMatch' : 'noAeroapiMatch';
+      let failureReason = noMatchReason;
       if (lookupErrorCount > 0){
         failureBuckets.lookupError += 1;
+        if (provider === 'airlabs'){
+          failureBuckets.airlabsLookupError += 1;
+        } else {
+          failureBuckets.aeroapiLookupError += 1;
+        }
+        failureReason = 'lookupError';
+      } else if (dateMismatchCount > 0){
+        failureBuckets.dateMismatch += 1;
+        failureReason = 'dateMismatch';
       } else if (noDataCount > 0){
-        failureBuckets.noAirlabsMatch += 1;
+        if (provider === 'airlabs'){
+          failureBuckets.noAirlabsMatch += 1;
+        } else {
+          failureBuckets.noAeroapiMatch += 1;
+        }
       } else {
         failureBuckets.applyFailed += 1;
+        failureReason = 'applyFailed';
       }
+      setCalendarGateTimeSyncFailure(candidate.event, { provider, reason: failureReason, nowMs: Date.now() });
       mutated = true;
       recordCalendarFr24Debug('match', {
         url: '',
         responseText: [
+          `Provider: ${provider}`,
           `${candidate.dateKey} ${candidate.depCode}-${candidate.arrCode}`,
           `flight_icao: ${attempts.join(', ') || '—'}`,
           `Match: no match`,
-          `Reason: ${candidateLastError || 'No flight data'}`
+          `Reason: ${candidateLastError || (failureReason === 'dateMismatch' ? 'Date mismatch' : 'No flight data')}`
         ].join('\n')
       });
       continue;
     }
-    const gateTimes = extractAirlabsActualGateTimes(flight);
-    const outcome = applyGateTimesToCalendarCandidate(candidate, gateTimes);
+    const outcome = applyGateTimesToCalendarCandidate(candidate, gateTimes, { source: provider, nowMs: Date.now() });
     if (outcome?.updated){
       updatedCount += 1;
     } else {
@@ -7255,8 +7593,13 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
       }
     }
     mutated = true;
-    const matchedIcao = normalizeCallsign(flight?.flight_icao || '');
-    const matchedIata = normalizeCallsign(flight?.flight_iata || '');
+    const matchedIcao = normalizeCallsign(
+      flightMatch?.flight_icao
+      || flightMatch?.ident_icao
+      || flightMatch?.ident
+      || ''
+    );
+    const matchedIata = normalizeCallsign(flightMatch?.flight_iata || '');
     const depActual = Number.isFinite(gateTimes?.gate_departure)
       ? formatLocalDateTime(gateTimes.gate_departure)
       : '—';
@@ -7266,12 +7609,13 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     recordCalendarFr24Debug('match', {
       url: '',
       responseText: [
+        `Provider: ${provider}`,
         `${candidate.dateKey} ${candidate.depCode}-${candidate.arrCode}`,
         `flight_icao: ${attempts.join(', ') || '—'}`,
         `Selected: ${selectedFlightIcao || '—'}`,
         `Matched: ${matchedIcao || '—'}${matchedIata ? ` (${matchedIata})` : ''}`,
-        `Actual departure: ${depActual}`,
-        `Actual arrival: ${arrActual}`,
+        `Actual departure: ${depActual}${provider === 'aeroapi' ? ' (actual_out)' : ''}`,
+        `Actual arrival: ${arrActual}${provider === 'aeroapi' ? ' (actual_in)' : ''}`,
         `Result: ${outcome?.updated ? 'applied' : `failed (${outcome?.reason || 'applyFailed'})`}`
       ].join('\n')
     });
@@ -7286,6 +7630,18 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     refreshCalendarCreditDetail();
     refreshCalendarTafbDetail();
     refreshCalendarBlockGrowthDetail();
+    if (getCalendarSyncToken() && getCalendarSyncEndpoint()){
+      if (navigator?.onLine === false){
+        queueCalendarSyncRetry();
+      } else {
+        try {
+          await syncCalendarToCloud();
+        } catch (err){
+          console.warn('Calendar gate-time sync cloud push failed', err);
+          queueCalendarSyncRetry();
+        }
+      }
+    }
   }
   if (reportStatus){
     let message = `Updated ${updatedCount} flight${updatedCount === 1 ? '' : 's'}`;
@@ -7293,10 +7649,13 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
       message += `, failed ${failedCount}`;
       const parts = [];
       if (failureBuckets.noAirlabsMatch) parts.push(`no AirLabs match: ${failureBuckets.noAirlabsMatch}`);
+      if (failureBuckets.noAeroapiMatch) parts.push(`no AeroAPI match: ${failureBuckets.noAeroapiMatch}`);
       if (failureBuckets.missingActualTimes) parts.push(`missing actual times: ${failureBuckets.missingActualTimes}`);
       if (failureBuckets.missingActualDeparture) parts.push(`missing actual departure: ${failureBuckets.missingActualDeparture}`);
       if (failureBuckets.missingActualArrival) parts.push(`missing actual arrival: ${failureBuckets.missingActualArrival}`);
       if (failureBuckets.lookupError) parts.push(`lookup error: ${failureBuckets.lookupError}`);
+      if (failureBuckets.airlabsLookupError) parts.push(`AirLabs errors: ${failureBuckets.airlabsLookupError}`);
+      if (failureBuckets.aeroapiLookupError) parts.push(`AeroAPI errors: ${failureBuckets.aeroapiLookupError}`);
       if (failureBuckets.lookupError && lastLookupError){
         parts.push(`lookup detail: ${lastLookupError}`);
       }
@@ -7323,11 +7682,12 @@ function scheduleCalendarGateTimeAutoSync(){
 }
 
 async function triggerCalendarGateTimeAutoSync(){
+  if (!calendarInitialCloudLoadSettled) return;
   if (calendarGateSyncInFlight) return;
   const selectedMonth = normalizeCalendarMonthKey(calendarState.selectedMonth);
   if (!selectedMonth || !doesCalendarMonthOverlapGateSyncWindow(selectedMonth)) return;
   if (navigator?.onLine === false) return;
-  if (!isCalendarAirlabsSyncReady()) return;
+  if (!isCalendarGateSyncReady()) return;
   const now = Date.now();
   if (calendarGateSyncLastMonthKey === selectedMonth
     && (now - calendarGateSyncLastRunAt) < (5 * 60 * 1000)){
@@ -7350,15 +7710,14 @@ async function triggerCalendarGateTimeForceSync(){
     setCalendarStatus('Offline; unable to update flight times.');
     return;
   }
-  if (!isCalendarAirlabsSyncReady()){
-    setCalendarStatus('AirLabs API key not configured.');
+  if (!isCalendarGateSyncReady()){
+    setCalendarStatus('Calendar flight APIs are not configured.');
     return;
   }
   if (calendarGateSyncInFlight){
     setCalendarStatus('Update already in progress.');
     return;
   }
-  clearCalendarGateTimeSyncStatuses();
   calendarGateSyncLastMonthKey = '';
   calendarGateSyncLastRunAt = 0;
   calendarGateSyncInFlight = true;
@@ -13227,26 +13586,32 @@ function initCalendar(){
     });
     calendarHotelBarResizeObserver.observe(gridEl);
   }
+  calendarInitialCloudLoadSettled = false;
   setTimeout(() => {
     (async () => {
-      const online = navigator?.onLine !== false;
-      const token = getCalendarSyncToken();
-      const endpoint = getCalendarSyncEndpoint();
-      if (!online){
-        setCalendarStatus('Offline. Using local calendar.');
-        return;
-      }
-      if (!token || !endpoint){
-        setCalendarStatus('Calendar sync not configured. Using local calendar.');
-        return;
-      }
       try {
-        const result = await loadCalendarFromCloud({ skipConfirm: true });
-        renderCalendar();
-        setCalendarStatus(result?.statusMessage || 'Pulled from cloud.');
-      } catch (err){
-        console.warn('Calendar startup pull failed', err);
-        setCalendarStatus('Calendar sync failed; using local data.');
+        const online = navigator?.onLine !== false;
+        const token = getCalendarSyncToken();
+        const endpoint = getCalendarSyncEndpoint();
+        if (!online){
+          setCalendarStatus('Offline. Using local calendar.');
+          return;
+        }
+        if (!token || !endpoint){
+          setCalendarStatus('Calendar sync not configured. Using local calendar.');
+          return;
+        }
+        try {
+          const result = await loadCalendarFromCloud({ skipConfirm: true });
+          renderCalendar();
+          setCalendarStatus(result?.statusMessage || 'Pulled from cloud.');
+        } catch (err){
+          console.warn('Calendar startup pull failed', err);
+          setCalendarStatus('Calendar sync failed; using local data.');
+        }
+      } finally {
+        calendarInitialCloudLoadSettled = true;
+        scheduleCalendarGateTimeAutoSync();
       }
     })();
   }, 0);
@@ -17554,12 +17919,12 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights can use actual departure/arrival times from AirLabs flight_icao lookups when both actual timestamps are available (estimated/scheduled times are ignored); those times are treated as manual edits and drive recalculations. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival and within provider windows: AirLabs flight_icao for flights up to 20 hours old, then AeroAPI history (actual_out/actual_in) for flights older than 20 hours up to 14 days. Only actual timestamps are accepted (no estimated/scheduled fallback). Successful API timing updates set the event source (airlabs or aeroapi), are treated as manual timing edits for recalculation, and prevent future resend attempts for that flight. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights can use actual departure/arrival times from AirLabs flight_icao lookups when both actual timestamps are available (estimated/scheduled times are ignored); those times are treated as manual edits and drive recalculations. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival and within provider windows: AirLabs flight_icao for flights up to 20 hours old, then AeroAPI history (actual_out/actual_in) for flights older than 20 hours up to 14 days. Only actual timestamps are accepted (no estimated/scheduled fallback). Successful API timing updates set the event source (airlabs or aeroapi), are treated as manual timing edits for recalculation, and prevent future resend attempts for that flight. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
     postOriginalCredit: 'Minutes of credit after the original last-flight arrival when a CNX PP pairing is extended.',
     associatedTtg: 'Additional TTG from extending the pairing past the original check-out (original to new check-out) divided by 4; shown when pairing credit uses TAFB/4.',
-    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights can use actual departure/arrival times from AirLabs flight_icao lookups when both actual timestamps are available (estimated/scheduled times are ignored); those times update check-in/out and drive TAFB recalculations. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights are auto-checked only after arrival and within provider windows: AirLabs flight_icao for flights up to 20 hours old, then AeroAPI history (actual_out/actual_in) for flights older than 20 hours up to 14 days. Only actual timestamps are accepted (no estimated/scheduled fallback). Successful API timing updates set the event source (airlabs or aeroapi), update check-in/out, and prevent future resend attempts for that flight. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. Pairing TAFB uses updated boundary times from the first and last non-cancelled flights; if all boundary flights cancel, TAFB is blank.'
   },
   vo: {
