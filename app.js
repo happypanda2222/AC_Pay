@@ -117,11 +117,9 @@ const FR24_GATE_EVENT_TYPE_ALIASES = {
   gate_arrived: 'gate_arrival'
 };
 const FR24_GATE_EVENT_TYPES_REQUEST = [...FR24_GATE_EVENT_TYPES];
-const AIRLABS_FLIGHT_LOOKUP_BASE = 'https://airlabs.co/api/v9/flight';
-const AIRLABS_CALENDAR_API_KEY = 'f00a56b8-3215-4379-ba70-4164828ba806';
+const CALENDAR_AIRLABS_PROXY_PATH = '/airlabs/flight';
 const CALENDAR_AIRLABS_REQUEST_DELAY_MS = 300;
-const CALENDAR_GATE_SYNC_LOOKBACK_DAYS = 14;
-const CALENDAR_GATE_SYNC_AIRLABS_MAX_AGE_MS = 20 * 60 * 60 * 1000;
+const CALENDAR_GATE_SYNC_LOOKBACK_MS = 30 * 60 * 60 * 1000;
 const CALENDAR_GATE_SYNC_RETRY_DELAY_MS = 12 * 60 * 60 * 1000;
 const CALENDAR_GATE_SYNC_MAX_ATTEMPTS = 2;
 const FIN_FLIGHT_CACHE = new Map();
@@ -4877,7 +4875,6 @@ const CALENDAR_WEATHER_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
 let calendarAutoSyncTimer = null;
 let calendarGateSyncTimer = null;
 let calendarGateSyncInFlight = false;
-let calendarGateSyncLastMonthKey = '';
 let calendarGateSyncLastRunAt = 0;
 let calendarInitialCloudLoadSettled = false;
 let calendarHotelBarResizeObserver = null;
@@ -6853,22 +6850,28 @@ async function syncCalendarToCloud(){
   return { queued: false, statusMessage };
 }
 
-function getCalendarGateSyncWindow(){
-  const today = new Date();
-  const endKey = buildCalendarDateKeyFromDate(today);
-  const startDate = new Date(today);
-  startDate.setDate(startDate.getDate() - CALENDAR_GATE_SYNC_LOOKBACK_DAYS);
-  const startKey = buildCalendarDateKeyFromDate(startDate);
-  return { startKey, endKey };
+function getCalendarGateSyncWindow(nowMs = Date.now()){
+  return {
+    startMs: nowMs - CALENDAR_GATE_SYNC_LOOKBACK_MS,
+    endMs: nowMs
+  };
 }
 
-function doesCalendarMonthOverlapGateSyncWindow(monthKey){
-  const normalizedMonthKey = normalizeCalendarMonthKey(monthKey);
-  if (!normalizedMonthKey) return false;
-  const bounds = getCalendarMonthDateBounds(normalizedMonthKey);
-  if (!bounds) return false;
-  const { startKey, endKey } = getCalendarGateSyncWindow();
-  return !(bounds.endKey < startKey || bounds.startKey > endKey);
+function isCalendarCancelledEvent(event){
+  const cancellation = String(event?.cancellation || '').trim().toUpperCase();
+  return cancellation === 'CNX' || cancellation === 'CNX PP';
+}
+
+function isCalendarFlightTimesAlreadyUpdated(event){
+  if (!event || typeof event !== 'object') return false;
+  const hasDeparture = Number.isFinite(Number(event.departureMinutes));
+  const hasArrival = Number.isFinite(Number(event.arrivalMinutes));
+  if (!hasDeparture || !hasArrival) return false;
+  const source = String(event.timeSource || '').trim().toLowerCase();
+  if (source === 'manual' || source === 'airlabs') return true;
+  const status = String(event?.gateTimeSync?.status || '').trim().toLowerCase();
+  const provider = String(event?.gateTimeSync?.provider || '').trim().toLowerCase();
+  return status === 'success' && provider === 'airlabs';
 }
 
 function hasRecentCalendarGateSyncFailure(event, nowMs = Date.now()){
@@ -6970,7 +6973,9 @@ function buildCalendarAirlabsFlightIcaoCandidates(prefix, number){
 }
 
 function isCalendarAirlabsSyncReady(){
-  return Boolean(String(AIRLABS_CALENDAR_API_KEY || '').trim());
+  const token = getCalendarSyncToken();
+  const endpoint = getCalendarSyncEndpoint();
+  return Boolean(String(token || '').trim() && String(endpoint || '').trim());
 }
 
 function isCalendarGateSyncReady(){
@@ -6992,8 +6997,8 @@ function getCalendarEventArrivalMs(event, dateKey){
 }
 
 function getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs){
-  if (!Number.isFinite(arrivalAgeMs) || arrivalAgeMs <= 0) return 'skip';
-  if (arrivalAgeMs <= CALENDAR_GATE_SYNC_AIRLABS_MAX_AGE_MS){
+  if (!Number.isFinite(arrivalAgeMs) || arrivalAgeMs < 0) return 'skip';
+  if (arrivalAgeMs <= CALENDAR_GATE_SYNC_LOOKBACK_MS){
     return isCalendarAirlabsSyncReady() ? 'airlabs' : 'skip';
   }
   return 'skip';
@@ -7086,6 +7091,30 @@ function extractAirlabsActualGateTimes(flight){
   };
 }
 
+function getCalendarAirlabsProxyEndpoint(){
+  const syncEndpoint = normalizeCalendarSyncEndpoint(getCalendarSyncEndpoint());
+  if (!syncEndpoint) return '';
+  if (syncEndpoint.startsWith('/')){
+    if (/\/sync\/calendar\/?$/i.test(syncEndpoint)){
+      return syncEndpoint.replace(/\/sync\/calendar\/?$/i, CALENDAR_AIRLABS_PROXY_PATH);
+    }
+    return `${syncEndpoint.replace(/\/+$/, '')}${CALENDAR_AIRLABS_PROXY_PATH}`;
+  }
+  try {
+    const url = new URL(syncEndpoint);
+    if (/\/sync\/calendar\/?$/i.test(url.pathname)){
+      url.pathname = url.pathname.replace(/\/sync\/calendar\/?$/i, CALENDAR_AIRLABS_PROXY_PATH);
+    } else {
+      url.pathname = `${url.pathname.replace(/\/+$/, '')}${CALENDAR_AIRLABS_PROXY_PATH}`;
+    }
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch (_err){
+    return '';
+  }
+}
+
 async function fetchCalendarAirlabsFlight(flightIcao){
   const normalizedFlightIcao = normalizeCallsign(flightIcao);
   if (!normalizedFlightIcao){
@@ -7093,14 +7122,30 @@ async function fetchCalendarAirlabsFlight(flightIcao){
     err.code = 'invalidFlight';
     throw err;
   }
+  const token = String(getCalendarSyncToken() || '').trim();
+  if (!token){
+    const err = new Error('Missing calendar sync token.');
+    err.code = 'missingSyncToken';
+    throw err;
+  }
+  const endpoint = getCalendarAirlabsProxyEndpoint();
+  if (!endpoint){
+    const err = new Error('Missing calendar sync endpoint.');
+    err.code = 'missingSyncEndpoint';
+    throw err;
+  }
   await waitForCalendarAirlabsRequestSlot();
-  const urlObj = new URL(AIRLABS_FLIGHT_LOOKUP_BASE);
+  const urlObj = new URL(endpoint, window.location.origin);
   urlObj.searchParams.set('flight_icao', normalizedFlightIcao);
-  urlObj.searchParams.set('api_key', AIRLABS_CALENDAR_API_KEY);
   const url = urlObj.toString();
   let resp;
   try {
-    resp = await fetchWithCorsFallback(url, { cache: 'no-store' });
+    resp = await fetchWithCorsFallback(url, {
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
   } catch (err){
     recordCalendarFr24Debug('summary', { url, responseText: err?.message || String(err) });
     throw err;
@@ -7118,6 +7163,17 @@ async function fetchCalendarAirlabsFlight(flightIcao){
   } catch (_err){
     const err = new Error('AirLabs response was not valid JSON.');
     err.code = 'invalidJson';
+    throw err;
+  }
+  if (!resp.ok){
+    const detail = json?.error?.message
+      || json?.error
+      || rawText
+      || `HTTP ${resp.status}`;
+    const err = new Error(`AirLabs request failed (${resp.status}): ${detail}`);
+    err.code = resp.status === 401 || resp.status === 403
+      ? 'workerUnauthorized'
+      : 'airlabsError';
     throw err;
   }
   if (json?.error){
@@ -7151,20 +7207,22 @@ async function fetchCalendarAirlabsFlight(flightIcao){
   return flight;
 }
 
-function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey, force = false } = {}){
+function collectCalendarGateSyncCandidates(eventsByDate, {
+  force = false,
+  skipAlreadyUpdated = false,
+  nowMs = Date.now()
+} = {}){
   const candidates = [];
   if (!eventsByDate || typeof eventsByDate !== 'object') return candidates;
-  const nowMs = Date.now();
+  const { startMs, endMs } = getCalendarGateSyncWindow(nowMs);
   Object.entries(eventsByDate).forEach(([dateKey, day]) => {
     const normalizedDateKey = normalizeCalendarDateKey(dateKey);
     if (!normalizedDateKey) return;
-    if (startKey && normalizedDateKey < startKey) return;
-    if (endKey && normalizedDateKey > endKey) return;
     const events = Array.isArray(day?.events) ? day.events : [];
     events.forEach((event) => {
       if (isPairingMarkerEvent(event)) return;
-      if (event?.cancellation === 'CNX' || event?.cancellation === 'CNX PP') return;
-      if (event?.timeSource === 'manual' || event?.timeSource === 'airlabs') return;
+      if (isCalendarCancelledEvent(event)) return;
+      if (skipAlreadyUpdated && isCalendarFlightTimesAlreadyUpdated(event)) return;
       if (!force && hasRecentCalendarGateSyncFailure(event, nowMs)) return;
       const flightInfo = extractCalendarFlightIdentifier(event);
       if (!flightInfo) return;
@@ -7174,6 +7232,7 @@ function collectCalendarGateSyncCandidates(eventsByDate, { startKey, endKey, for
       const arrivalMs = getCalendarEventArrivalMs(event, normalizedDateKey);
       if (!Number.isFinite(arrivalMs)) return;
       const arrivalAgeMs = nowMs - arrivalMs;
+      if (arrivalMs < startMs || arrivalMs > endMs) return;
       const provider = getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs);
       if (provider === 'skip') return;
       const flightIcaoCandidates = buildCalendarAirlabsFlightIcaoCandidates(flightInfo.prefix, flightInfo.number);
@@ -7246,9 +7305,18 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'air
   return { updated: true, reason: null };
 }
 
-async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false } = {}){
-  const { startKey, endKey } = getCalendarGateSyncWindow();
-  const candidates = collectCalendarGateSyncCandidates(calendarState.eventsByDate, { startKey, endKey, force });
+async function runCalendarGateTimeAutoSync({
+  force = false,
+  reportStatus = false,
+  skipAlreadyUpdated = !force
+} = {}){
+  const nowMs = Date.now();
+  const shouldSkipUpdated = force ? false : Boolean(skipAlreadyUpdated);
+  const candidates = collectCalendarGateSyncCandidates(calendarState.eventsByDate, {
+    force,
+    skipAlreadyUpdated: shouldSkipUpdated,
+    nowMs
+  });
   if (!candidates.length){
     if (reportStatus) setCalendarStatus('No eligible flights to update.');
     return { mutated: false, updatedCount: 0, failedCount: 0 };
@@ -7425,20 +7493,16 @@ function scheduleCalendarGateTimeAutoSync(){
 async function triggerCalendarGateTimeAutoSync(){
   if (!calendarInitialCloudLoadSettled) return;
   if (calendarGateSyncInFlight) return;
-  const selectedMonth = normalizeCalendarMonthKey(calendarState.selectedMonth);
-  if (!selectedMonth || !doesCalendarMonthOverlapGateSyncWindow(selectedMonth)) return;
   if (navigator?.onLine === false) return;
   if (!isCalendarGateSyncReady()) return;
   const now = Date.now();
-  if (calendarGateSyncLastMonthKey === selectedMonth
-    && (now - calendarGateSyncLastRunAt) < (5 * 60 * 1000)){
+  if ((now - calendarGateSyncLastRunAt) < (5 * 60 * 1000)){
     return;
   }
   calendarGateSyncInFlight = true;
-  calendarGateSyncLastMonthKey = selectedMonth;
   calendarGateSyncLastRunAt = now;
   try {
-    await runCalendarGateTimeAutoSync();
+    await runCalendarGateTimeAutoSync({ force: false, skipAlreadyUpdated: true });
   } catch (err){
     console.warn('Gate time auto-sync failed', err);
   } finally {
@@ -7459,12 +7523,11 @@ async function triggerCalendarGateTimeForceSync(){
     setCalendarStatus('Update already in progress.');
     return;
   }
-  calendarGateSyncLastMonthKey = '';
   calendarGateSyncLastRunAt = 0;
   calendarGateSyncInFlight = true;
   setCalendarStatus('Updating flight times…');
   try {
-    await runCalendarGateTimeAutoSync({ force: true, reportStatus: true });
+    await runCalendarGateTimeAutoSync({ force: true, skipAlreadyUpdated: false, reportStatus: true });
   } catch (err){
     console.warn('Gate time force sync failed', err);
     setCalendarStatus(err?.message || 'Update failed.');
@@ -17660,12 +17723,12 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 20 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent future resend attempts for that flight. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent automatic resend attempts for that flight unless Force update is used. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 20 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent future resend attempts for that flight. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent automatic resend attempts for that flight unless Force update is used. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
     postOriginalCredit: 'Minutes of credit after the original last-flight arrival when a CNX PP pairing is extended.',
     associatedTtg: 'Additional TTG from extending the pairing past the original check-out (original to new check-out) divided by 4; shown when pairing credit uses TAFB/4.',
-    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 20 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, update check-in/out, and prevent future resend attempts for that flight. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, update check-in/out, and prevent automatic resend attempts for that flight unless Force update is used. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. Pairing TAFB uses updated boundary times from the first and last non-cancelled flights; if all boundary flights cancel, TAFB is blank.'
   },
   vo: {
