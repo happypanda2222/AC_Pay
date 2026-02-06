@@ -802,6 +802,15 @@
       background:#16a34a;
       border:1px solid #15803d;
     }
+    .calendar-row-pairing-bars .calendar-bar-flag.is-dog-override{
+      background:#22c55e;
+      border-color:#16a34a;
+    }
+    .calendar-row-pairing-bars .calendar-bar-flag.is-associated-guarantee{
+      background:#15803d;
+      border-color:#166534;
+      opacity:0.92;
+    }
     .calendar-row-pairing-bars .calendar-bar-deadhead{
       position:absolute;
       height:16px;
@@ -1198,6 +1207,26 @@
       border-radius:10px;
       border:1px solid #1f2633;
       background:#0b0f1a;
+      display:flex;
+      align-items:center;
+      flex-wrap:wrap;
+      gap:6px;
+    }
+    .calendar-pairing-flight.is-premium-flagged{
+      border-color:#16a34a;
+      box-shadow:0 0 0 1px rgba(22,163,74,0.35) inset;
+    }
+    .calendar-premium-flag-tag{
+      margin-left:auto;
+      font-size:10px;
+      font-weight:700;
+      line-height:1;
+      color:#dcfce7;
+      background:#14532d;
+      border:1px solid #166534;
+      border-radius:999px;
+      padding:3px 6px;
+      white-space:nowrap;
     }
     .calendar-day-flight-list{
       display:flex;
@@ -1438,6 +1467,24 @@
       justify-content:space-between;
       gap:12px;
     }
+    .app-mode-toggle{
+      margin:10px 0 14px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+    }
+    .app-mode-label{
+      font-size:12px;
+      color:var(--muted);
+      font-weight:700;
+      letter-spacing:.2px;
+      text-transform:uppercase;
+      transition:color .2s ease;
+    }
+    .app-mode-label.is-active{
+      color:var(--txt);
+    }
     .calendar-view-toggle-label{
       font-size:12px;
       color:var(--muted);
@@ -1539,6 +1586,9 @@
       .calendar-pairing-panel .stacked-fields .two-col{
         min-width:0;
       }
+      .app-mode-label{
+        font-size:11px;
+      }
     }
     @media(max-width:430px) and (min-width:421px){
       .calendar-event-title-main,
@@ -1553,6 +1603,13 @@
         <div class="modern-hero-content">
           <h2>AC Tools</h2>
         </div>
+      </div>
+      <div class="app-mode-toggle" aria-label="App behavior mode">
+        <span id="app-mode-label-classic" class="app-mode-label app-mode-label-classic is-active">Classic</span>
+        <button id="app-mode-toggle" class="calendar-ios-toggle" type="button" role="switch" aria-checked="false" aria-label="Toggle contract-aligned mode">
+          <span class="calendar-ios-toggle-thumb"></span>
+        </button>
+        <span id="app-mode-label-aligned" class="app-mode-label app-mode-label-aligned">Aligned</span>
       </div>
 
       <div class="modern-panel" id="modern-tabs">
