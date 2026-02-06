@@ -837,6 +837,52 @@ function getLocalMinutesFromUtc(tsSeconds, timeZone) {
   return { dateKey, minutes };
 }
 
+function getTimeZoneOffsetMinutes(timeZone, date) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const parts = dtf.formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+  let hour = Number(parts.hour);
+  if (hour === 24) hour = 0;
+  const utcTime = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    hour,
+    Number(parts.minute),
+    Number(parts.second)
+  );
+  return (utcTime - date.getTime()) / 60000;
+}
+
+function getUtcMsForZonedLocalTime({ year, month, day, minutes }, timeZone) {
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return NaN;
+  if (!Number.isFinite(minutes)) return NaN;
+  if (!timeZone) return NaN;
+  const totalMinutes = Number(minutes);
+  const dayOffset = Math.floor(totalMinutes / 1440);
+  const minuteOffset = totalMinutes - (dayOffset * 1440);
+  const baseUtc = Date.UTC(year, month - 1, day, 0, 0, 0, 0)
+    + (dayOffset * 86400000)
+    + (minuteOffset * 60000);
+  const firstOffset = getTimeZoneOffsetMinutes(timeZone, new Date(baseUtc));
+  if (!Number.isFinite(firstOffset)) return NaN;
+  const firstUtc = baseUtc - (firstOffset * 60000);
+  const secondOffset = getTimeZoneOffsetMinutes(timeZone, new Date(firstUtc));
+  if (!Number.isFinite(secondOffset)) return NaN;
+  return baseUtc - (secondOffset * 60000);
+}
+
 function getDateKeyDayOffset(targetKey, originKey) {
   const targetStart = getDateKeyStartMs(targetKey);
   const originStart = getDateKeyStartMs(originKey);
@@ -902,12 +948,24 @@ function normalizeCalendarGateLocalTime(entry, fallbackDateKey) {
   };
 }
 
-function getCalendarGateLocalMs(localTime, fallbackDateKey) {
+function getCalendarGateLocalMs(localTime, fallbackDateKey, {
+  timeZone = '',
+  tsSeconds = NaN
+} = {}) {
+  const tsMs = Number(tsSeconds) * 1000;
+  if (Number.isFinite(tsMs)) return tsMs;
   const normalized = normalizeCalendarGateLocalTime(localTime, fallbackDateKey);
   if (!normalized) return NaN;
-  const dayStartMs = getDateKeyStartMs(normalized.dateKey);
-  if (!Number.isFinite(dayStartMs)) return NaN;
-  return dayStartMs + (normalized.minutes * 60000);
+  const parts = parseDateKeyParts(normalized.dateKey);
+  if (!parts) return NaN;
+  const zone = String(timeZone || '').trim();
+  if (!zone) return NaN;
+  return getUtcMsForZonedLocalTime({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    minutes: normalized.minutes
+  }, zone);
 }
 
 function resolveCalendarGateLocalTime({
@@ -1120,7 +1178,10 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'air
       completed: false,
       reason: 'awaitingActualArrival',
       arrivalSource: 'estimated',
-      arrEstimatedMs: getCalendarGateLocalMs(arrEstimatedLocal, depLocal.dateKey)
+      arrEstimatedMs: getCalendarGateLocalMs(arrEstimatedLocal, depLocal.dateKey, {
+        timeZone: arrZone,
+        tsSeconds: gateTimes.gate_arrival_estimated
+      })
     };
   }
 
