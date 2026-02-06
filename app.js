@@ -7439,12 +7439,24 @@ function normalizeCalendarGateLocalTime(entry, fallbackDateKey){
   };
 }
 
-function getCalendarGateLocalMs(localTime, fallbackDateKey){
+function getCalendarGateLocalMs(localTime, fallbackDateKey, {
+  timeZone = '',
+  tsSeconds = NaN
+} = {}){
+  const tsMs = Number(tsSeconds) * 1000;
+  if (Number.isFinite(tsMs)) return tsMs;
   const normalized = normalizeCalendarGateLocalTime(localTime, fallbackDateKey);
   if (!normalized) return NaN;
-  const dayStartMs = getDateKeyStartMs(normalized.dateKey);
-  if (!Number.isFinite(dayStartMs)) return NaN;
-  return dayStartMs + (normalized.minutes * 60000);
+  const parts = parseDateKeyParts(normalized.dateKey);
+  if (!parts) return NaN;
+  const zone = String(timeZone || '').trim();
+  if (!zone) return NaN;
+  return getUtcMsForZonedLocalTime({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    minutes: normalized.minutes
+  }, zone);
 }
 
 function resolveCalendarGateLocalTime({
@@ -7561,7 +7573,10 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'air
       completed: false,
       reason: 'awaitingActualArrival',
       arrivalSource: 'estimated',
-      arrEstimatedMs: getCalendarGateLocalMs(arrEstimatedLocal, depLocal.dateKey)
+      arrEstimatedMs: getCalendarGateLocalMs(arrEstimatedLocal, depLocal.dateKey, {
+        timeZone: arrZone,
+        tsSeconds: gateTimes.gate_arrival_estimated
+      })
     };
   }
 
@@ -10349,24 +10364,14 @@ function computeAutoCheckTimesForPairing(pairingId, eventsByDate = calendarState
   const lastEntry = flightEntries.reduce((latest, entry) => (
     entry.timing.endMs > latest.timing.endMs ? entry : latest
   ), flightEntries[0]);
-  let checkInMinutes = null;
-  if (Number.isFinite(firstEntry.timing.departureMinutes)){
-    checkInMinutes = firstEntry.timing.departureMinutes - 75;
-  } else {
-    const dayStartMs = getDateKeyStartMs(firstEntry.dateKey);
-    if (Number.isFinite(dayStartMs)){
-      checkInMinutes = Math.round((firstEntry.timing.startMs - dayStartMs) / 60000) - 75;
-    }
-  }
-  let checkOutMinutes = null;
-  if (Number.isFinite(lastEntry.timing.arrivalMinutes)){
-    checkOutMinutes = lastEntry.timing.arrivalMinutes + 15;
-  } else {
-    const dayStartMs = getDateKeyStartMs(lastEntry.dateKey);
-    if (Number.isFinite(dayStartMs)){
-      checkOutMinutes = Math.round((lastEntry.timing.endMs - dayStartMs) / 60000) + 15;
-    }
-  }
+  const firstDayStartMs = getDateKeyStartMs(firstEntry.dateKey);
+  const lastDayStartMs = getDateKeyStartMs(lastEntry.dateKey);
+  const checkInMinutes = Number.isFinite(firstDayStartMs)
+    ? Math.round((firstEntry.timing.startMs - firstDayStartMs) / 60000) - 75
+    : null;
+  const checkOutMinutes = Number.isFinite(lastDayStartMs)
+    ? Math.round((lastEntry.timing.endMs - lastDayStartMs) / 60000) + 15
+    : null;
   return {
     pairingDays,
     firstDayKey: pairingDays[0],
@@ -10396,24 +10401,14 @@ function applyManualPairingAutoCheckTimes({
   const lastEntry = flightEntries.reduce((latest, entry) => (
     entry.timing.endMs > latest.timing.endMs ? entry : latest
   ), flightEntries[0]);
-  let checkInMinutes = null;
-  if (Number.isFinite(firstEntry.timing.departureMinutes)){
-    checkInMinutes = firstEntry.timing.departureMinutes - 75;
-  } else {
-    const dayStartMs = getDateKeyStartMs(firstEntry.dateKey);
-    if (Number.isFinite(dayStartMs)){
-      checkInMinutes = Math.round((firstEntry.timing.startMs - dayStartMs) / 60000) - 75;
-    }
-  }
-  let checkOutMinutes = null;
-  if (Number.isFinite(lastEntry.timing.arrivalMinutes)){
-    checkOutMinutes = lastEntry.timing.arrivalMinutes + 15;
-  } else {
-    const dayStartMs = getDateKeyStartMs(lastEntry.dateKey);
-    if (Number.isFinite(dayStartMs)){
-      checkOutMinutes = Math.round((lastEntry.timing.endMs - dayStartMs) / 60000) + 15;
-    }
-  }
+  const firstDayStartMs = getDateKeyStartMs(firstEntry.dateKey);
+  const lastDayStartMs = getDateKeyStartMs(lastEntry.dateKey);
+  const checkInMinutes = Number.isFinite(firstDayStartMs)
+    ? Math.round((firstEntry.timing.startMs - firstDayStartMs) / 60000) - 75
+    : null;
+  const checkOutMinutes = Number.isFinite(lastDayStartMs)
+    ? Math.round((lastEntry.timing.endMs - lastDayStartMs) / 60000) + 15
+    : null;
   const pairingDayKeys = Array.isArray(pairingDays) && pairingDays.length
     ? pairingDays
     : getCalendarPairingDaysFromEvents(eventsByDate, pairingId);
@@ -12669,6 +12664,12 @@ function addCalendarManualFlightsToPairing({ pairingId, dateKey, flights } = {})
   const pairingDays = getCalendarPairingDays(pairingId);
   if (!pairingDays.length) return { error: 'Pairing days not found.' };
   if (!Array.isArray(flights) || !flights.length) return { error: 'Add at least one flight.' };
+  const previousFirstDayKey = pairingDays[0];
+  const preservedCheckInMinutes = Number.isFinite(
+    calendarState.eventsByDate?.[previousFirstDayKey]?.checkInMinutes
+  )
+    ? calendarState.eventsByDate[previousFirstDayKey].checkInMinutes
+    : null;
   const originalBaseline = getCalendarPairingBaselineSnapshot(pairingId, calendarState.eventsByDate);
   const existingOriginalTimes = getCalendarPairingOriginalTimes(pairingId, calendarState.eventsByDate);
   const hasStoredOriginal = Number.isFinite(existingOriginalTimes.originalLastFlightEndMs)
@@ -12746,6 +12747,12 @@ function addCalendarManualFlightsToPairing({ pairingId, dateKey, flights } = {})
     pairingDays: expandedPairingDays,
     eventsByDate: calendarState.eventsByDate
   });
+  if (Number.isFinite(preservedCheckInMinutes)){
+    const expandedFirstDay = calendarState.eventsByDate?.[expandedPairingDays[0]];
+    if (expandedFirstDay){
+      expandedFirstDay.checkInMinutes = preservedCheckInMinutes;
+    }
+  }
   const updatedBaseline = getCalendarPairingBaselineSnapshot(pairingId, calendarState.eventsByDate);
   if (!hasStoredOriginal
     && originalBaseline?.hasCnxPp
@@ -12873,13 +12880,21 @@ function applyCalendarEventTimingUpdate(entry, { departureMinutes, arrivalMinute
   event.creditMinutes = getCalendarEventBaseCreditMinutes(event, dateKey);
 
   if (pairingId){
+    const pairingDaysBeforeUpdate = getCalendarPairingDaysFromEvents(calendarState.eventsByDate, pairingId);
+    const preservedCheckInMinutes = Number.isFinite(
+      calendarState.eventsByDate?.[pairingDaysBeforeUpdate[0]]?.checkInMinutes
+    )
+      ? calendarState.eventsByDate[pairingDaysBeforeUpdate[0]].checkInMinutes
+      : null;
     markCalendarPairingManualEdited(pairingId, calendarState.eventsByDate);
     const autoTimes = computeAutoCheckTimesForPairing(pairingId, calendarState.eventsByDate);
     if (autoTimes){
       const firstDay = calendarState.eventsByDate?.[autoTimes.firstDayKey];
       const lastDay = calendarState.eventsByDate?.[autoTimes.lastDayKey];
       if (firstDay){
-        firstDay.checkInMinutes = autoTimes.checkInMinutes;
+        firstDay.checkInMinutes = Number.isFinite(preservedCheckInMinutes)
+          ? preservedCheckInMinutes
+          : autoTimes.checkInMinutes;
       }
       if (lastDay){
         lastDay.checkOutMinutes = autoTimes.checkOutMinutes;
@@ -13866,31 +13881,15 @@ function initCalendar(){
       pairingToggle.setAttribute('aria-pressed', String(isOpen));
     }
     if (isOpen){
-      const startInput = document.getElementById('modern-calendar-pairing-start');
-      if (pairingRowContainer && startInput?.value){
-        pairingRowContainer.dataset.defaultDate = startInput.value;
-      }
       if (pairingRowContainer && !pairingRowContainer.querySelector('.calendar-pairing-flight-row')){
         addCalendarPairingFlightRowToContainer(pairingRowContainer);
       }
-      document.getElementById('modern-calendar-pairing-start')?.focus();
+      pairingRowContainer?.querySelector('[data-field="flight-date"]')?.focus();
     }
   };
   if (pairingRowAdd){
     pairingRowAdd.addEventListener('click', () => {
       addCalendarPairingFlightRowToContainer(pairingRowContainer, { focusField: true });
-    });
-  }
-  const pairingStartInput = document.getElementById('modern-calendar-pairing-start');
-  if (pairingStartInput && pairingRowContainer){
-    pairingStartInput.addEventListener('change', () => {
-      const value = pairingStartInput.value || '';
-      if (value){
-        pairingRowContainer.dataset.defaultDate = value;
-        pairingRowContainer.querySelectorAll('[data-field="flight-date"]').forEach((input) => {
-          if (!input.value) input.value = value;
-        });
-      }
     });
   }
   if (pairingDetailRowAdd){
@@ -14111,33 +14110,28 @@ function initCalendar(){
   const pairingSave = document.getElementById('modern-calendar-pairing-save');
   if (pairingSave){
     pairingSave.addEventListener('click', () => {
-      const startKey = document.getElementById('modern-calendar-pairing-start')?.value || '';
-      const endKey = document.getElementById('modern-calendar-pairing-end')?.value || '';
       let pairingFlights = [];
       try {
-        const serialized = serializeCalendarPairingFlightRows({ dateKey: startKey, pairingId: '' });
+        const serialized = serializeCalendarPairingFlightRows({ dateKey: '', pairingId: '' });
         pairingFlights = serialized?.events || [];
       } catch (err){
         setCalendarStatus(err?.message || 'Unable to read flight rows.');
         return;
       }
-      const normalizedStartKey = normalizeCalendarDateKey(startKey);
-      const normalizedEndKey = normalizeCalendarDateKey(endKey || startKey);
-      const pairingRange = normalizedStartKey && normalizedEndKey
-        ? getCalendarDateKeysInRange(normalizedStartKey, normalizedEndKey)
-        : [];
-      if (pairingFlights.length && !pairingRange.length){
-        setCalendarStatus('Enter valid start/end dates first.');
+      if (!pairingFlights.length){
+        setCalendarStatus('Add at least one flight row.');
         return;
       }
-      const pairingRangeSet = new Set(pairingRange);
-      if (pairingFlights.length){
-        const outOfRange = pairingFlights.find(event => !pairingRangeSet.has(normalizeCalendarDateKey(event?.date)));
-        if (outOfRange){
-          setCalendarStatus('Flight dates must fall within the pairing range.');
-          return;
-        }
+      const flightDateKeys = pairingFlights
+        .map(event => normalizeCalendarDateKey(event?.date))
+        .filter(Boolean)
+        .sort();
+      if (!flightDateKeys.length){
+        setCalendarStatus('Each flight row needs a valid date.');
+        return;
       }
+      const startKey = flightDateKeys[0];
+      const endKey = flightDateKeys[flightDateKeys.length - 1];
       const result = createCalendarPairingSkeleton({
         startKey,
         endKey
@@ -14182,13 +14176,6 @@ function initCalendar(){
         renderCalendarPairingDetail(result.pairingId);
       }
       setCalendarStatus('Pairing added.');
-      [
-        'modern-calendar-pairing-start',
-        'modern-calendar-pairing-end'
-      ].forEach((id) => {
-        const input = document.getElementById(id);
-        if (input) input.value = '';
-      });
       resetCalendarPairingFlightRows(pairingRowContainer);
       setCalendarPairingPanelOpen(false);
     });
@@ -18076,12 +18063,12 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync runs when due (first attempt 30 minutes after arrival). If dep_actual exists but arr_actual is missing, arrival temporarily uses arr_estimated (tagged Estimated) and retries at the later of now+1 hour or the estimated arrival time until arr_actual appears (max 5 attempts). A flight is only considered fully API-updated when arr_actual is applied; completed/manual flights are skipped in non-force sync. Force update ignores updated/retry guards but still skips CNX/CNX PP flights. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync runs when due (first attempt 30 minutes after arrival). If dep_actual exists but arr_actual is missing, arrival temporarily uses arr_estimated (tagged Estimated) and retries at the later of now+1 hour or the estimated arrival time until arr_actual appears (max 5 attempts). A flight is only considered fully API-updated when arr_actual is applied; completed/manual flights are skipped in non-force sync. Force update ignores updated/retry guards but still skips CNX/CNX PP flights. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Flight-time updates preserve pairing check-in and auto-refresh pairing check-out from latest arrival; check-in only changes when check-in/out is manually saved.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync starts at 30 minutes after arrival, uses dep_actual/arr_actual for final completion, and can temporarily use arr_estimated when arr_actual is pending; retries run up to 5 attempts. Completed/manual flights are skipped in non-force mode, while Force update can re-run eligible flights (still excluding CNX/CNX PP). If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync starts at 30 minutes after arrival, uses dep_actual/arr_actual for final completion, and can temporarily use arr_estimated when arr_actual is pending; retries run up to 5 attempts. Completed/manual flights are skipped in non-force mode, while Force update can re-run eligible flights (still excluding CNX/CNX PP). Flight-time updates preserve pairing check-in and auto-refresh pairing check-out from latest arrival unless check-in/out is manually saved. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
     postOriginalCredit: 'Minutes of credit after the original last-flight arrival when a CNX PP pairing is extended.',
     associatedTtg: 'Additional TTG from extending the pairing past the original check-out (original to new check-out) divided by 4; shown when pairing credit uses TAFB/4.',
-    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync starts 30 minutes after arrival, uses dep_actual/arr_actual for final completion, and if arr_actual is pending it uses arr_estimated temporarily then retries (later of +1 hour or estimated arrival) for up to 5 attempts. Completed/manual flights are skipped in non-force mode; Force update can re-run eligible flights. CNX/CNX PP flights are always excluded from API requests. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync starts 30 minutes after arrival, uses dep_actual/arr_actual for final completion, and if arr_actual is pending it uses arr_estimated temporarily then retries (later of +1 hour or estimated arrival) for up to 5 attempts. Completed/manual flights are skipped in non-force mode; Force update can re-run eligible flights. CNX/CNX PP flights are always excluded from API requests. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Flight-time updates preserve pairing check-in and auto-refresh pairing check-out from latest arrival; check-in only changes when check-in/out is manually saved.',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. Pairing TAFB uses updated boundary times from the first and last non-cancelled flights; if all boundary flights cancel, TAFB is blank.'
   },
   vo: {
