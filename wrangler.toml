@@ -1,0 +1,6 @@
+name = "ac-pay-calendar-sync"
+main = "cloudflare-worker.js"
+compatibility_date = "2026-02-06"
+
+[triggers]
+crons = ["0 3 * * *", "0 4 * * *"]
