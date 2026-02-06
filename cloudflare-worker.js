@@ -4,7 +4,7 @@ const CALENDAR_GATE_SYNC_LOOKBACK_MS = 30 * 60 * 60 * 1000;
 const CALENDAR_GATE_SYNC_RETRY_DELAY_MS = 12 * 60 * 60 * 1000;
 const CALENDAR_GATE_SYNC_MAX_ATTEMPTS = 2;
 const CALENDAR_AIRLABS_REQUEST_DELAY_MS = 300;
-const AIRLABS_FLIGHT_LOOKUP_BASE = 'https://airlabs.co/api/v9/flight';
+const AIRLABS_SCHEDULES_LOOKUP_BASE = 'https://airlabs.co/api/v9/schedules';
 const AIRPORT_TZ_LOOKUP_URL = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
 const AIRPORT_TZ_FALLBACK = { YYZ: 'America/Toronto', CYYZ: 'America/Toronto' };
 const CALENDAR_FLIGHT_PREFIXES = new Set(['RV', 'AC', 'QK']);
@@ -351,6 +351,101 @@ function extractAirlabsActualGateTimes(flight) {
   };
 }
 
+function setAirlabsAirportParam(url, prefix, code) {
+  const normalized = normalizeAirportCode(code);
+  if (!normalized) return false;
+  if (normalized.length === 3) {
+    url.searchParams.set(`${prefix}_iata`, normalized);
+    return true;
+  }
+  if (normalized.length === 4) {
+    url.searchParams.set(`${prefix}_icao`, normalized);
+    return true;
+  }
+  return false;
+}
+
+function extractAirlabsAirportCode(flight, prefix) {
+  const iata = normalizeAirportCode(
+    getAirlabsField(flight, `${prefix}_iata`)
+    || getAirlabsField(flight, `${prefix}.iata`)
+    || getAirlabsField(flight, `${prefix}_airport_iata`)
+    || getAirlabsField(flight, `${prefix}_airport.iata`)
+  );
+  const icao = normalizeAirportCode(
+    getAirlabsField(flight, `${prefix}_icao`)
+    || getAirlabsField(flight, `${prefix}.icao`)
+    || getAirlabsField(flight, `${prefix}_airport_icao`)
+    || getAirlabsField(flight, `${prefix}_airport.icao`)
+  );
+  return { iata, icao };
+}
+
+function collectAirlabsFlightIdentifiers(flight) {
+  const ids = new Set();
+  const add = (value) => {
+    const normalized = normalizeCallsign(value);
+    if (normalized) ids.add(normalized);
+  };
+  add(flight?.flight_icao);
+  add(flight?.flight_iata);
+  add(flight?.ident_icao);
+  add(flight?.ident_iata);
+  const flightNumber = String(
+    flight?.flight_number
+    ?? getAirlabsField(flight, 'flight.number')
+    ?? ''
+  ).replace(/\s+/g, '');
+  const airlineIcao = normalizeCallsign(
+    flight?.airline_icao
+    ?? getAirlabsField(flight, 'airline.icao')
+  );
+  const airlineIata = normalizeCallsign(
+    flight?.airline_iata
+    ?? getAirlabsField(flight, 'airline.iata')
+  );
+  if (flightNumber && airlineIcao) add(`${airlineIcao}${flightNumber}`);
+  if (flightNumber && airlineIata) add(`${airlineIata}${flightNumber}`);
+  return ids;
+}
+
+function doesAirlabsFlightMatchRoute(flight, { depCode = '', arrCode = '' } = {}) {
+  const expectedDep = normalizeAirportCode(depCode);
+  const expectedArr = normalizeAirportCode(arrCode);
+  const dep = extractAirlabsAirportCode(flight, 'dep');
+  const arr = extractAirlabsAirportCode(flight, 'arr');
+  const depMatch = !expectedDep || dep.iata === expectedDep || dep.icao === expectedDep;
+  const arrMatch = !expectedArr || arr.iata === expectedArr || arr.icao === expectedArr;
+  return depMatch && arrMatch;
+}
+
+function doesAirlabsFlightMatchCallsign(flight, flightIcao) {
+  const expected = normalizeCallsign(flightIcao);
+  if (!expected) return true;
+  return collectAirlabsFlightIdentifiers(flight).has(expected);
+}
+
+function scoreAirlabsScheduleRecord(flight, expected) {
+  let score = 0;
+  if (doesAirlabsFlightMatchCallsign(flight, expected?.flightIcao)) score += 5;
+  if (doesAirlabsFlightMatchRoute(flight, expected)) score += 3;
+  const gateTimes = extractAirlabsActualGateTimes(flight);
+  if (Number.isFinite(gateTimes.gate_departure)) score += 1;
+  if (Number.isFinite(gateTimes.gate_arrival)) score += 1;
+  return score;
+}
+
+function selectAirlabsScheduleFlight(list, expected = {}) {
+  const rows = Array.isArray(list) ? list.filter((entry) => entry && typeof entry === 'object') : [];
+  if (!rows.length) return null;
+  const ranked = rows
+    .map((flight) => ({ flight, score: scoreAirlabsScheduleRecord(flight, expected) }))
+    .sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+  if (!best || best.score <= 0) return null;
+  return best.flight;
+}
+
 function sleepMs(duration) {
   const ms = Number(duration);
   if (!Number.isFinite(ms) || ms <= 0) return Promise.resolve();
@@ -366,7 +461,11 @@ async function waitForCalendarAirlabsRequestSlot() {
   calendarAirlabsLastRequestAt = Date.now();
 }
 
-async function fetchCalendarAirlabsFlight(flightIcao, env) {
+async function fetchCalendarAirlabsFlight(
+  flightIcao,
+  env,
+  { depCode = '', arrCode = '' } = {}
+) {
   const normalizedFlightIcao = normalizeCallsign(flightIcao);
   if (!normalizedFlightIcao) {
     const err = new Error('Missing flight_icao value.');
@@ -380,8 +479,16 @@ async function fetchCalendarAirlabsFlight(flightIcao, env) {
     throw err;
   }
   await waitForCalendarAirlabsRequestSlot();
-  const url = new URL(AIRLABS_FLIGHT_LOOKUP_BASE);
-  url.searchParams.set('flight_icao', normalizedFlightIcao);
+  const normalizedDep = normalizeAirportCode(depCode);
+  const normalizedArr = normalizeAirportCode(arrCode);
+  const url = new URL(AIRLABS_SCHEDULES_LOOKUP_BASE);
+  const hasDep = setAirlabsAirportParam(url, 'dep', normalizedDep);
+  const hasArr = setAirlabsAirportParam(url, 'arr', normalizedArr);
+  if (!hasDep && !hasArr) {
+    const err = new Error('Missing dep/arr airport code for AirLabs schedules lookup.');
+    err.code = 'missingRoute';
+    throw err;
+  }
   url.searchParams.set('api_key', apiKey);
   const resp = await fetch(url.toString(), { method: 'GET', cache: 'no-store' });
   const rawText = await resp.text();
@@ -408,11 +515,16 @@ async function fetchCalendarAirlabsFlight(flightIcao, env) {
     throw err;
   }
   const payload = json?.response;
-  const flight = Array.isArray(payload)
-    ? payload.find((item) => item && typeof item === 'object')
-    : (payload && typeof payload === 'object' ? payload : null);
+  const rows = Array.isArray(payload)
+    ? payload
+    : (payload && typeof payload === 'object' ? [payload] : []);
+  const flight = selectAirlabsScheduleFlight(rows, {
+    flightIcao: normalizedFlightIcao,
+    depCode: normalizedDep,
+    arrCode: normalizedArr
+  });
   if (!flight) {
-    const err = new Error('AirLabs response missing flight data.');
+    const err = new Error('AirLabs schedules response missing matching flight data.');
     err.code = 'noFlightData';
     throw err;
   }
@@ -738,7 +850,10 @@ async function runCalendarGateTimeAutoSync(record, env, {
 
     for (const flightIcao of (candidate.flightIcaoCandidates || [])) {
       try {
-        const flight = await fetchCalendarAirlabsFlight(flightIcao, env);
+        const flight = await fetchCalendarAirlabsFlight(flightIcao, env, {
+          depCode: candidate.depCode,
+          arrCode: candidate.arrCode
+        });
         flightMatch = flight;
         gateTimes = extractAirlabsActualGateTimes(flight);
         break;
@@ -847,8 +962,7 @@ async function handleAirlabsProxy(request, env, origin) {
   if (request.method !== 'GET') {
     return new Response('Method Not Allowed', { status: 405, headers: withCors({}, origin) });
   }
-  const apiKey = String(env.AIRLABS_API_KEY || '').trim();
-  if (!apiKey) {
+  if (!String(env.AIRLABS_API_KEY || '').trim()) {
     return jsonResponse(
       { error: 'Airlabs API key not configured.' },
       { status: 503, headers: withCors({}, origin) }
@@ -856,6 +970,8 @@ async function handleAirlabsProxy(request, env, origin) {
   }
   const requestUrl = new URL(request.url);
   const flightIcao = normalizeCallsign(requestUrl.searchParams.get('flight_icao') || '');
+  const depCode = normalizeAirportCode(requestUrl.searchParams.get('dep_code') || '');
+  const arrCode = normalizeAirportCode(requestUrl.searchParams.get('arr_code') || '');
   if (!flightIcao) {
     return jsonResponse(
       { error: 'Missing flight_icao query parameter.' },
@@ -863,24 +979,19 @@ async function handleAirlabsProxy(request, env, origin) {
     );
   }
 
-  const upstreamUrl = new URL(AIRLABS_FLIGHT_LOOKUP_BASE);
-  upstreamUrl.searchParams.set('flight_icao', flightIcao);
-  upstreamUrl.searchParams.set('api_key', apiKey);
-
   try {
-    const resp = await fetch(upstreamUrl.toString(), {
-      method: 'GET',
-      cache: 'no-store'
-    });
-    const body = await resp.text();
-    const headers = withCors({
-      'Content-Type': resp.headers.get('Content-Type') || 'application/json'
-    }, origin);
-    return new Response(body, { status: resp.status, headers });
+    const flight = await fetchCalendarAirlabsFlight(flightIcao, env, { depCode, arrCode });
+    const headers = withCors({ 'Content-Type': 'application/json' }, origin);
+    return jsonResponse({ response: flight }, { status: 200, headers });
   } catch (err) {
+    const status = err?.code === 'missingApiKey'
+      ? 503
+      : (err?.code === 'invalidFlight' || err?.code === 'missingRoute'
+        ? 400
+        : (err?.code === 'noFlightData' ? 404 : 502));
     return jsonResponse(
-      { error: `Unable to reach AirLabs: ${err?.message || err}` },
-      { status: 502, headers: withCors({}, origin) }
+      { error: err?.message || `Unable to reach AirLabs: ${err}` },
+      { status, headers: withCors({}, origin) }
     );
   }
 }

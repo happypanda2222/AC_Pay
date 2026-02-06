@@ -4,3 +4,8 @@ compatibility_date = "2026-02-06"
 
 [triggers]
 crons = ["0 3 * * *", "0 4 * * *"]
+
+[[kv_namespaces]]
+binding = "AC_PAY_CALENDAR"
+id = "864ce25ed32e4fa8bb33f3ca25d0a65b"
+preview_id = "52960b512c5a448d8c2595eef6700b1c"

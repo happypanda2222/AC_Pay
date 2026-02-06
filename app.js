@@ -7115,7 +7115,7 @@ function getCalendarAirlabsProxyEndpoint(){
   }
 }
 
-async function fetchCalendarAirlabsFlight(flightIcao){
+async function fetchCalendarAirlabsFlight(flightIcao, { depCode = '', arrCode = '' } = {}){
   const normalizedFlightIcao = normalizeCallsign(flightIcao);
   if (!normalizedFlightIcao){
     const err = new Error('Missing flight_icao value.');
@@ -7137,6 +7137,10 @@ async function fetchCalendarAirlabsFlight(flightIcao){
   await waitForCalendarAirlabsRequestSlot();
   const urlObj = new URL(endpoint, window.location.origin);
   urlObj.searchParams.set('flight_icao', normalizedFlightIcao);
+  const normalizedDep = normalizeAirportCode(depCode);
+  const normalizedArr = normalizeAirportCode(arrCode);
+  if (normalizedDep) urlObj.searchParams.set('dep_code', normalizedDep);
+  if (normalizedArr) urlObj.searchParams.set('arr_code', normalizedArr);
   const url = urlObj.toString();
   let resp;
   try {
@@ -7198,6 +7202,7 @@ async function fetchCalendarAirlabsFlight(flightIcao){
     url: '',
     responseText: [
       `Requested flight_icao: ${normalizedFlightIcao}`,
+      `Requested route: ${normalizedDep || '—'}-${normalizedArr || '—'}`,
       `Matched flight_icao: ${normalizeCallsign(flight?.flight_icao || '') || '—'}`,
       `Matched flight_iata: ${normalizeCallsign(flight?.flight_iata || '') || '—'}`,
       `Actual departure: ${Number.isFinite(gateTimes.gate_departure) ? formatLocalDateTime(gateTimes.gate_departure) : '—'}`,
@@ -7348,7 +7353,10 @@ async function runCalendarGateTimeAutoSync({
     for (const flightIcao of (candidate.flightIcaoCandidates || [])){
       attempts.push(flightIcao);
       try {
-        const flight = await fetchCalendarAirlabsFlight(flightIcao);
+        const flight = await fetchCalendarAirlabsFlight(flightIcao, {
+          depCode: candidate.depCode,
+          arrCode: candidate.arrCode
+        });
         flightMatch = flight;
         gateTimes = extractAirlabsActualGateTimes(flight);
         selectedFlightIcao = flightIcao;
@@ -17723,12 +17731,12 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent automatic resend attempts for that flight unless Force update is used. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs schedules API (matched by route + flight code) for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent automatic resend attempts for that flight unless Force update is used. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent automatic resend attempts for that flight unless Force update is used. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs schedules API (matched by route + flight code) for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent automatic resend attempts for that flight unless Force update is used. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
     postOriginalCredit: 'Minutes of credit after the original last-flight arrival when a CNX PP pairing is extended.',
     associatedTtg: 'Additional TTG from extending the pairing past the original check-out (original to new check-out) divided by 4; shown when pairing credit uses TAFB/4.',
-    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, update check-in/out, and prevent automatic resend attempts for that flight unless Force update is used. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights are auto-checked only after arrival via AirLabs schedules API (matched by route + flight code) for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, update check-in/out, and prevent automatic resend attempts for that flight unless Force update is used. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. Pairing TAFB uses updated boundary times from the first and last non-cancelled flights; if all boundary flights cancel, TAFB is blank.'
   },
   vo: {
