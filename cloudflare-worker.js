@@ -10,8 +10,8 @@ const AIRPORT_TZ_FALLBACK = { YYZ: 'America/Toronto', CYYZ: 'America/Toronto' };
 const CALENDAR_FLIGHT_PREFIXES = new Set(['RV', 'AC', 'QK']);
 const DEADHEAD_PREFIX = 'DH';
 const TORONTO_TIMEZONE = 'America/Toronto';
-const TORONTO_SYNC_HOUR = 22;
-const TORONTO_SYNC_MINUTE = 30;
+const TORONTO_SYNC_HOUR = 23;
+const TORONTO_SYNC_MINUTE = 0;
 
 let airportTimezonePromise = null;
 let airportTimezoneCache = { ...AIRPORT_TZ_FALLBACK };
