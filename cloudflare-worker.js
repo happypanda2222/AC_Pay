@@ -638,6 +638,31 @@ function getCalendarEventArrivalMs(event, dateKey) {
   return dayStartMs + (overnightMinutes * 60000);
 }
 
+function getCalendarEventDepartureMs(event, dateKey) {
+  const normalizedDateKey = normalizeCalendarDateKey(dateKey || event?.date);
+  if (!normalizedDateKey) return NaN;
+  const dayStartMs = getDateKeyStartMs(normalizedDateKey);
+  if (!Number.isFinite(dayStartMs)) return NaN;
+  const departureMinutes = Number(event?.departureMinutes);
+  if (!Number.isFinite(departureMinutes)) return NaN;
+  return dayStartMs + (departureMinutes * 60000);
+}
+
+function getCalendarGateSyncReferenceMs(event, {
+  arrivalMs = NaN,
+  departureMs = NaN,
+  force = false,
+  nowMs = Date.now()
+} = {}) {
+  if (!Number.isFinite(arrivalMs)) return NaN;
+  if (!force) return arrivalMs;
+  const status = String(event?.gateTimeSync?.status || '').trim().toLowerCase();
+  if (status !== 'pending') return arrivalMs;
+  if (arrivalMs <= nowMs) return arrivalMs;
+  if (Number.isFinite(departureMs)) return departureMs;
+  return arrivalMs;
+}
+
 function getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs, env) {
   if (!Number.isFinite(arrivalAgeMs) || arrivalAgeMs < 0) return 'skip';
   if (arrivalAgeMs > CALENDAR_GATE_SYNC_LOOKBACK_MS) return 'skip';
@@ -914,8 +939,16 @@ function collectCalendarGateSyncCandidates(eventsByDate, env, {
       const arrivalMs = getCalendarEventArrivalMs(event, normalizedDateKey);
       if (!Number.isFinite(arrivalMs)) return;
       if (!force && !isCalendarGateSyncDue(event, { arrivalMs, nowMs })) return;
-      if (arrivalMs < startMs || arrivalMs > endMs) return;
-      const arrivalAgeMs = nowMs - arrivalMs;
+      const departureMs = getCalendarEventDepartureMs(event, normalizedDateKey);
+      const referenceMs = getCalendarGateSyncReferenceMs(event, {
+        arrivalMs,
+        departureMs,
+        force,
+        nowMs
+      });
+      if (!Number.isFinite(referenceMs)) return;
+      if (referenceMs < startMs || referenceMs > endMs) return;
+      const arrivalAgeMs = nowMs - referenceMs;
       const provider = getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs, env);
       if (provider === 'skip') return;
       const flightIcaoCandidates = buildCalendarAirlabsFlightIcaoCandidates(flightInfo.prefix, flightInfo.number);
@@ -1507,7 +1540,7 @@ export default {
       return new Response(resp.body, { status: resp.status, headers: responseHeaders });
     }
 
-    if (url.pathname.startsWith('/airlabs/flight')) {
+    if (url.pathname.startsWith('/airlabs/schedules')) {
       if (!isAuthorized(request, env)) {
         return jsonResponse({ error: 'Unauthorized.' }, { status: 401, headers: withCors({}, origin) });
       }
