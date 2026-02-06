@@ -1,17 +1,15 @@
 const CALENDAR_KEY = 'calendar:default';
 const CALENDAR_SCHEMA_VERSION = 3;
 const CALENDAR_GATE_SYNC_LOOKBACK_MS = 30 * 60 * 60 * 1000;
-const CALENDAR_GATE_SYNC_RETRY_DELAY_MS = 12 * 60 * 60 * 1000;
-const CALENDAR_GATE_SYNC_MAX_ATTEMPTS = 2;
+const CALENDAR_GATE_SYNC_INITIAL_DELAY_MS = 30 * 60 * 1000;
+const CALENDAR_GATE_SYNC_RETRY_MIN_DELAY_MS = 60 * 60 * 1000;
+const CALENDAR_GATE_SYNC_MAX_ATTEMPTS = 5;
 const CALENDAR_AIRLABS_REQUEST_DELAY_MS = 300;
 const AIRLABS_SCHEDULES_LOOKUP_BASE = 'https://airlabs.co/api/v9/schedules';
 const AIRPORT_TZ_LOOKUP_URL = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
 const AIRPORT_TZ_FALLBACK = { YYZ: 'America/Toronto', CYYZ: 'America/Toronto' };
 const CALENDAR_FLIGHT_PREFIXES = new Set(['RV', 'AC', 'QK']);
 const DEADHEAD_PREFIX = 'DH';
-const TORONTO_TIMEZONE = 'America/Toronto';
-const TORONTO_SYNC_HOUR = 23;
-const TORONTO_SYNC_MINUTE = 0;
 
 let airportTimezonePromise = null;
 let airportTimezoneCache = { ...AIRPORT_TZ_FALLBACK };
@@ -239,7 +237,15 @@ function isCalendarFlightTimesAlreadyUpdated(event) {
   const hasArrival = Number.isFinite(Number(event.arrivalMinutes));
   if (!hasDeparture || !hasArrival) return false;
   const source = String(event.timeSource || '').trim().toLowerCase();
-  if (source === 'manual' || source === 'airlabs') return true;
+  if (source === 'manual') return true;
+  if (source === 'airlabs') {
+    const sync = event?.gateTimeSync;
+    if (!sync || typeof sync !== 'object') return true;
+    const status = String(sync.status || '').trim().toLowerCase();
+    const arrivalSource = String(sync.arrivalSource || '').trim().toLowerCase();
+    if (status === 'success' && (!arrivalSource || arrivalSource === 'actual')) return true;
+    return false;
+  }
   const status = String(event?.gateTimeSync?.status || '').trim().toLowerCase();
   const provider = String(event?.gateTimeSync?.provider || '').trim().toLowerCase();
   return status === 'success' && provider === 'airlabs';
@@ -338,16 +344,17 @@ function extractAirlabsActualGateTimes(flight) {
   const departureTsPaths = [
     'dep_actual_ts',
     'departure.actual_ts',
-    'dep.actual_ts',
-    'dep_time_ts',
-    'departure.time_ts'
+    'dep.actual_ts'
   ];
   const arrivalTsPaths = [
     'arr_actual_ts',
     'arrival.actual_ts',
-    'arr.actual_ts',
-    'arr_time_ts',
-    'arrival.time_ts'
+    'arr.actual_ts'
+  ];
+  const arrivalEstimatedTsPaths = [
+    'arr_estimated_ts',
+    'arrival.estimated_ts',
+    'arr.estimated_ts'
   ];
   const departureLocalPaths = [
     'dep_actual',
@@ -355,8 +362,7 @@ function extractAirlabsActualGateTimes(flight) {
     'departure.actual',
     'departure.actual_time',
     'dep.actual',
-    'dep.actual_time',
-    'departure.time'
+    'dep.actual_time'
   ];
   const arrivalLocalPaths = [
     'arr_actual',
@@ -364,8 +370,15 @@ function extractAirlabsActualGateTimes(flight) {
     'arrival.actual',
     'arrival.actual_time',
     'arr.actual',
-    'arr.actual_time',
-    'arrival.time'
+    'arr.actual_time'
+  ];
+  const arrivalEstimatedLocalPaths = [
+    'arr_estimated',
+    'arr_estimated_time',
+    'arrival.estimated',
+    'arrival.estimated_time',
+    'arr.estimated',
+    'arr.estimated_time'
   ];
   let gateDeparture = null;
   for (const path of departureTsPaths) {
@@ -380,6 +393,14 @@ function extractAirlabsActualGateTimes(flight) {
     const parsed = parseCalendarApiTimestamp(getAirlabsField(flight, path));
     if (Number.isFinite(parsed)) {
       gateArrival = parsed;
+      break;
+    }
+  }
+  let gateArrivalEstimated = null;
+  for (const path of arrivalEstimatedTsPaths) {
+    const parsed = parseCalendarApiTimestamp(getAirlabsField(flight, path));
+    if (Number.isFinite(parsed)) {
+      gateArrivalEstimated = parsed;
       break;
     }
   }
@@ -399,11 +420,21 @@ function extractAirlabsActualGateTimes(flight) {
       break;
     }
   }
+  let localArrivalEstimated = null;
+  for (const path of arrivalEstimatedLocalPaths) {
+    const parsed = parseAirlabsLocalDateTime(getAirlabsField(flight, path));
+    if (parsed) {
+      localArrivalEstimated = parsed;
+      break;
+    }
+  }
   return {
     gate_departure: Number.isFinite(gateDeparture) ? gateDeparture : null,
     gate_arrival: Number.isFinite(gateArrival) ? gateArrival : null,
+    gate_arrival_estimated: Number.isFinite(gateArrivalEstimated) ? gateArrivalEstimated : null,
     local_departure: localDeparture || null,
-    local_arrival: localArrival || null
+    local_arrival: localArrival || null,
+    local_arrival_estimated: localArrivalEstimated || null
   };
 }
 
@@ -619,45 +650,120 @@ function getCalendarGateSyncAttemptCount(event) {
   return Math.max(0, Math.trunc(attempts));
 }
 
-function hasRecentCalendarGateSyncFailure(event, nowMs = Date.now()) {
-  if (!event || typeof event !== 'object') return false;
-  const sync = event.gateTimeSync;
-  if (!sync || typeof sync !== 'object') return false;
-  if (String(sync.status || '').toLowerCase() !== 'failed') return false;
-  const attemptCount = Number(sync.attemptCount);
-  if (sync.retryExhausted || (Number.isFinite(attemptCount) && attemptCount >= CALENDAR_GATE_SYNC_MAX_ATTEMPTS)) {
-    return true;
-  }
-  const nextRetryAt = Number(sync.nextRetryAt);
-  return Number.isFinite(nextRetryAt) && nextRetryAt > nowMs;
+function normalizeCalendarGateSyncArrivalSource(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'actual' || normalized === 'estimated') return normalized;
+  return null;
 }
 
-function setCalendarGateTimeSyncFailure(event, { provider = '', reason = 'applyFailed', nowMs = Date.now() } = {}) {
+function buildCalendarGateSyncNextRetryAt({ nowMs = Date.now(), arrEstimatedMs = NaN } = {}) {
+  const oneHourFromNow = nowMs + CALENDAR_GATE_SYNC_RETRY_MIN_DELAY_MS;
+  if (Number.isFinite(arrEstimatedMs)) {
+    return Math.max(oneHourFromNow, arrEstimatedMs);
+  }
+  return oneHourFromNow;
+}
+
+function getCalendarGateSyncDueAt(event, arrivalMs) {
+  const nextRetryAt = Number(event?.gateTimeSync?.nextRetryAt);
+  if (Number.isFinite(nextRetryAt)) return nextRetryAt;
+  if (!Number.isFinite(arrivalMs)) return NaN;
+  return arrivalMs + CALENDAR_GATE_SYNC_INITIAL_DELAY_MS;
+}
+
+function isCalendarGateSyncDue(event, { arrivalMs = NaN, nowMs = Date.now() } = {}) {
+  if (!event || typeof event !== 'object') return false;
+  if (event?.gateTimeSync?.retryExhausted) return false;
+  const dueAt = getCalendarGateSyncDueAt(event, arrivalMs);
+  return Number.isFinite(dueAt) && dueAt <= nowMs;
+}
+
+function setCalendarGateTimeSyncPending(event, {
+  provider = '',
+  reason = 'awaitingActualArrival',
+  arrivalSource = null,
+  arrEstimatedMs = NaN,
+  nowMs = Date.now()
+} = {}) {
   if (!event || typeof event !== 'object') return;
   const nextAttemptCount = Math.min(
     CALENDAR_GATE_SYNC_MAX_ATTEMPTS,
     getCalendarGateSyncAttemptCount(event) + 1
   );
   const retryExhausted = nextAttemptCount >= CALENDAR_GATE_SYNC_MAX_ATTEMPTS;
+  if (retryExhausted) {
+    event.gateTimeSync = {
+      status: 'failed',
+      provider: String(provider || '').trim().toLowerCase() || null,
+      reason: String(reason || '').trim() || 'applyFailed',
+      arrivalSource: normalizeCalendarGateSyncArrivalSource(arrivalSource),
+      attemptedAt: nowMs,
+      attemptCount: nextAttemptCount,
+      nextRetryAt: null,
+      retryExhausted: true
+    };
+    return { retryExhausted: true };
+  }
+  event.gateTimeSync = {
+    status: 'pending',
+    provider: String(provider || '').trim().toLowerCase() || null,
+    reason: String(reason || '').trim() || 'awaitingActualArrival',
+    arrivalSource: normalizeCalendarGateSyncArrivalSource(arrivalSource),
+    attemptedAt: nowMs,
+    attemptCount: nextAttemptCount,
+    nextRetryAt: buildCalendarGateSyncNextRetryAt({ nowMs, arrEstimatedMs }),
+    retryExhausted: false
+  };
+  return { retryExhausted: false };
+}
+
+function setCalendarGateTimeSyncFailure(event, {
+  provider = '',
+  reason = 'applyFailed',
+  arrivalSource = null,
+  attemptCount = null,
+  nowMs = Date.now()
+} = {}) {
+  if (!event || typeof event !== 'object') return;
+  const nextAttemptCount = Number.isFinite(attemptCount)
+    ? Math.max(0, Math.min(CALENDAR_GATE_SYNC_MAX_ATTEMPTS, Math.trunc(attemptCount)))
+    : Math.min(
+      CALENDAR_GATE_SYNC_MAX_ATTEMPTS,
+      getCalendarGateSyncAttemptCount(event) + 1
+    );
+  const retryExhausted = nextAttemptCount >= CALENDAR_GATE_SYNC_MAX_ATTEMPTS;
   event.gateTimeSync = {
     status: 'failed',
     provider: String(provider || '').trim().toLowerCase() || null,
     reason: String(reason || '').trim() || 'applyFailed',
+    arrivalSource: normalizeCalendarGateSyncArrivalSource(arrivalSource),
     attemptedAt: nowMs,
     attemptCount: nextAttemptCount,
-    nextRetryAt: retryExhausted ? null : (nowMs + CALENDAR_GATE_SYNC_RETRY_DELAY_MS),
+    nextRetryAt: null,
     retryExhausted
   };
 }
 
-function setCalendarGateTimeSyncSuccess(event, { provider = '', nowMs = Date.now() } = {}) {
+function setCalendarGateTimeSyncSuccess(event, {
+  provider = '',
+  arrivalSource = 'actual',
+  attemptCount = null,
+  nowMs = Date.now()
+} = {}) {
   if (!event || typeof event !== 'object') return;
+  const nextAttemptCount = Number.isFinite(attemptCount)
+    ? Math.max(0, Math.min(CALENDAR_GATE_SYNC_MAX_ATTEMPTS, Math.trunc(attemptCount)))
+    : Math.min(
+      CALENDAR_GATE_SYNC_MAX_ATTEMPTS,
+      getCalendarGateSyncAttemptCount(event) + 1
+    );
   event.gateTimeSync = {
     status: 'success',
     provider: String(provider || '').trim().toLowerCase() || null,
     reason: null,
+    arrivalSource: normalizeCalendarGateSyncArrivalSource(arrivalSource) || 'actual',
     attemptedAt: nowMs,
-    attemptCount: getCalendarGateSyncAttemptCount(event),
+    attemptCount: nextAttemptCount,
     nextRetryAt: null,
     retryExhausted: false
   };
@@ -755,19 +861,20 @@ function collectCalendarGateSyncCandidates(eventsByDate, env, {
       if (isPairingMarkerEvent(event)) return;
       if (isCalendarCancelledEvent(event)) return;
       if (skipAlreadyUpdated && isCalendarFlightTimesAlreadyUpdated(event)) return;
-      if (!force && hasRecentCalendarGateSyncFailure(event, nowMs)) return;
       const flightInfo = extractCalendarFlightIdentifier(event);
       if (!flightInfo) return;
       const { depCode, arrCode } = getCalendarEventBoundaryAirports(event);
       if (!depCode || !arrCode) return;
       const arrivalMs = getCalendarEventArrivalMs(event, normalizedDateKey);
       if (!Number.isFinite(arrivalMs)) return;
+      if (!force && !isCalendarGateSyncDue(event, { arrivalMs, nowMs })) return;
       if (arrivalMs < startMs || arrivalMs > endMs) return;
       const arrivalAgeMs = nowMs - arrivalMs;
       const provider = getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs, env);
       if (provider === 'skip') return;
       const flightIcaoCandidates = buildCalendarAirlabsFlightIcaoCandidates(flightInfo.prefix, flightInfo.number);
       if (!flightIcaoCandidates.length) return;
+      const dueAt = getCalendarGateSyncDueAt(event, arrivalMs);
       candidates.push({
         event,
         dateKey: normalizedDateKey,
@@ -775,6 +882,7 @@ function collectCalendarGateSyncCandidates(eventsByDate, env, {
         arrCode,
         arrivalMs,
         arrivalAgeMs,
+        dueAt,
         flightIcaoCandidates
       });
     });
@@ -794,90 +902,247 @@ function normalizeCalendarGateLocalTime(entry, fallbackDateKey) {
   };
 }
 
-function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'airlabs', nowMs = Date.now() } = {}) {
-  if (!candidate) {
-    return { updated: false, reason: 'applyFailed' };
-  }
-  if (!gateTimes) {
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'missingActualTimes', nowMs });
-    return { updated: false, reason: 'missingActualTimes' };
-  }
-  let depLocal = normalizeCalendarGateLocalTime(gateTimes.local_departure, candidate.dateKey);
-  let arrLocal = normalizeCalendarGateLocalTime(gateTimes.local_arrival, depLocal?.dateKey || candidate.dateKey);
-  const hasDeparture = Boolean(depLocal) || Number.isFinite(gateTimes.gate_departure);
-  const hasArrival = Boolean(arrLocal) || Number.isFinite(gateTimes.gate_arrival);
-  if (!hasDeparture || !hasArrival) {
-    const reason = !hasDeparture && !hasArrival
-      ? 'missingActualTimes'
-      : (!hasDeparture ? 'missingActualDeparture' : 'missingActualArrival');
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason, nowMs });
-    if (!hasDeparture && !hasArrival) return { updated: false, reason: 'missingActualTimes' };
-    if (!hasDeparture) return { updated: false, reason: 'missingActualDeparture' };
-    return { updated: false, reason: 'missingActualArrival' };
-  }
-  const needsDepFromUtc = !depLocal;
-  const needsArrFromUtc = !arrLocal;
-  if (needsDepFromUtc || needsArrFromUtc) {
-    const depZone = needsDepFromUtc ? getCachedAirportTimeZone(candidate.depCode) : null;
-    const arrZone = needsArrFromUtc ? getCachedAirportTimeZone(candidate.arrCode) : null;
-    if ((needsDepFromUtc && !depZone) || (needsArrFromUtc && !arrZone)) {
-      setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'timezoneMissing', nowMs });
-      return { updated: false, reason: 'timezoneMissing' };
-    }
-    if (needsDepFromUtc) {
-      depLocal = getLocalMinutesFromUtc(gateTimes.gate_departure, depZone);
-    }
-    if (needsArrFromUtc) {
-      arrLocal = getLocalMinutesFromUtc(gateTimes.gate_arrival, arrZone);
-    }
-  }
-  if (!depLocal || !arrLocal) {
-    const reason = !depLocal && !arrLocal
-      ? 'missingActualTimes'
-      : (!depLocal ? 'missingActualDeparture' : 'missingActualArrival');
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason, nowMs });
-    if (!depLocal && !arrLocal) return { updated: false, reason: 'missingActualTimes' };
-    if (!depLocal) return { updated: false, reason: 'missingActualDeparture' };
-    return { updated: false, reason: 'missingActualArrival' };
-  }
-  const depOffset = getDateKeyDayOffset(depLocal.dateKey, candidate.dateKey);
-  if (!Number.isFinite(depOffset) || Math.abs(depOffset) > 1) {
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'dateMismatch', nowMs });
-    return { updated: false, reason: 'dateMismatch' };
-  }
-  const dayOffset = getDateKeyDayOffset(arrLocal.dateKey, depLocal.dateKey);
-  if (!Number.isFinite(dayOffset) || dayOffset < 0 || dayOffset > 1) {
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'dateMismatch', nowMs });
-    return { updated: false, reason: 'dateMismatch' };
-  }
+function getCalendarGateLocalMs(localTime, fallbackDateKey) {
+  const normalized = normalizeCalendarGateLocalTime(localTime, fallbackDateKey);
+  if (!normalized) return NaN;
+  const dayStartMs = getDateKeyStartMs(normalized.dateKey);
+  if (!Number.isFinite(dayStartMs)) return NaN;
+  return dayStartMs + (normalized.minutes * 60000);
+}
 
-  candidate.event.departureMinutes = depLocal.minutes;
-  candidate.event.arrivalMinutes = arrLocal.minutes;
+function resolveCalendarGateLocalTime({
+  localTime = null,
+  tsSeconds = NaN,
+  timeZone = '',
+  fallbackDateKey = ''
+} = {}) {
+  const normalizedLocal = normalizeCalendarGateLocalTime(localTime, fallbackDateKey);
+  if (normalizedLocal) return normalizedLocal;
+  if (!Number.isFinite(tsSeconds)) return null;
+  if (!timeZone) return null;
+  return getLocalMinutesFromUtc(tsSeconds, timeZone);
+}
+
+function applyCalendarGateTimingUpdate(candidate, {
+  departureMinutes = NaN,
+  arrivalMinutes = NaN,
+  source = 'airlabs'
+} = {}) {
+  if (!candidate?.event) return { updated: false };
+  if (!Number.isFinite(departureMinutes) || !Number.isFinite(arrivalMinutes)) return { updated: false };
+  const dep = Math.max(0, Math.min(1439, Math.trunc(departureMinutes)));
+  const arr = Math.max(0, Math.min(1439, Math.trunc(arrivalMinutes)));
+  candidate.event.departureMinutes = dep;
+  candidate.event.arrivalMinutes = arr;
   if (Array.isArray(candidate.event?.segments) && candidate.event.segments.length) {
     const firstSeg = candidate.event.segments[0];
     if (firstSeg && typeof firstSeg === 'object') {
-      firstSeg.departureMinutes = depLocal.minutes;
+      firstSeg.departureMinutes = dep;
     }
     const lastSeg = candidate.event.segments[candidate.event.segments.length - 1];
     if (lastSeg && typeof lastSeg === 'object') {
-      lastSeg.arrivalMinutes = arrLocal.minutes;
+      lastSeg.arrivalMinutes = arr;
     }
   }
-  candidate.event.timeSource = source;
-
-  const overnightMinutes = arrLocal.minutes < depLocal.minutes
-    ? arrLocal.minutes + 1440
-    : arrLocal.minutes;
-  const localBlockMinutes = Math.max(0, overnightMinutes - depLocal.minutes);
+  if (source) candidate.event.timeSource = source;
+  const overnightMinutes = arr < dep ? arr + 1440 : arr;
+  const localBlockMinutes = Math.max(0, overnightMinutes - dep);
   if (Number.isFinite(localBlockMinutes)) {
     candidate.event.blockMinutes = localBlockMinutes;
     candidate.event.creditMinutes = isDeadheadEvent(candidate.event)
       ? Math.round(localBlockMinutes * 0.5)
       : localBlockMinutes;
   }
+  return { updated: true };
+}
 
-  setCalendarGateTimeSyncSuccess(candidate.event, { provider: source, nowMs });
-  return { updated: true, reason: null };
+function applyCalendarGateDepartureOnly(candidate, departureMinutes, source) {
+  if (!candidate?.event) return { updated: false };
+  const existingArrival = Number(candidate.event.arrivalMinutes);
+  if (Number.isFinite(existingArrival)) {
+    return applyCalendarGateTimingUpdate(candidate, {
+      departureMinutes,
+      arrivalMinutes: existingArrival,
+      source
+    });
+  }
+  candidate.event.departureMinutes = Math.max(0, Math.min(1439, Math.trunc(departureMinutes)));
+  if (Array.isArray(candidate.event?.segments) && candidate.event.segments.length) {
+    const firstSeg = candidate.event.segments[0];
+    if (firstSeg && typeof firstSeg === 'object') {
+      firstSeg.departureMinutes = candidate.event.departureMinutes;
+    }
+  }
+  if (source) candidate.event.timeSource = source;
+  return { updated: true };
+}
+
+function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'airlabs', nowMs = Date.now() } = {}) {
+  if (!candidate) {
+    return {
+      updated: false,
+      pending: false,
+      completed: false,
+      reason: 'applyFailed',
+      arrivalSource: null,
+      arrEstimatedMs: NaN
+    };
+  }
+  if (!gateTimes) {
+    return {
+      updated: false,
+      pending: true,
+      completed: false,
+      reason: 'missingActualTimes',
+      arrivalSource: null,
+      arrEstimatedMs: NaN
+    };
+  }
+  const depZone = getCachedAirportTimeZone(candidate.depCode);
+  const arrZone = getCachedAirportTimeZone(candidate.arrCode);
+  const depLocal = resolveCalendarGateLocalTime({
+    localTime: gateTimes.local_departure,
+    tsSeconds: gateTimes.gate_departure,
+    timeZone: depZone,
+    fallbackDateKey: candidate.dateKey
+  });
+  if (!depLocal) {
+    if (Number.isFinite(gateTimes.gate_departure) && !depZone) {
+      return {
+        updated: false,
+        pending: true,
+        completed: false,
+        reason: 'timezoneMissing',
+        arrivalSource: null,
+        arrEstimatedMs: NaN
+      };
+    }
+    return {
+      updated: false,
+      pending: true,
+      completed: false,
+      reason: 'missingActualDeparture',
+      arrivalSource: null,
+      arrEstimatedMs: NaN
+    };
+  }
+  const depOffset = getDateKeyDayOffset(depLocal.dateKey, candidate.dateKey);
+  if (!Number.isFinite(depOffset) || Math.abs(depOffset) > 1) {
+    return {
+      updated: false,
+      pending: true,
+      completed: false,
+      reason: 'dateMismatch',
+      arrivalSource: null,
+      arrEstimatedMs: NaN
+    };
+  }
+
+  const arrActualLocal = resolveCalendarGateLocalTime({
+    localTime: gateTimes.local_arrival,
+    tsSeconds: gateTimes.gate_arrival,
+    timeZone: arrZone,
+    fallbackDateKey: depLocal.dateKey
+  });
+  if (arrActualLocal) {
+    const dayOffset = getDateKeyDayOffset(arrActualLocal.dateKey, depLocal.dateKey);
+    if (!Number.isFinite(dayOffset) || dayOffset < 0 || dayOffset > 1) {
+      return {
+        updated: false,
+        pending: true,
+        completed: false,
+        reason: 'dateMismatch',
+        arrivalSource: null,
+        arrEstimatedMs: NaN
+      };
+    }
+    const result = applyCalendarGateTimingUpdate(candidate, {
+      departureMinutes: depLocal.minutes,
+      arrivalMinutes: arrActualLocal.minutes,
+      source
+    });
+    if (!result?.updated) {
+      return {
+        updated: false,
+        pending: true,
+        completed: false,
+        reason: 'applyFailed',
+        arrivalSource: null,
+        arrEstimatedMs: NaN
+      };
+    }
+    return {
+      updated: true,
+      pending: false,
+      completed: true,
+      reason: null,
+      arrivalSource: 'actual',
+      arrEstimatedMs: NaN
+    };
+  }
+
+  const arrEstimatedLocal = resolveCalendarGateLocalTime({
+    localTime: gateTimes.local_arrival_estimated,
+    tsSeconds: gateTimes.gate_arrival_estimated,
+    timeZone: arrZone,
+    fallbackDateKey: depLocal.dateKey
+  });
+  if (arrEstimatedLocal) {
+    const dayOffset = getDateKeyDayOffset(arrEstimatedLocal.dateKey, depLocal.dateKey);
+    if (!Number.isFinite(dayOffset) || dayOffset < 0 || dayOffset > 1) {
+      return {
+        updated: false,
+        pending: true,
+        completed: false,
+        reason: 'dateMismatch',
+        arrivalSource: 'estimated',
+        arrEstimatedMs: NaN
+      };
+    }
+    const result = applyCalendarGateTimingUpdate(candidate, {
+      departureMinutes: depLocal.minutes,
+      arrivalMinutes: arrEstimatedLocal.minutes,
+      source
+    });
+    if (!result?.updated) {
+      return {
+        updated: false,
+        pending: true,
+        completed: false,
+        reason: 'applyFailed',
+        arrivalSource: 'estimated',
+        arrEstimatedMs: NaN
+      };
+    }
+    return {
+      updated: true,
+      pending: true,
+      completed: false,
+      reason: 'awaitingActualArrival',
+      arrivalSource: 'estimated',
+      arrEstimatedMs: getCalendarGateLocalMs(arrEstimatedLocal, depLocal.dateKey)
+    };
+  }
+
+  const depOnlyResult = applyCalendarGateDepartureOnly(candidate, depLocal.minutes, source);
+  if (!depOnlyResult?.updated) {
+    return {
+      updated: false,
+      pending: true,
+      completed: false,
+      reason: 'applyFailed',
+      arrivalSource: null,
+      arrEstimatedMs: NaN
+    };
+  }
+  return {
+    updated: true,
+    pending: true,
+    completed: false,
+    reason: 'awaitingActualArrival',
+    arrivalSource: null,
+    arrEstimatedMs: NaN
+  };
 }
 
 function buildCalendarMonths(eventsByDate) {
@@ -902,13 +1167,14 @@ async function runCalendarGateTimeAutoSync(record, env, {
     nowMs
   });
   if (!candidates.length) {
-    return { mutated: false, updatedCount: 0, failedCount: 0 };
+    return { mutated: false, updatedCount: 0, pendingCount: 0, failedCount: 0 };
   }
 
   await loadAirportTimezones();
 
   let mutated = false;
   let updatedCount = 0;
+  let pendingCount = 0;
   let failedCount = 0;
 
   for (const candidate of candidates) {
@@ -936,14 +1202,22 @@ async function runCalendarGateTimeAutoSync(record, env, {
     }
 
     if (!flightMatch) {
-      failedCount += 1;
       let failureReason = 'noAirlabsMatch';
       if (lookupErrorCount > 0) {
         failureReason = 'lookupError';
       } else if (!noDataCount) {
         failureReason = 'applyFailed';
       }
-      setCalendarGateTimeSyncFailure(candidate.event, { provider: 'airlabs', reason: failureReason, nowMs: Date.now() });
+      const pendingState = setCalendarGateTimeSyncPending(candidate.event, {
+        provider: 'airlabs',
+        reason: failureReason,
+        nowMs: Date.now()
+      });
+      if (pendingState?.retryExhausted) {
+        failedCount += 1;
+      } else {
+        pendingCount += 1;
+      }
       mutated = true;
       continue;
     }
@@ -952,9 +1226,43 @@ async function runCalendarGateTimeAutoSync(record, env, {
       source: 'airlabs',
       nowMs: Date.now()
     });
-    if (outcome?.updated) {
+    if (outcome?.completed && outcome?.updated) {
+      setCalendarGateTimeSyncSuccess(candidate.event, {
+        provider: 'airlabs',
+        arrivalSource: 'actual',
+        nowMs: Date.now()
+      });
+      updatedCount += 1;
+    } else if (outcome?.pending) {
+      const pendingState = setCalendarGateTimeSyncPending(candidate.event, {
+        provider: 'airlabs',
+        reason: outcome?.reason || 'awaitingActualArrival',
+        arrivalSource: outcome?.arrivalSource || null,
+        arrEstimatedMs: outcome?.arrEstimatedMs,
+        nowMs: Date.now()
+      });
+      if (outcome?.updated) {
+        updatedCount += 1;
+      }
+      if (pendingState?.retryExhausted) {
+        failedCount += 1;
+      } else {
+        pendingCount += 1;
+      }
+    } else if (outcome?.updated) {
+      setCalendarGateTimeSyncSuccess(candidate.event, {
+        provider: 'airlabs',
+        arrivalSource: 'actual',
+        nowMs: Date.now()
+      });
       updatedCount += 1;
     } else {
+      setCalendarGateTimeSyncFailure(candidate.event, {
+        provider: 'airlabs',
+        reason: outcome?.reason || 'applyFailed',
+        arrivalSource: outcome?.arrivalSource || null,
+        nowMs: Date.now()
+      });
       failedCount += 1;
     }
     mutated = true;
@@ -964,7 +1272,7 @@ async function runCalendarGateTimeAutoSync(record, env, {
     record.months = buildCalendarMonths(record.eventsByDate);
   }
 
-  return { mutated, updatedCount, failedCount };
+  return { mutated, updatedCount, pendingCount, failedCount };
 }
 
 async function handleGet(env, origin) {
@@ -1065,30 +1373,14 @@ async function handleAirlabsProxy(request, env, origin) {
   }
 }
 
-function isTorontoSyncWindow(scheduledTime) {
-  const date = new Date(Number.isFinite(Number(scheduledTime)) ? Number(scheduledTime) : Date.now());
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TORONTO_TIMEZONE,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).formatToParts(date).reduce((acc, part) => {
-    if (part.type !== 'literal') acc[part.type] = part.value;
-    return acc;
-  }, {});
-  const hour = Number(parts.hour);
-  const minute = Number(parts.minute);
-  return hour === TORONTO_SYNC_HOUR && minute === TORONTO_SYNC_MINUTE;
-}
-
 async function runScheduledGateSync(env, scheduledTime) {
   if (!env.AC_PAY_CALENDAR) {
     console.warn('Calendar storage not configured; skipping scheduled gate sync.');
-    return { mutated: false, updatedCount: 0, failedCount: 0, skipped: 'missingStorage' };
+    return { mutated: false, updatedCount: 0, pendingCount: 0, failedCount: 0, skipped: 'missingStorage' };
   }
   if (!String(env.AIRLABS_API_KEY || '').trim()) {
     console.warn('AIRLABS_API_KEY missing; skipping scheduled gate sync.');
-    return { mutated: false, updatedCount: 0, failedCount: 0, skipped: 'missingAirlabsKey' };
+    return { mutated: false, updatedCount: 0, pendingCount: 0, failedCount: 0, skipped: 'missingAirlabsKey' };
   }
 
   const stored = await env.AC_PAY_CALENDAR.get(CALENDAR_KEY, 'json');
@@ -1189,14 +1481,12 @@ export default {
 
   async scheduled(event, env, ctx) {
     const scheduledTime = Number(event?.scheduledTime) || Date.now();
-    if (!isTorontoSyncWindow(scheduledTime)) {
-      return;
-    }
     ctx.waitUntil((async () => {
       try {
         const result = await runScheduledGateSync(env, scheduledTime);
         console.log('Scheduled gate sync complete', {
           updatedCount: result.updatedCount || 0,
+          pendingCount: result.pendingCount || 0,
           failedCount: result.failedCount || 0,
           mutated: Boolean(result.mutated),
           skipped: result.skipped || null

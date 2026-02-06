@@ -1015,6 +1015,21 @@
     .calendar-segment-time{
       font-weight:700;
     }
+    .calendar-estimated-tag{
+      display:inline-flex;
+      align-items:center;
+      padding:1px 6px;
+      border-radius:999px;
+      border:1px solid #f59e0b;
+      background:rgba(245, 158, 11, 0.16);
+      color:#fde68a;
+      font-size:10px;
+      font-weight:800;
+      letter-spacing:.2px;
+      text-transform:uppercase;
+      line-height:1.3;
+      white-space:nowrap;
+    }
     .calendar-segment-time.is-early{
       color:#30d158;
     }
@@ -2177,11 +2192,11 @@
                 <div class="calendar-summary-title" id="modern-calendar-summary-header">Month</div>
                 <div class="metric-grid calendar-summary-grid">
                   <button class="metric-card actionable" id="modern-calendar-credit-card" type="button">
-                    <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals use block time from departure/arrival with time-zone/DST awareness. Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 20 hours old. Only actual times are used (no estimated/scheduled fallback). Successful updates set source to airlabs, drive recalculations, and stop future resend requests for that flight."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals use block time from departure/arrival with time-zone/DST awareness. Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 20 hours old. Only actual times are used (no estimated/scheduled fallback). Successful updates set source to airlabs, drive recalculations, and stop future resend requests for that flight.</span></span></div>
+                    <div class="metric-label">Credit <span class="info-hover" tabindex="0" aria-label="Credit totals use block time from departure/arrival with time-zone/DST awareness. Flights in the last 30 hours are auto-checked by AirLabs flight_icao only. First attempt is 30 minutes after arrival. If dep_actual exists but arr_actual is missing, arrival uses arr_estimated temporarily and retries (later of +1 hour or estimated arrival) up to 5 attempts until arr_actual is returned. Non-force runs skip already completed/manual flights; Force can re-run eligible flights. CNX/CNX PP are always excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">Credit totals use block time from departure/arrival with time-zone/DST awareness. Flights in the last 30 hours are auto-checked by AirLabs flight_icao only. First attempt is 30 minutes after arrival. If dep_actual exists but arr_actual is missing, arrival uses arr_estimated temporarily and retries (later of +1 hour or estimated arrival) up to 5 attempts until arr_actual is returned. Non-force runs skip already completed/manual flights; Force can re-run eligible flights. CNX/CNX PP are always excluded.</span></span></div>
                     <div class="metric-value" id="modern-calendar-total-credit">--</div>
                   </button>
                   <button class="metric-card actionable" id="modern-calendar-tafb-card" type="button">
-                    <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB is recalculated from pairing check-in/check-out when TRIP TAFB is unavailable. Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 20 hours old. Only actual times are used (no estimated/scheduled fallback). Successful updates set source to airlabs, update check-in/out timing, and prevent resend requests for that flight."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB is recalculated from pairing check-in/check-out when TRIP TAFB is unavailable. Past flights are auto-checked only after arrival via AirLabs flight_icao for flights up to 20 hours old. Only actual times are used (no estimated/scheduled fallback). Successful updates set source to airlabs, update check-in/out timing, and prevent resend requests for that flight.</span></span></div>
+                    <div class="metric-label">TAFB <span class="info-hover" tabindex="0" aria-label="TAFB is recalculated from pairing check-in/check-out when TRIP TAFB is unavailable. Flights in the last 30 hours are auto-checked by AirLabs flight_icao only, first attempt 30 minutes after arrival. dep_actual can be applied with temporary arr_estimated while waiting for arr_actual, with retries up to 5 attempts. Non-force runs skip flights already completed/manual; Force can re-run eligible flights. CNX/CNX PP are always excluded."><span class="info-icon" aria-hidden="true">i</span><span class="tooltip">TAFB is recalculated from pairing check-in/check-out when TRIP TAFB is unavailable. Flights in the last 30 hours are auto-checked by AirLabs flight_icao only, first attempt 30 minutes after arrival. dep_actual can be applied with temporary arr_estimated while waiting for arr_actual, with retries up to 5 attempts. Non-force runs skip flights already completed/manual; Force can re-run eligible flights. CNX/CNX PP are always excluded.</span></span></div>
                     <div class="metric-value" id="modern-calendar-total-tafb">--</div>
                   </button>
                 </div>
