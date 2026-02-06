@@ -18,7 +18,7 @@ function withCors(headers, origin) {
     next.set('Vary', 'Origin');
   }
   next.set('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
-  next.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-None-Match, X-API-Key, x-api-key, API-Version, Accept-Version');
+  next.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-None-Match, X-API-Key, x-api-key, x-apikey, API-Version, Accept-Version');
   next.set('Access-Control-Expose-Headers', 'ETag, X-AC-Pay-Schema');
   return next;
 }
@@ -226,6 +226,32 @@ export default {
         if (value) upstreamHeaders.set(name, value);
       };
       ['authorization', 'x-api-key', 'api-version', 'accept-version', 'accept'].forEach(forwardHeader);
+      const resp = await fetch(upstreamUrl.toString(), {
+        method: 'GET',
+        headers: upstreamHeaders,
+        cache: 'no-store'
+      });
+      const responseHeaders = withCors({
+        'Content-Type': resp.headers.get('Content-Type') || 'application/json'
+      }, origin);
+      return new Response(resp.body, { status: resp.status, headers: responseHeaders });
+    }
+
+    if (url.pathname.startsWith('/aeroapi/')) {
+      if (!isAuthorized(request, env)) {
+        return jsonResponse({ error: 'Unauthorized.' }, { status: 401, headers: withCors({}, origin) });
+      }
+      if (request.method !== 'GET') {
+        return new Response('Method Not Allowed', { status: 405, headers: withCors({}, origin) });
+      }
+      const upstreamPath = url.pathname.replace(/^\/aeroapi\/?/, '');
+      const upstreamUrl = new URL(upstreamPath, 'https://aeroapi.flightaware.com/aeroapi/');
+      upstreamUrl.search = url.search;
+      const upstreamHeaders = new Headers();
+      const xApiKey = request.headers.get('x-apikey') || request.headers.get('x-api-key');
+      if (xApiKey) upstreamHeaders.set('x-apikey', xApiKey);
+      const accept = request.headers.get('accept');
+      if (accept) upstreamHeaders.set('accept', accept);
       const resp = await fetch(upstreamUrl.toString(), {
         method: 'GET',
         headers: upstreamHeaders,
