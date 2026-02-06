@@ -298,6 +298,34 @@ function parseCalendarApiTimestamp(value) {
   return null;
 }
 
+function parseAirlabsLocalDateTime(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const fullMatch = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (fullMatch) {
+    const year = Number(fullMatch[1]);
+    const month = Number(fullMatch[2]);
+    const day = Number(fullMatch[3]);
+    const hour = Number(fullMatch[4] ?? '0');
+    const minute = Number(fullMatch[5] ?? '0');
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return {
+      dateKey: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+      minutes: (hour * 60) + minute
+    };
+  }
+  const timeMatch = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!timeMatch) return null;
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { dateKey: null, minutes: (hour * 60) + minute };
+}
+
 function getAirlabsField(entry, path) {
   if (!entry || !path) return null;
   return path.split('.').reduce((value, key) => {
@@ -307,30 +335,40 @@ function getAirlabsField(entry, path) {
 }
 
 function extractAirlabsActualGateTimes(flight) {
-  const departurePaths = [
+  const departureTsPaths = [
     'dep_actual_ts',
+    'departure.actual_ts',
+    'dep.actual_ts',
+    'dep_time_ts',
+    'departure.time_ts'
+  ];
+  const arrivalTsPaths = [
+    'arr_actual_ts',
+    'arrival.actual_ts',
+    'arr.actual_ts',
+    'arr_time_ts',
+    'arrival.time_ts'
+  ];
+  const departureLocalPaths = [
     'dep_actual',
     'dep_actual_time',
-    'departure.actual_ts',
     'departure.actual',
     'departure.actual_time',
-    'dep.actual_ts',
     'dep.actual',
-    'dep.actual_time'
+    'dep.actual_time',
+    'departure.time'
   ];
-  const arrivalPaths = [
-    'arr_actual_ts',
+  const arrivalLocalPaths = [
     'arr_actual',
     'arr_actual_time',
-    'arrival.actual_ts',
     'arrival.actual',
     'arrival.actual_time',
-    'arr.actual_ts',
     'arr.actual',
-    'arr.actual_time'
+    'arr.actual_time',
+    'arrival.time'
   ];
   let gateDeparture = null;
-  for (const path of departurePaths) {
+  for (const path of departureTsPaths) {
     const parsed = parseCalendarApiTimestamp(getAirlabsField(flight, path));
     if (Number.isFinite(parsed)) {
       gateDeparture = parsed;
@@ -338,31 +376,35 @@ function extractAirlabsActualGateTimes(flight) {
     }
   }
   let gateArrival = null;
-  for (const path of arrivalPaths) {
+  for (const path of arrivalTsPaths) {
     const parsed = parseCalendarApiTimestamp(getAirlabsField(flight, path));
     if (Number.isFinite(parsed)) {
       gateArrival = parsed;
       break;
     }
   }
+  let localDeparture = null;
+  for (const path of departureLocalPaths) {
+    const parsed = parseAirlabsLocalDateTime(getAirlabsField(flight, path));
+    if (parsed) {
+      localDeparture = parsed;
+      break;
+    }
+  }
+  let localArrival = null;
+  for (const path of arrivalLocalPaths) {
+    const parsed = parseAirlabsLocalDateTime(getAirlabsField(flight, path));
+    if (parsed) {
+      localArrival = parsed;
+      break;
+    }
+  }
   return {
     gate_departure: Number.isFinite(gateDeparture) ? gateDeparture : null,
-    gate_arrival: Number.isFinite(gateArrival) ? gateArrival : null
+    gate_arrival: Number.isFinite(gateArrival) ? gateArrival : null,
+    local_departure: localDeparture || null,
+    local_arrival: localArrival || null
   };
-}
-
-function setAirlabsAirportParam(url, prefix, code) {
-  const normalized = normalizeAirportCode(code);
-  if (!normalized) return false;
-  if (normalized.length === 3) {
-    url.searchParams.set(`${prefix}_iata`, normalized);
-    return true;
-  }
-  if (normalized.length === 4) {
-    url.searchParams.set(`${prefix}_icao`, normalized);
-    return true;
-  }
-  return false;
 }
 
 function extractAirlabsAirportCode(flight, prefix) {
@@ -428,17 +470,23 @@ function doesAirlabsFlightMatchCallsign(flight, flightIcao) {
 function scoreAirlabsScheduleRecord(flight, expected) {
   let score = 0;
   if (doesAirlabsFlightMatchCallsign(flight, expected?.flightIcao)) score += 5;
-  if (doesAirlabsFlightMatchRoute(flight, expected)) score += 3;
+  const hasExpectedRoute = Boolean(normalizeAirportCode(expected?.depCode) || normalizeAirportCode(expected?.arrCode));
+  if (hasExpectedRoute && doesAirlabsFlightMatchRoute(flight, expected)) score += 3;
   const gateTimes = extractAirlabsActualGateTimes(flight);
-  if (Number.isFinite(gateTimes.gate_departure)) score += 1;
-  if (Number.isFinite(gateTimes.gate_arrival)) score += 1;
+  if (gateTimes.local_departure || Number.isFinite(gateTimes.gate_departure)) score += 1;
+  if (gateTimes.local_arrival || Number.isFinite(gateTimes.gate_arrival)) score += 1;
   return score;
 }
 
 function selectAirlabsScheduleFlight(list, expected = {}) {
   const rows = Array.isArray(list) ? list.filter((entry) => entry && typeof entry === 'object') : [];
   if (!rows.length) return null;
-  const ranked = rows
+  const expectedCallsign = normalizeCallsign(expected?.flightIcao);
+  const callsignMatches = expectedCallsign
+    ? rows.filter((flight) => doesAirlabsFlightMatchCallsign(flight, expectedCallsign))
+    : rows;
+  const pool = callsignMatches.length ? callsignMatches : rows;
+  const ranked = pool
     .map((flight) => ({ flight, score: scoreAirlabsScheduleRecord(flight, expected) }))
     .sort((a, b) => b.score - a.score);
   const best = ranked[0];
@@ -482,13 +530,7 @@ async function fetchCalendarAirlabsFlight(
   const normalizedDep = normalizeAirportCode(depCode);
   const normalizedArr = normalizeAirportCode(arrCode);
   const url = new URL(AIRLABS_SCHEDULES_LOOKUP_BASE);
-  const hasDep = setAirlabsAirportParam(url, 'dep', normalizedDep);
-  const hasArr = setAirlabsAirportParam(url, 'arr', normalizedArr);
-  if (!hasDep && !hasArr) {
-    const err = new Error('Missing dep/arr airport code for AirLabs schedules lookup.');
-    err.code = 'missingRoute';
-    throw err;
-  }
+  url.searchParams.set('flight_icao', normalizedFlightIcao);
   url.searchParams.set('api_key', apiKey);
   const resp = await fetch(url.toString(), { method: 'GET', cache: 'no-store' });
   const rawText = await resp.text();
@@ -740,6 +782,18 @@ function collectCalendarGateSyncCandidates(eventsByDate, env, {
   return candidates;
 }
 
+function normalizeCalendarGateLocalTime(entry, fallbackDateKey) {
+  if (!entry || typeof entry !== 'object') return null;
+  const minutes = Number(entry.minutes);
+  if (!Number.isFinite(minutes)) return null;
+  const normalizedDateKey = normalizeCalendarDateKey(entry.dateKey || fallbackDateKey);
+  if (!normalizedDateKey) return null;
+  return {
+    dateKey: normalizedDateKey,
+    minutes: Math.max(0, Math.min(1439, Math.trunc(minutes)))
+  };
+}
+
 function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'airlabs', nowMs = Date.now() } = {}) {
   if (!candidate) {
     return { updated: false, reason: 'applyFailed' };
@@ -748,8 +802,10 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'air
     setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'missingActualTimes', nowMs });
     return { updated: false, reason: 'missingActualTimes' };
   }
-  const hasDeparture = Number.isFinite(gateTimes.gate_departure);
-  const hasArrival = Number.isFinite(gateTimes.gate_arrival);
+  let depLocal = normalizeCalendarGateLocalTime(gateTimes.local_departure, candidate.dateKey);
+  let arrLocal = normalizeCalendarGateLocalTime(gateTimes.local_arrival, depLocal?.dateKey || candidate.dateKey);
+  const hasDeparture = Boolean(depLocal) || Number.isFinite(gateTimes.gate_departure);
+  const hasArrival = Boolean(arrLocal) || Number.isFinite(gateTimes.gate_arrival);
   if (!hasDeparture || !hasArrival) {
     const reason = !hasDeparture && !hasArrival
       ? 'missingActualTimes'
@@ -759,17 +815,30 @@ function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'air
     if (!hasDeparture) return { updated: false, reason: 'missingActualDeparture' };
     return { updated: false, reason: 'missingActualArrival' };
   }
-  const depZone = getCachedAirportTimeZone(candidate.depCode);
-  const arrZone = getCachedAirportTimeZone(candidate.arrCode);
-  if (!depZone || !arrZone) {
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'timezoneMissing', nowMs });
-    return { updated: false, reason: 'timezoneMissing' };
+  const needsDepFromUtc = !depLocal;
+  const needsArrFromUtc = !arrLocal;
+  if (needsDepFromUtc || needsArrFromUtc) {
+    const depZone = needsDepFromUtc ? getCachedAirportTimeZone(candidate.depCode) : null;
+    const arrZone = needsArrFromUtc ? getCachedAirportTimeZone(candidate.arrCode) : null;
+    if ((needsDepFromUtc && !depZone) || (needsArrFromUtc && !arrZone)) {
+      setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'timezoneMissing', nowMs });
+      return { updated: false, reason: 'timezoneMissing' };
+    }
+    if (needsDepFromUtc) {
+      depLocal = getLocalMinutesFromUtc(gateTimes.gate_departure, depZone);
+    }
+    if (needsArrFromUtc) {
+      arrLocal = getLocalMinutesFromUtc(gateTimes.gate_arrival, arrZone);
+    }
   }
-  const depLocal = getLocalMinutesFromUtc(gateTimes.gate_departure, depZone);
-  const arrLocal = getLocalMinutesFromUtc(gateTimes.gate_arrival, arrZone);
   if (!depLocal || !arrLocal) {
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'timezoneMissing', nowMs });
-    return { updated: false, reason: 'timezoneMissing' };
+    const reason = !depLocal && !arrLocal
+      ? 'missingActualTimes'
+      : (!depLocal ? 'missingActualDeparture' : 'missingActualArrival');
+    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason, nowMs });
+    if (!depLocal && !arrLocal) return { updated: false, reason: 'missingActualTimes' };
+    if (!depLocal) return { updated: false, reason: 'missingActualDeparture' };
+    return { updated: false, reason: 'missingActualArrival' };
   }
   const depOffset = getDateKeyDayOffset(depLocal.dateKey, candidate.dateKey);
   if (!Number.isFinite(depOffset) || Math.abs(depOffset) > 1) {
@@ -986,7 +1055,7 @@ async function handleAirlabsProxy(request, env, origin) {
   } catch (err) {
     const status = err?.code === 'missingApiKey'
       ? 503
-      : (err?.code === 'invalidFlight' || err?.code === 'missingRoute'
+      : (err?.code === 'invalidFlight'
         ? 400
         : (err?.code === 'noFlightData' ? 404 : 502));
     return jsonResponse(
