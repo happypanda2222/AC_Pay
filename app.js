@@ -119,7 +119,6 @@ const FR24_GATE_EVENT_TYPE_ALIASES = {
 const FR24_GATE_EVENT_TYPES_REQUEST = [...FR24_GATE_EVENT_TYPES];
 const AIRLABS_FLIGHT_LOOKUP_BASE = 'https://airlabs.co/api/v9/flight';
 const AIRLABS_CALENDAR_API_KEY = 'f00a56b8-3215-4379-ba70-4164828ba806';
-const AEROAPI_CALENDAR_BASE = 'https://aeroapi.flightaware.com/aeroapi';
 const AEROAPI_CALENDAR_API_KEY = 'k3Jc2ketr1GZ03GKGMG7Bu3Lh03ID974';
 const CALENDAR_AIRLABS_REQUEST_DELAY_MS = 300;
 const CALENDAR_AEROAPI_REQUEST_DELAY_MS = 350;
@@ -6590,6 +6589,54 @@ function normalizeCalendarSyncEndpointForSave(value){
   return normalized;
 }
 
+function buildCalendarAeroapiProxyBase(){
+  const endpoint = String(getCalendarSyncEndpoint() || '').trim();
+  if (!endpoint) return '';
+  const stripSyncPath = (pathValue) => {
+    const replaced = String(pathValue || '').replace(/\/sync\/calendar\/?$/i, '');
+    if (replaced !== String(pathValue || '')) return replaced;
+    return null;
+  };
+  if (/^https?:\/\//i.test(endpoint)){
+    try {
+      const parsed = new URL(endpoint);
+      const strippedPath = stripSyncPath(parsed.pathname);
+      if (strippedPath === null) return '';
+      return `${parsed.origin}${strippedPath || ''}/aeroapi`;
+    } catch (err){
+      console.warn('Unable to parse calendar sync endpoint for AeroAPI proxy', err);
+      return '';
+    }
+  }
+  if (endpoint.startsWith('/')){
+    const strippedPath = stripSyncPath(endpoint);
+    if (strippedPath === null) return '';
+    const merged = `${strippedPath || ''}/aeroapi`;
+    return merged.replace(/\/{2,}/g, '/');
+  }
+  return '';
+}
+
+function buildCalendarAeroapiProxyUrl(pathSuffix = ''){
+  const base = buildCalendarAeroapiProxyBase();
+  if (!base) return '';
+  const cleanedSuffix = String(pathSuffix || '').replace(/^\/+/, '');
+  if (/^https?:\/\//i.test(base)){
+    const baseUrl = base.replace(/\/+$/, '');
+    return cleanedSuffix ? `${baseUrl}/${cleanedSuffix}` : baseUrl;
+  }
+  const basePath = base.replace(/\/+$/, '');
+  const relativePath = cleanedSuffix ? `${basePath}/${cleanedSuffix}` : basePath;
+  if (typeof window !== 'undefined' && window?.location?.origin){
+    try {
+      return new URL(relativePath, window.location.origin).toString();
+    } catch (_err){
+      return '';
+    }
+  }
+  return relativePath;
+}
+
 function getCalendarSyncTimestampLabel(){
   try {
     const stored = localStorage.getItem(CALENDAR_SYNC_LAST_KEY);
@@ -7188,8 +7235,20 @@ async function fetchCalendarAeroapiFlightHistory(flightIcao, { startIso, endIso 
     err.code = 'invalidFlight';
     throw err;
   }
+  const calendarSyncToken = String(getCalendarSyncToken() || '').trim();
+  if (!calendarSyncToken){
+    const err = new Error('Calendar sync token required for AeroAPI proxy.');
+    err.code = 'workerUnauthorized';
+    throw err;
+  }
+  const proxyUrl = buildCalendarAeroapiProxyUrl(`history/flights/${encodeURIComponent(normalizedFlightIcao)}`);
+  if (!proxyUrl){
+    const err = new Error('AeroAPI proxy unavailable. Configure calendar sync endpoint to /sync/calendar on your worker.');
+    err.code = 'proxyUnavailable';
+    throw err;
+  }
   await waitForCalendarAeroapiRequestSlot();
-  const urlObj = new URL(`${AEROAPI_CALENDAR_BASE}/history/flights/${encodeURIComponent(normalizedFlightIcao)}`);
+  const urlObj = new URL(proxyUrl);
   urlObj.searchParams.set('ident_type', 'designator');
   if (startIso) urlObj.searchParams.set('start', startIso);
   if (endIso) urlObj.searchParams.set('end', endIso);
@@ -7197,15 +7256,18 @@ async function fetchCalendarAeroapiFlightHistory(flightIcao, { startIso, endIso 
   const url = urlObj.toString();
   let resp;
   try {
-    resp = await fetchWithCorsFallback(url, {
+    resp = await fetch(url, {
       cache: 'no-store',
       headers: {
+        Authorization: `Bearer ${calendarSyncToken}`,
         'x-apikey': AEROAPI_CALENDAR_API_KEY
       }
     });
   } catch (err){
-    recordCalendarFr24Debug('summary', { url, responseText: err?.message || String(err) });
-    throw err;
+    const proxyErr = new Error(`AeroAPI proxy request failed: ${err?.message || String(err)}`);
+    proxyErr.code = 'proxyHttpError';
+    recordCalendarFr24Debug('summary', { url, responseText: proxyErr.message });
+    throw proxyErr;
   }
   let rawText = '';
   try {
@@ -7214,6 +7276,19 @@ async function fetchCalendarAeroapiFlightHistory(flightIcao, { startIso, endIso 
     rawText = '';
   }
   recordCalendarFr24Debug('summary', { url, status: resp.status, responseText: rawText });
+  if (!resp.ok){
+    const detail = rawText
+      ? rawText.replace(/\s+/g, ' ').trim().slice(0, 220)
+      : '';
+    if (resp.status === 401 || resp.status === 403){
+      const err = new Error(`AeroAPI worker unauthorized (${resp.status})${detail ? `: ${detail}` : ''}`);
+      err.code = 'workerUnauthorized';
+      throw err;
+    }
+    const err = new Error(`AeroAPI proxy HTTP ${resp.status}${detail ? `: ${detail}` : ''}`);
+    err.code = 'proxyHttpError';
+    throw err;
+  }
   let json = {};
   try {
     json = rawText ? JSON.parse(rawText) : {};
@@ -7484,6 +7559,9 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     noAeroapiMatch: 0,
     airlabsLookupError: 0,
     aeroapiLookupError: 0,
+    workerUnauthorized: 0,
+    proxyUnavailable: 0,
+    proxyHttpError: 0,
     lookupError: 0,
     missingActualTimes: 0,
     missingActualDeparture: 0,
@@ -7502,6 +7580,9 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
     let lookupErrorCount = 0;
     let noDataCount = 0;
     let dateMismatchCount = 0;
+    let workerUnauthorizedCount = 0;
+    let proxyUnavailableCount = 0;
+    let proxyHttpErrorCount = 0;
     let candidateLastError = '';
     const aeroapiWindow = provider === 'aeroapi'
       ? getCalendarAeroapiSearchWindow(candidate.arrivalMs)
@@ -7537,7 +7618,23 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
           noDataCount += 1;
         } else {
           lookupErrorCount += 1;
+          if (provider === 'aeroapi'){
+            if (err?.code === 'workerUnauthorized'){
+              workerUnauthorizedCount += 1;
+            } else if (err?.code === 'proxyUnavailable'){
+              proxyUnavailableCount += 1;
+            } else if (err?.code === 'proxyHttpError'){
+              proxyHttpErrorCount += 1;
+            }
+          }
           lastLookupError = errMessage;
+          if (provider === 'aeroapi' && (
+            err?.code === 'workerUnauthorized'
+            || err?.code === 'proxyUnavailable'
+            || err?.code === 'proxyHttpError'
+          )){
+            break;
+          }
         }
       }
     }
@@ -7551,8 +7648,20 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
           failureBuckets.airlabsLookupError += 1;
         } else {
           failureBuckets.aeroapiLookupError += 1;
+          if (workerUnauthorizedCount > 0){
+            failureBuckets.workerUnauthorized += 1;
+            failureReason = 'workerUnauthorized';
+          } else if (proxyUnavailableCount > 0){
+            failureBuckets.proxyUnavailable += 1;
+            failureReason = 'proxyUnavailable';
+          } else if (proxyHttpErrorCount > 0){
+            failureBuckets.proxyHttpError += 1;
+            failureReason = 'proxyHttpError';
+          }
         }
-        failureReason = 'lookupError';
+        if (failureReason === noMatchReason){
+          failureReason = 'lookupError';
+        }
       } else if (dateMismatchCount > 0){
         failureBuckets.dateMismatch += 1;
         failureReason = 'dateMismatch';
@@ -7650,6 +7759,9 @@ async function runCalendarGateTimeAutoSync({ force = false, reportStatus = false
       const parts = [];
       if (failureBuckets.noAirlabsMatch) parts.push(`no AirLabs match: ${failureBuckets.noAirlabsMatch}`);
       if (failureBuckets.noAeroapiMatch) parts.push(`no AeroAPI match: ${failureBuckets.noAeroapiMatch}`);
+      if (failureBuckets.workerUnauthorized) parts.push(`worker auth failed: ${failureBuckets.workerUnauthorized}`);
+      if (failureBuckets.proxyUnavailable) parts.push(`proxy unavailable: ${failureBuckets.proxyUnavailable}`);
+      if (failureBuckets.proxyHttpError) parts.push(`proxy request failed: ${failureBuckets.proxyHttpError}`);
       if (failureBuckets.missingActualTimes) parts.push(`missing actual times: ${failureBuckets.missingActualTimes}`);
       if (failureBuckets.missingActualDeparture) parts.push(`missing actual departure: ${failureBuckets.missingActualDeparture}`);
       if (failureBuckets.missingActualArrival) parts.push(`missing actual arrival: ${failureBuckets.missingActualArrival}`);
