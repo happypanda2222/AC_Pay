@@ -120,8 +120,9 @@ const FR24_GATE_EVENT_TYPES_REQUEST = [...FR24_GATE_EVENT_TYPES];
 const CALENDAR_AIRLABS_PROXY_PATH = '/airlabs/flight';
 const CALENDAR_AIRLABS_REQUEST_DELAY_MS = 300;
 const CALENDAR_GATE_SYNC_LOOKBACK_MS = 30 * 60 * 60 * 1000;
-const CALENDAR_GATE_SYNC_RETRY_DELAY_MS = 12 * 60 * 60 * 1000;
-const CALENDAR_GATE_SYNC_MAX_ATTEMPTS = 2;
+const CALENDAR_GATE_SYNC_INITIAL_DELAY_MS = 30 * 60 * 1000;
+const CALENDAR_GATE_SYNC_RETRY_MIN_DELAY_MS = 60 * 60 * 1000;
+const CALENDAR_GATE_SYNC_MAX_ATTEMPTS = 5;
 const FIN_FLIGHT_CACHE = new Map();
 const FIN_LIVE_POSITION_CACHE = new Map();
 const CALENDAR_STORAGE_KEY = 'acpay.calendar.schedule';
@@ -5518,9 +5519,6 @@ function getCalendarPairingTimingInfo(pairingId){
       checkOutMinutes = Math.round((lastFlightMs - dayStartMs) / 60000) + 15;
     }
   }
-  if (Number.isFinite(checkOutMinutes) && checkOutMinutes >= 1440){
-    checkOutMinutes -= 1440;
-  }
   return {
     checkInMinutes: Number.isFinite(checkInMinutes) ? checkInMinutes : null,
     checkOutMinutes: Number.isFinite(checkOutMinutes) ? checkOutMinutes : null,
@@ -6868,7 +6866,15 @@ function isCalendarFlightTimesAlreadyUpdated(event){
   const hasArrival = Number.isFinite(Number(event.arrivalMinutes));
   if (!hasDeparture || !hasArrival) return false;
   const source = String(event.timeSource || '').trim().toLowerCase();
-  if (source === 'manual' || source === 'airlabs') return true;
+  if (source === 'manual') return true;
+  if (source === 'airlabs'){
+    const sync = event?.gateTimeSync;
+    if (!sync || typeof sync !== 'object') return true;
+    const status = String(sync.status || '').trim().toLowerCase();
+    const arrivalSource = String(sync.arrivalSource || '').trim().toLowerCase();
+    if (status === 'success' && (!arrivalSource || arrivalSource === 'actual')) return true;
+    return false;
+  }
   const status = String(event?.gateTimeSync?.status || '').trim().toLowerCase();
   const provider = String(event?.gateTimeSync?.provider || '').trim().toLowerCase();
   return status === 'success' && provider === 'airlabs';
@@ -6878,11 +6884,9 @@ function hasRecentCalendarGateSyncFailure(event, nowMs = Date.now()){
   if (!event || typeof event !== 'object') return false;
   const sync = event.gateTimeSync;
   if (!sync || typeof sync !== 'object') return false;
-  if (String(sync.status || '').toLowerCase() !== 'failed') return false;
-  const attemptCount = Number(sync.attemptCount);
-  if (sync.retryExhausted || (Number.isFinite(attemptCount) && attemptCount >= CALENDAR_GATE_SYNC_MAX_ATTEMPTS)){
-    return true;
-  }
+  const status = String(sync.status || '').trim().toLowerCase();
+  if (status !== 'pending' && status !== 'failed') return false;
+  if (sync.retryExhausted) return true;
   const nextRetryAt = Number(sync.nextRetryAt);
   return Number.isFinite(nextRetryAt) && nextRetryAt > nowMs;
 }
@@ -6893,32 +6897,120 @@ function getCalendarGateSyncAttemptCount(event){
   return Math.max(0, Math.trunc(attempts));
 }
 
-function setCalendarGateTimeSyncFailure(event, { provider = '', reason = 'applyFailed', nowMs = Date.now() } = {}){
+function normalizeCalendarGateSyncArrivalSource(value){
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'actual' || normalized === 'estimated') return normalized;
+  return null;
+}
+
+function buildCalendarGateSyncNextRetryAt({ nowMs = Date.now(), arrEstimatedMs = NaN } = {}){
+  const oneHourFromNow = nowMs + CALENDAR_GATE_SYNC_RETRY_MIN_DELAY_MS;
+  if (Number.isFinite(arrEstimatedMs)){
+    return Math.max(oneHourFromNow, arrEstimatedMs);
+  }
+  return oneHourFromNow;
+}
+
+function getCalendarGateSyncDueAt(event, arrivalMs){
+  const nextRetryAt = Number(event?.gateTimeSync?.nextRetryAt);
+  if (Number.isFinite(nextRetryAt)) return nextRetryAt;
+  if (!Number.isFinite(arrivalMs)) return NaN;
+  return arrivalMs + CALENDAR_GATE_SYNC_INITIAL_DELAY_MS;
+}
+
+function isCalendarGateSyncDue(event, { arrivalMs = NaN, nowMs = Date.now() } = {}){
+  if (!event || typeof event !== 'object') return false;
+  if (event?.gateTimeSync?.retryExhausted) return false;
+  const dueAt = getCalendarGateSyncDueAt(event, arrivalMs);
+  return Number.isFinite(dueAt) && dueAt <= nowMs;
+}
+
+function setCalendarGateTimeSyncPending(event, {
+  provider = '',
+  reason = 'awaitingActualArrival',
+  arrivalSource = null,
+  arrEstimatedMs = NaN,
+  nowMs = Date.now()
+} = {}){
   if (!event || typeof event !== 'object') return;
   const nextAttemptCount = Math.min(
     CALENDAR_GATE_SYNC_MAX_ATTEMPTS,
     getCalendarGateSyncAttemptCount(event) + 1
   );
   const retryExhausted = nextAttemptCount >= CALENDAR_GATE_SYNC_MAX_ATTEMPTS;
+  if (retryExhausted){
+    event.gateTimeSync = {
+      status: 'failed',
+      provider: String(provider || '').trim().toLowerCase() || null,
+      reason: String(reason || '').trim() || 'applyFailed',
+      arrivalSource: normalizeCalendarGateSyncArrivalSource(arrivalSource),
+      attemptedAt: nowMs,
+      attemptCount: nextAttemptCount,
+      nextRetryAt: null,
+      retryExhausted: true
+    };
+    return { retryExhausted: true };
+  }
+  event.gateTimeSync = {
+    status: 'pending',
+    provider: String(provider || '').trim().toLowerCase() || null,
+    reason: String(reason || '').trim() || 'awaitingActualArrival',
+    arrivalSource: normalizeCalendarGateSyncArrivalSource(arrivalSource),
+    attemptedAt: nowMs,
+    attemptCount: nextAttemptCount,
+    nextRetryAt: buildCalendarGateSyncNextRetryAt({ nowMs, arrEstimatedMs }),
+    retryExhausted: false
+  };
+  return { retryExhausted: false };
+}
+
+function setCalendarGateTimeSyncFailure(event, {
+  provider = '',
+  reason = 'applyFailed',
+  arrivalSource = null,
+  attemptCount = null,
+  nowMs = Date.now()
+} = {}){
+  if (!event || typeof event !== 'object') return;
+  const nextAttemptCount = Number.isFinite(attemptCount)
+    ? Math.max(0, Math.min(CALENDAR_GATE_SYNC_MAX_ATTEMPTS, Math.trunc(attemptCount)))
+    : Math.min(
+      CALENDAR_GATE_SYNC_MAX_ATTEMPTS,
+      getCalendarGateSyncAttemptCount(event) + 1
+    );
+  const retryExhausted = nextAttemptCount >= CALENDAR_GATE_SYNC_MAX_ATTEMPTS;
   event.gateTimeSync = {
     status: 'failed',
     provider: String(provider || '').trim().toLowerCase() || null,
     reason: String(reason || '').trim() || 'applyFailed',
+    arrivalSource: normalizeCalendarGateSyncArrivalSource(arrivalSource),
     attemptedAt: nowMs,
     attemptCount: nextAttemptCount,
-    nextRetryAt: retryExhausted ? null : (nowMs + CALENDAR_GATE_SYNC_RETRY_DELAY_MS),
+    nextRetryAt: null,
     retryExhausted
   };
 }
 
-function setCalendarGateTimeSyncSuccess(event, { provider = '', nowMs = Date.now() } = {}){
+function setCalendarGateTimeSyncSuccess(event, {
+  provider = '',
+  arrivalSource = 'actual',
+  attemptCount = null,
+  nowMs = Date.now()
+} = {}){
   if (!event || typeof event !== 'object') return;
+  const nextAttemptCount = Number.isFinite(attemptCount)
+    ? Math.max(0, Math.min(CALENDAR_GATE_SYNC_MAX_ATTEMPTS, Math.trunc(attemptCount)))
+    : Math.min(
+      CALENDAR_GATE_SYNC_MAX_ATTEMPTS,
+      getCalendarGateSyncAttemptCount(event) + 1
+    );
   event.gateTimeSync = {
     status: 'success',
     provider: String(provider || '').trim().toLowerCase() || null,
     reason: null,
+    arrivalSource: normalizeCalendarGateSyncArrivalSource(arrivalSource) || 'actual',
     attemptedAt: nowMs,
-    attemptCount: getCalendarGateSyncAttemptCount(event),
+    attemptCount: nextAttemptCount,
     nextRetryAt: null,
     retryExhausted: false
   };
@@ -7078,16 +7170,17 @@ function extractAirlabsActualGateTimes(flight){
   const departureTsPaths = [
     'dep_actual_ts',
     'departure.actual_ts',
-    'dep.actual_ts',
-    'dep_time_ts',
-    'departure.time_ts'
+    'dep.actual_ts'
   ];
   const arrivalTsPaths = [
     'arr_actual_ts',
     'arrival.actual_ts',
-    'arr.actual_ts',
-    'arr_time_ts',
-    'arrival.time_ts'
+    'arr.actual_ts'
+  ];
+  const arrivalEstimatedTsPaths = [
+    'arr_estimated_ts',
+    'arrival.estimated_ts',
+    'arr.estimated_ts'
   ];
   const departureLocalPaths = [
     'dep_actual',
@@ -7095,8 +7188,7 @@ function extractAirlabsActualGateTimes(flight){
     'departure.actual',
     'departure.actual_time',
     'dep.actual',
-    'dep.actual_time',
-    'departure.time'
+    'dep.actual_time'
   ];
   const arrivalLocalPaths = [
     'arr_actual',
@@ -7104,8 +7196,15 @@ function extractAirlabsActualGateTimes(flight){
     'arrival.actual',
     'arrival.actual_time',
     'arr.actual',
-    'arr.actual_time',
-    'arrival.time'
+    'arr.actual_time'
+  ];
+  const arrivalEstimatedLocalPaths = [
+    'arr_estimated',
+    'arr_estimated_time',
+    'arrival.estimated',
+    'arrival.estimated_time',
+    'arr.estimated',
+    'arr.estimated_time'
   ];
   let gateDeparture = null;
   for (const path of departureTsPaths){
@@ -7120,6 +7219,14 @@ function extractAirlabsActualGateTimes(flight){
     const parsed = parseAirlabsTimestamp(getAirlabsField(flight, path));
     if (Number.isFinite(parsed)){
       gateArrival = parsed;
+      break;
+    }
+  }
+  let gateArrivalEstimated = null;
+  for (const path of arrivalEstimatedTsPaths){
+    const parsed = parseAirlabsTimestamp(getAirlabsField(flight, path));
+    if (Number.isFinite(parsed)){
+      gateArrivalEstimated = parsed;
       break;
     }
   }
@@ -7139,11 +7246,21 @@ function extractAirlabsActualGateTimes(flight){
       break;
     }
   }
+  let localArrivalEstimated = null;
+  for (const path of arrivalEstimatedLocalPaths){
+    const parsed = parseAirlabsLocalDateTime(getAirlabsField(flight, path));
+    if (parsed){
+      localArrivalEstimated = parsed;
+      break;
+    }
+  }
   return {
     gate_departure: Number.isFinite(gateDeparture) ? gateDeparture : null,
     gate_arrival: Number.isFinite(gateArrival) ? gateArrival : null,
+    gate_arrival_estimated: Number.isFinite(gateArrivalEstimated) ? gateArrivalEstimated : null,
     local_departure: localDeparture || null,
-    local_arrival: localArrival || null
+    local_arrival: localArrival || null,
+    local_arrival_estimated: localArrivalEstimated || null
   };
 }
 
@@ -7279,7 +7396,6 @@ function collectCalendarGateSyncCandidates(eventsByDate, {
       if (isPairingMarkerEvent(event)) return;
       if (isCalendarCancelledEvent(event)) return;
       if (skipAlreadyUpdated && isCalendarFlightTimesAlreadyUpdated(event)) return;
-      if (!force && hasRecentCalendarGateSyncFailure(event, nowMs)) return;
       const flightInfo = extractCalendarFlightIdentifier(event);
       if (!flightInfo) return;
       const { depCode, arrCode } = getCalendarEventBoundaryAirports(event);
@@ -7287,12 +7403,14 @@ function collectCalendarGateSyncCandidates(eventsByDate, {
       const timing = getCalendarEventTiming(event, normalizedDateKey);
       const arrivalMs = getCalendarEventArrivalMs(event, normalizedDateKey);
       if (!Number.isFinite(arrivalMs)) return;
+      if (!force && !isCalendarGateSyncDue(event, { arrivalMs, nowMs })) return;
       const arrivalAgeMs = nowMs - arrivalMs;
       if (arrivalMs < startMs || arrivalMs > endMs) return;
       const provider = getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs);
       if (provider === 'skip') return;
       const flightIcaoCandidates = buildCalendarAirlabsFlightIcaoCandidates(flightInfo.prefix, flightInfo.number);
       if (!flightIcaoCandidates.length) return;
+      const dueAt = getCalendarGateSyncDueAt(event, arrivalMs);
       candidates.push({
         event,
         dateKey: normalizedDateKey,
@@ -7301,6 +7419,7 @@ function collectCalendarGateSyncCandidates(eventsByDate, {
         timing,
         arrivalMs,
         arrivalAgeMs,
+        dueAt,
         flightIcaoCandidates
       });
     });
@@ -7320,72 +7439,144 @@ function normalizeCalendarGateLocalTime(entry, fallbackDateKey){
   };
 }
 
+function getCalendarGateLocalMs(localTime, fallbackDateKey){
+  const normalized = normalizeCalendarGateLocalTime(localTime, fallbackDateKey);
+  if (!normalized) return NaN;
+  const dayStartMs = getDateKeyStartMs(normalized.dateKey);
+  if (!Number.isFinite(dayStartMs)) return NaN;
+  return dayStartMs + (normalized.minutes * 60000);
+}
+
+function resolveCalendarGateLocalTime({
+  localTime = null,
+  tsSeconds = NaN,
+  timeZone = '',
+  fallbackDateKey = ''
+} = {}){
+  const normalizedLocal = normalizeCalendarGateLocalTime(localTime, fallbackDateKey);
+  if (normalizedLocal) return normalizedLocal;
+  if (!Number.isFinite(tsSeconds)) return null;
+  if (!timeZone) return null;
+  return getLocalMinutesFromUtc(tsSeconds, timeZone);
+}
+
+function applyCalendarGateDepartureOnly(candidate, departureMinutes, source){
+  if (!candidate?.event) return { updated: false };
+  const existingArrival = Number(candidate.event.arrivalMinutes);
+  if (Number.isFinite(existingArrival)){
+    return applyCalendarEventTimingUpdate(
+      { event: candidate.event, dateKey: candidate.dateKey },
+      { departureMinutes, arrivalMinutes: existingArrival, source }
+    );
+  }
+  candidate.event.departureMinutes = departureMinutes;
+  if (Array.isArray(candidate.event?.segments) && candidate.event.segments.length){
+    const firstSeg = candidate.event.segments[0];
+    if (firstSeg && typeof firstSeg === 'object'){
+      firstSeg.departureMinutes = departureMinutes;
+    }
+  }
+  if (source){
+    candidate.event.timeSource = source;
+  }
+  return { updated: true };
+}
+
+function isCalendarEventArrivalEstimated(event){
+  if (!event || typeof event !== 'object') return false;
+  const source = String(event.timeSource || '').trim().toLowerCase();
+  if (source !== 'airlabs') return false;
+  const arrivalSource = String(event?.gateTimeSync?.arrivalSource || '').trim().toLowerCase();
+  return arrivalSource === 'estimated';
+}
+
 function applyGateTimesToCalendarCandidate(candidate, gateTimes, { source = 'airlabs', nowMs = Date.now() } = {}){
   if (!candidate){
-    return { updated: false, reason: 'applyFailed' };
+    return { updated: false, pending: false, completed: false, reason: 'applyFailed', arrivalSource: null, arrEstimatedMs: NaN };
   }
   if (!gateTimes){
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'missingActualTimes', nowMs });
-    return { updated: false, reason: 'missingActualTimes' };
+    return { updated: false, pending: true, completed: false, reason: 'missingActualTimes', arrivalSource: null, arrEstimatedMs: NaN };
   }
-  let depLocal = normalizeCalendarGateLocalTime(gateTimes.local_departure, candidate.dateKey);
-  let arrLocal = normalizeCalendarGateLocalTime(gateTimes.local_arrival, depLocal?.dateKey || candidate.dateKey);
-  const hasDeparture = Boolean(depLocal) || Number.isFinite(gateTimes.gate_departure);
-  const hasArrival = Boolean(arrLocal) || Number.isFinite(gateTimes.gate_arrival);
-  if (!hasDeparture || !hasArrival){
-    const reason = !hasDeparture && !hasArrival
-      ? 'missingActualTimes'
-      : (!hasDeparture ? 'missingActualDeparture' : 'missingActualArrival');
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason, nowMs });
-    if (!hasDeparture && !hasArrival) return { updated: false, reason: 'missingActualTimes' };
-    if (!hasDeparture) return { updated: false, reason: 'missingActualDeparture' };
-    return { updated: false, reason: 'missingActualArrival' };
-  }
-  const needsDepFromUtc = !depLocal;
-  const needsArrFromUtc = !arrLocal;
-  if (needsDepFromUtc || needsArrFromUtc){
-    const depZone = needsDepFromUtc ? getCachedAirportTimeZone(candidate.depCode) : null;
-    const arrZone = needsArrFromUtc ? getCachedAirportTimeZone(candidate.arrCode) : null;
-    if ((needsDepFromUtc && !depZone) || (needsArrFromUtc && !arrZone)){
-      setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'timezoneMissing', nowMs });
-      return { updated: false, reason: 'timezoneMissing' };
+  const depZone = getCachedAirportTimeZone(candidate.depCode);
+  const arrZone = getCachedAirportTimeZone(candidate.arrCode);
+  const depLocal = resolveCalendarGateLocalTime({
+    localTime: gateTimes.local_departure,
+    tsSeconds: gateTimes.gate_departure,
+    timeZone: depZone,
+    fallbackDateKey: candidate.dateKey
+  });
+  if (!depLocal){
+    if (Number.isFinite(gateTimes.gate_departure) && !depZone){
+      return { updated: false, pending: true, completed: false, reason: 'timezoneMissing', arrivalSource: null, arrEstimatedMs: NaN };
     }
-    if (needsDepFromUtc){
-      depLocal = getLocalMinutesFromUtc(gateTimes.gate_departure, depZone);
-    }
-    if (needsArrFromUtc){
-      arrLocal = getLocalMinutesFromUtc(gateTimes.gate_arrival, arrZone);
-    }
-  }
-  if (!depLocal || !arrLocal){
-    const reason = !depLocal && !arrLocal
-      ? 'missingActualTimes'
-      : (!depLocal ? 'missingActualDeparture' : 'missingActualArrival');
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason, nowMs });
-    if (!depLocal && !arrLocal) return { updated: false, reason: 'missingActualTimes' };
-    if (!depLocal) return { updated: false, reason: 'missingActualDeparture' };
-    return { updated: false, reason: 'missingActualArrival' };
+    return { updated: false, pending: true, completed: false, reason: 'missingActualDeparture', arrivalSource: null, arrEstimatedMs: NaN };
   }
   const depOffset = getDateKeyDayOffset(depLocal.dateKey, candidate.dateKey);
   if (!Number.isFinite(depOffset) || Math.abs(depOffset) > 1){
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'dateMismatch', nowMs });
-    return { updated: false, reason: 'dateMismatch' };
+    return { updated: false, pending: true, completed: false, reason: 'dateMismatch', arrivalSource: null, arrEstimatedMs: NaN };
   }
-  const dayOffset = getDateKeyDayOffset(arrLocal.dateKey, depLocal.dateKey);
-  if (!Number.isFinite(dayOffset) || dayOffset < 0 || dayOffset > 1){
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'dateMismatch', nowMs });
-    return { updated: false, reason: 'dateMismatch' };
+
+  const arrActualLocal = resolveCalendarGateLocalTime({
+    localTime: gateTimes.local_arrival,
+    tsSeconds: gateTimes.gate_arrival,
+    timeZone: arrZone,
+    fallbackDateKey: depLocal.dateKey
+  });
+  if (arrActualLocal){
+    const dayOffset = getDateKeyDayOffset(arrActualLocal.dateKey, depLocal.dateKey);
+    if (!Number.isFinite(dayOffset) || dayOffset < 0 || dayOffset > 1){
+      return { updated: false, pending: true, completed: false, reason: 'dateMismatch', arrivalSource: null, arrEstimatedMs: NaN };
+    }
+    const result = applyCalendarEventTimingUpdate(
+      { event: candidate.event, dateKey: candidate.dateKey },
+      { departureMinutes: depLocal.minutes, arrivalMinutes: arrActualLocal.minutes, source }
+    );
+    if (!result?.updated){
+      return { updated: false, pending: true, completed: false, reason: 'applyFailed', arrivalSource: null, arrEstimatedMs: NaN };
+    }
+    return { updated: true, pending: false, completed: true, reason: null, arrivalSource: 'actual', arrEstimatedMs: NaN };
   }
-  const result = applyCalendarEventTimingUpdate(
-    { event: candidate.event, dateKey: candidate.dateKey },
-    { departureMinutes: depLocal.minutes, arrivalMinutes: arrLocal.minutes, source }
-  );
-  if (!result?.updated){
-    setCalendarGateTimeSyncFailure(candidate.event, { provider: source, reason: 'applyFailed', nowMs });
-    return { updated: false, reason: 'applyFailed' };
+
+  const arrEstimatedLocal = resolveCalendarGateLocalTime({
+    localTime: gateTimes.local_arrival_estimated,
+    tsSeconds: gateTimes.gate_arrival_estimated,
+    timeZone: arrZone,
+    fallbackDateKey: depLocal.dateKey
+  });
+  if (arrEstimatedLocal){
+    const dayOffset = getDateKeyDayOffset(arrEstimatedLocal.dateKey, depLocal.dateKey);
+    if (!Number.isFinite(dayOffset) || dayOffset < 0 || dayOffset > 1){
+      return { updated: false, pending: true, completed: false, reason: 'dateMismatch', arrivalSource: 'estimated', arrEstimatedMs: NaN };
+    }
+    const result = applyCalendarEventTimingUpdate(
+      { event: candidate.event, dateKey: candidate.dateKey },
+      { departureMinutes: depLocal.minutes, arrivalMinutes: arrEstimatedLocal.minutes, source }
+    );
+    if (!result?.updated){
+      return { updated: false, pending: true, completed: false, reason: 'applyFailed', arrivalSource: 'estimated', arrEstimatedMs: NaN };
+    }
+    return {
+      updated: true,
+      pending: true,
+      completed: false,
+      reason: 'awaitingActualArrival',
+      arrivalSource: 'estimated',
+      arrEstimatedMs: getCalendarGateLocalMs(arrEstimatedLocal, depLocal.dateKey)
+    };
   }
-  setCalendarGateTimeSyncSuccess(candidate.event, { provider: source, nowMs });
-  return { updated: true, reason: null };
+
+  const depOnlyResult = applyCalendarGateDepartureOnly(candidate, depLocal.minutes, source);
+  if (!depOnlyResult?.updated){
+    return { updated: false, pending: true, completed: false, reason: 'applyFailed', arrivalSource: null, arrEstimatedMs: NaN };
+  }
+  return {
+    updated: true,
+    pending: true,
+    completed: false,
+    reason: 'awaitingActualArrival',
+    arrivalSource: null,
+    arrEstimatedMs: NaN
+  };
 }
 
 async function runCalendarGateTimeAutoSync({
@@ -7407,17 +7598,20 @@ async function runCalendarGateTimeAutoSync({
   await ensureAirportTimezonesLoaded();
   let mutated = false;
   let updatedCount = 0;
+  let pendingCount = 0;
   let failedCount = 0;
   const failureBuckets = {
     noAirlabsMatch: 0,
     airlabsLookupError: 0,
     lookupError: 0,
+    awaitingActualArrival: 0,
     missingActualTimes: 0,
     missingActualDeparture: 0,
     missingActualArrival: 0,
     timezoneMissing: 0,
     dateMismatch: 0,
-    applyFailed: 0
+    applyFailed: 0,
+    retryExhausted: 0
   };
   let lastLookupError = '';
   for (const candidate of candidates){
@@ -7448,7 +7642,6 @@ async function runCalendarGateTimeAutoSync({
       }
     }
     if (!flightMatch){
-      failedCount += 1;
       let failureReason = 'noAirlabsMatch';
       if (lookupErrorCount > 0){
         failureBuckets.lookupError += 1;
@@ -7460,7 +7653,17 @@ async function runCalendarGateTimeAutoSync({
         failureBuckets.applyFailed += 1;
         failureReason = 'applyFailed';
       }
-      setCalendarGateTimeSyncFailure(candidate.event, { provider: 'airlabs', reason: failureReason, nowMs: Date.now() });
+      const pendingState = setCalendarGateTimeSyncPending(candidate.event, {
+        provider: 'airlabs',
+        reason: failureReason,
+        nowMs: Date.now()
+      });
+      if (pendingState?.retryExhausted){
+        failedCount += 1;
+        failureBuckets.retryExhausted += 1;
+      } else {
+        pendingCount += 1;
+      }
       mutated = true;
       recordCalendarFr24Debug('match', {
         url: '',
@@ -7475,9 +7678,49 @@ async function runCalendarGateTimeAutoSync({
       continue;
     }
     const outcome = applyGateTimesToCalendarCandidate(candidate, gateTimes, { source: 'airlabs', nowMs: Date.now() });
-    if (outcome?.updated){
+    if (outcome?.completed && outcome?.updated){
+      setCalendarGateTimeSyncSuccess(candidate.event, {
+        provider: 'airlabs',
+        arrivalSource: 'actual',
+        nowMs: Date.now()
+      });
+      updatedCount += 1;
+    } else if (outcome?.pending){
+      const pendingState = setCalendarGateTimeSyncPending(candidate.event, {
+        provider: 'airlabs',
+        reason: outcome?.reason || 'awaitingActualArrival',
+        arrivalSource: outcome?.arrivalSource || null,
+        arrEstimatedMs: outcome?.arrEstimatedMs,
+        nowMs: Date.now()
+      });
+      if (outcome?.updated){
+        updatedCount += 1;
+      }
+      if (pendingState?.retryExhausted){
+        failedCount += 1;
+        failureBuckets.retryExhausted += 1;
+      } else {
+        pendingCount += 1;
+        if (failureBuckets[outcome?.reason] !== undefined){
+          failureBuckets[outcome.reason] += 1;
+        } else {
+          failureBuckets.awaitingActualArrival += 1;
+        }
+      }
+    } else if (outcome?.updated){
+      setCalendarGateTimeSyncSuccess(candidate.event, {
+        provider: 'airlabs',
+        arrivalSource: 'actual',
+        nowMs: Date.now()
+      });
       updatedCount += 1;
     } else {
+      setCalendarGateTimeSyncFailure(candidate.event, {
+        provider: 'airlabs',
+        reason: outcome?.reason || 'applyFailed',
+        arrivalSource: outcome?.arrivalSource || null,
+        nowMs: Date.now()
+      });
       failedCount += 1;
       const reason = outcome?.reason || 'applyFailed';
       if (failureBuckets[reason] !== undefined){
@@ -7500,6 +7743,9 @@ async function runCalendarGateTimeAutoSync({
     const arrActual = Number.isFinite(gateTimes?.gate_arrival)
       ? formatLocalDateTime(gateTimes.gate_arrival)
       : '—';
+    const arrEstimated = Number.isFinite(gateTimes?.gate_arrival_estimated)
+      ? formatLocalDateTime(gateTimes.gate_arrival_estimated)
+      : '—';
     recordCalendarFr24Debug('match', {
       url: '',
       responseText: [
@@ -7510,7 +7756,8 @@ async function runCalendarGateTimeAutoSync({
         `Matched: ${matchedIcao || '—'}${matchedIata ? ` (${matchedIata})` : ''}`,
         `Actual departure: ${depActual}`,
         `Actual arrival: ${arrActual}`,
-        `Result: ${outcome?.updated ? 'applied' : `failed (${outcome?.reason || 'applyFailed'})`}`
+        `Estimated arrival: ${arrEstimated}`,
+        `Result: ${outcome?.completed ? 'final actual applied' : (outcome?.pending ? `pending (${outcome?.reason || 'awaitingActualArrival'})` : `failed (${outcome?.reason || 'applyFailed'})`)}`
       ].join('\n')
     });
   }
@@ -7539,10 +7786,14 @@ async function runCalendarGateTimeAutoSync({
   }
   if (reportStatus){
     let message = `Updated ${updatedCount} flight${updatedCount === 1 ? '' : 's'}`;
+    if (pendingCount){
+      message += `, pending ${pendingCount}`;
+    }
     if (failedCount){
       message += `, failed ${failedCount}`;
       const parts = [];
       if (failureBuckets.noAirlabsMatch) parts.push(`no AirLabs match: ${failureBuckets.noAirlabsMatch}`);
+      if (failureBuckets.awaitingActualArrival) parts.push(`awaiting actual arrival: ${failureBuckets.awaitingActualArrival}`);
       if (failureBuckets.missingActualTimes) parts.push(`missing actual times: ${failureBuckets.missingActualTimes}`);
       if (failureBuckets.missingActualDeparture) parts.push(`missing actual departure: ${failureBuckets.missingActualDeparture}`);
       if (failureBuckets.missingActualArrival) parts.push(`missing actual arrival: ${failureBuckets.missingActualArrival}`);
@@ -7554,6 +7805,7 @@ async function runCalendarGateTimeAutoSync({
       if (failureBuckets.timezoneMissing) parts.push(`timezone missing: ${failureBuckets.timezoneMissing}`);
       if (failureBuckets.dateMismatch) parts.push(`date mismatch: ${failureBuckets.dateMismatch}`);
       if (failureBuckets.applyFailed) parts.push(`apply failed: ${failureBuckets.applyFailed}`);
+      if (failureBuckets.retryExhausted) parts.push(`retry exhausted: ${failureBuckets.retryExhausted}`);
       if (parts.length){
         message += ` (${parts.join(', ')})`;
       }
@@ -10722,7 +10974,14 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
       const minuteOffset = Math.max(0, Math.min(1440, segment.endOffsetMinutes));
       rightOffset = endCellRect.left - rowRect.left + ((minuteOffset / 1440) * endDayWidth);
     }
-    const segmentWidth = rightOffset - leftOffset;
+    let safeLeftOffset = leftOffset;
+    let safeRightOffset = rightOffset;
+    let segmentWidth = safeRightOffset - safeLeftOffset;
+    if (!Number.isFinite(segmentWidth) || segmentWidth <= 0){
+      safeLeftOffset = startCellRect.left - rowRect.left;
+      safeRightOffset = endCellRect.right - rowRect.left;
+      segmentWidth = safeRightOffset - safeLeftOffset;
+    }
     if (!Number.isFinite(segmentWidth) || segmentWidth <= 0) return;
     let topOffset = null;
     if (pairingOffsetsByDate instanceof Map && pairingOffsetsByDate.size){
@@ -10756,7 +11015,7 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
     if (segment.position === 'middle') bar.classList.add('is-middle');
     if (segment.position === 'single') bar.classList.add('is-single');
     bar.dataset.pairingId = segment.pairingId;
-    bar.style.left = `${leftOffset}px`;
+    bar.style.left = `${safeLeftOffset}px`;
     bar.style.top = `${topOffset}px`;
     bar.style.width = `${segmentWidth}px`;
     const deadheadKey = `${segment.pairingId}|${segment.weekIndex}`;
@@ -10797,8 +11056,8 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
         const minuteOffset = Math.max(0, Math.min(1440, dhSegment.endOffsetMinutes));
         overlayRight = endCellRect.left - rowRect.left + ((minuteOffset / 1440) * endDayWidth);
       }
-      const clippedLeft = Math.max(leftOffset, overlayLeft);
-      const clippedRight = Math.min(rightOffset, overlayRight);
+      const clippedLeft = Math.max(safeLeftOffset, overlayLeft);
+      const clippedRight = Math.min(safeRightOffset, overlayRight);
       const overlayWidth = clippedRight - clippedLeft;
       if (!Number.isFinite(overlayWidth) || overlayWidth <= 0) return;
       const overlay = document.createElement('div');
@@ -10846,8 +11105,8 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
         const minuteOffset = Math.max(0, Math.min(1440, extSegment.endOffsetMinutes));
         overlayRight = endCellRect.left - rowRect.left + ((minuteOffset / 1440) * endDayWidth);
       }
-      const clippedLeft = Math.max(leftOffset, overlayLeft);
-      const clippedRight = Math.min(rightOffset, overlayRight);
+      const clippedLeft = Math.max(safeLeftOffset, overlayLeft);
+      const clippedRight = Math.min(safeRightOffset, overlayRight);
       const overlayWidth = clippedRight - clippedLeft;
       if (!Number.isFinite(overlayWidth) || overlayWidth <= 0) return;
       const overlay = document.createElement('div');
@@ -10902,8 +11161,8 @@ function renderCalendarPairingRowSegments(container, range, pairingOffsetsByDate
         const minuteOffset = Math.max(0, Math.min(1440, cnxSegment.endOffsetMinutes));
         overlayRight = endCellRect.left - rowRect.left + ((minuteOffset / 1440) * endDayWidth);
       }
-      const clippedLeft = Math.max(leftOffset, overlayLeft);
-      const clippedRight = Math.min(rightOffset, overlayRight);
+        const clippedLeft = Math.max(safeLeftOffset, overlayLeft);
+        const clippedRight = Math.min(safeRightOffset, overlayRight);
       const overlayWidth = clippedRight - clippedLeft;
       if (!Number.isFinite(overlayWidth) || overlayWidth <= 0) return;
       const overlay = document.createElement('div');
@@ -11333,6 +11592,7 @@ function renderCalendarDetail(event, dateKey){
     : null;
   const now = Date.now();
   const windowEnd = now + CALENDAR_WEATHER_LOOKAHEAD_MS;
+  const arrivalEstimated = isCalendarEventArrivalEstimated(event);
   const segmentsLabel = Array.isArray(event?.segments) && event.segments.length
     ? event.segments
       .map((segment, index) => {
@@ -11368,7 +11628,10 @@ function renderCalendarDetail(event, dateKey){
         const toTag = showTags
           ? buildAirportTag(segment.to, arrMs, index, 'arr', legData)
           : buildAirportText(segment.to);
-        return `<span class="calendar-segment-line">${fromTag}<span class="calendar-segment-time${depClass}">${escapeHtml(dep)}</span><span class="calendar-segment-arrow">→</span>${toTag}<span class="calendar-segment-time${arrClass}">${escapeHtml(arr)}</span></span>`;
+        const estimatedTag = (arrivalEstimated && index === event.segments.length - 1)
+          ? '<span class="calendar-estimated-tag">Estimated</span>'
+          : '';
+        return `<span class="calendar-segment-line">${fromTag}<span class="calendar-segment-time${depClass}">${escapeHtml(dep)}</span><span class="calendar-segment-arrow">→</span>${toTag}<span class="calendar-segment-time${arrClass}">${escapeHtml(arr)}</span>${estimatedTag}</span>`;
       })
       .join('<br>')
     : '';
@@ -12062,6 +12325,7 @@ function renderCalendarPairingDetail(pairingId){
       dayEvents.forEach((event) => {
         const flight = document.createElement('div');
         flight.className = 'calendar-pairing-flight';
+        const arrivalEstimated = isCalendarEventArrivalEstimated(event);
         if (isDeadheadEvent(event)) flight.classList.add('is-deadhead');
         const flightCancellationClass = getCalendarCancellationClass(event);
         if (flightCancellationClass) flight.classList.add(flightCancellationClass);
@@ -12136,6 +12400,12 @@ function renderCalendarPairingDetail(pairingId){
             line.appendChild(arrow);
             line.appendChild(arrTag);
             line.appendChild(arrTime);
+            if (arrivalEstimated && segmentIndex === event.segments.length - 1){
+              const estimatedTag = document.createElement('span');
+              estimatedTag.className = 'calendar-estimated-tag';
+              estimatedTag.textContent = 'Estimated';
+              line.appendChild(estimatedTag);
+            }
             if (showTags){
               const segmentsWrap = document.createElement('div');
               segmentsWrap.className = 'calendar-wx-tags';
@@ -17806,12 +18076,12 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs schedules API (matched by route + flight code) for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent automatic resend attempts for that flight unless Force update is used. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync runs when due (first attempt 30 minutes after arrival). If dep_actual exists but arr_actual is missing, arrival temporarily uses arr_estimated (tagged Estimated) and retries at the later of now+1 hour or the estimated arrival time until arr_actual appears (max 5 attempts). A flight is only considered fully API-updated when arr_actual is applied; completed/manual flights are skipped in non-force sync. Force update ignores updated/retry guards but still skips CNX/CNX PP flights. If block cannot be computed, stored credit/block values are used. Imported pairings keep TRIP credit (minus CNX non-PP, plus block growth) until the first manual edit. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Manual/new or edited pairings use the greater of: (1) sum of duty-day credits (each duty day = max(total block, 4:25)) and (2) TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is removed from the base calculation and added back on top, and pairing credit will not drop below the pre-CNX PP total (as if CNX PP flights kept the original check-in/out). Monthly totals apply the same pairing credit logic and add vacation credit once. Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights are auto-checked only after arrival via AirLabs schedules API (matched by route + flight code) for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, are treated as manual timing edits for recalculation, and prevent automatic resend attempts for that flight unless Force update is used. If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
+    creditValue: 'Credit value multiplies the displayed monthly total credit by the calendar credit hourly rate. Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync starts at 30 minutes after arrival, uses dep_actual/arr_actual for final completion, and can temporarily use arr_estimated when arr_actual is pending; retries run up to 5 attempts. Completed/manual flights are skipped in non-force mode, while Force update can re-run eligible flights (still excluding CNX/CNX PP). If block cannot be computed, stored credit/block values are used. Block growth is auto-recomputed from per-flight credit changes when flight times change (deadheads at 50%); growth only counts after a duty day exceeds 4:25 and after any TTG floor is cleared. Pairing credit keeps imported TRIP credit until the first manual edit; manual/new or edited pairings use the greater of duty-day credits (each duty day = max(total block, 4:25)) and TAFB/4. Duty days are split by layovers between flights and the pairing start/end. CNX PP credit is added back on top of the base calculation and pairing credit will not drop below the pre-CNX PP total. Non-pairing days always use daily credit totals, and vacation credit is added once.',
     postOriginalCredit: 'Minutes of credit after the original last-flight arrival when a CNX PP pairing is extended.',
     associatedTtg: 'Additional TTG from extending the pairing past the original check-out (original to new check-out) divided by 4; shown when pairing credit uses TAFB/4.',
-    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights are auto-checked only after arrival via AirLabs schedules API (matched by route + flight code) for flights up to 30 hours old. Only actual timestamps are accepted (AirLabs dep/arr actuals; no estimated/scheduled fallback). Successful API timing updates set the event source to airlabs, update check-in/out, and prevent automatic resend attempts for that flight unless Force update is used. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
+    tafb: 'Pairing TAFB uses TRIP TAFB totals when available; otherwise it is calculated from check-in/out times. Manual pairings auto-set check-in/out from the first/last flight (75 min pre-departure, 15 min post-arrival) and use those times unless edited. Past flights in the last 30 hours are auto-checked via AirLabs by flight_icao only. Non-force sync starts 30 minutes after arrival, uses dep_actual/arr_actual for final completion, and if arr_actual is pending it uses arr_estimated temporarily then retries (later of +1 hour or estimated arrival) for up to 5 attempts. Completed/manual flights are skipped in non-force mode; Force update can re-run eligible flights. CNX/CNX PP flights are always excluded from API requests. If the original first or last flight is cancelled (CNX/CNX PP), TRIP and manual overrides are ignored and TAFB is recalculated from 75 minutes before the first non-cancelled departure to 15 minutes after the last non-cancelled arrival (blank if all flights cancel). Editing flight times counts as a manual edit and resets check-in/out to the first/last flight.',
     tafbValue: 'TAFB value converts total TAFB minutes to hours and multiplies by the fixed per diem rate of $5.427/hr. When a block-month range is set, totals reflect that range; otherwise they use the calendar month. Pairing TAFB uses updated boundary times from the first and last non-cancelled flights; if all boundary flights cancel, TAFB is blank.'
   },
   vo: {

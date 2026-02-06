@@ -3,7 +3,7 @@ main = "cloudflare-worker.js"
 compatibility_date = "2026-02-06"
 
 [triggers]
-crons = ["0 3 * * *", "0 4 * * *"]
+crons = ["*/15 * * * *"]
 
 [[kv_namespaces]]
 binding = "AC_PAY_CALENDAR"
