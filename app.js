@@ -117,7 +117,7 @@ const FR24_GATE_EVENT_TYPE_ALIASES = {
   gate_arrived: 'gate_arrival'
 };
 const FR24_GATE_EVENT_TYPES_REQUEST = [...FR24_GATE_EVENT_TYPES];
-const CALENDAR_AIRLABS_PROXY_PATH = '/airlabs/flight';
+const CALENDAR_AIRLABS_PROXY_PATH = '/airlabs/schedules';
 const CALENDAR_AIRLABS_REQUEST_DELAY_MS = 300;
 const CALENDAR_GATE_SYNC_LOOKBACK_MS = 30 * 60 * 60 * 1000;
 const CALENDAR_GATE_SYNC_INITIAL_DELAY_MS = 30 * 60 * 1000;
@@ -5562,12 +5562,29 @@ function buildCalendarPairingRowSegments(range){
   pairingMap.forEach((pairing) => {
     const pairingDays = pairing.days;
     if (!pairingDays.length) return;
-    const visibleDays = pairingDays.filter((dateKey) => isCalendarDateKeyInRange(dateKey, range));
+    const timing = getCalendarPairingTimingInfo(pairing.pairingId);
+    const visualPairingDays = pairingDays.slice();
+    let visualEndOffsetMinutes = Number.isFinite(timing.checkOutMinutes) ? timing.checkOutMinutes : null;
+    if (Number.isFinite(visualEndOffsetMinutes) && visualEndOffsetMinutes > 1440){
+      const spillDays = Math.floor(visualEndOffsetMinutes / 1440);
+      const remainderMinutes = visualEndOffsetMinutes - (spillDays * 1440);
+      const pairingEndDayMs = getDateKeyStartMs(pairingDays[pairingDays.length - 1]);
+      if (spillDays > 0 && Number.isFinite(pairingEndDayMs)){
+        for (let dayOffset = 1; dayOffset <= spillDays; dayOffset += 1){
+          const spillDateKey = getDateKeyFromMs(pairingEndDayMs + (dayOffset * 86400000));
+          if (!spillDateKey) continue;
+          if (!visualPairingDays.includes(spillDateKey)){
+            visualPairingDays.push(spillDateKey);
+          }
+        }
+        visualEndOffsetMinutes = remainderMinutes;
+      }
+    }
+    const visibleDays = visualPairingDays.filter((dateKey) => isCalendarDateKeyInRange(dateKey, range));
     if (!visibleDays.length) return;
     const label = getCalendarPairingBarLabel(pairing);
-    const timing = getCalendarPairingTimingInfo(pairing.pairingId);
-    const fullStartKey = pairingDays[0];
-    const fullEndKey = pairingDays[pairingDays.length - 1];
+    const fullStartKey = visualPairingDays[0];
+    const fullEndKey = visualPairingDays[visualPairingDays.length - 1];
     const pushSegment = (segmentStartKey, segmentEndKey, weekIndex) => {
       const isRangeStart = segmentStartKey === fullStartKey;
       const isRangeEnd = segmentEndKey === fullEndKey;
@@ -5582,7 +5599,7 @@ function buildCalendarPairingRowSegments(range){
         weekIndex,
         position,
         startOffsetMinutes: segmentStartKey === timing.firstDayKey ? timing.checkInMinutes : null,
-        endOffsetMinutes: segmentEndKey === timing.lastDayKey ? timing.checkOutMinutes : null
+        endOffsetMinutes: segmentEndKey === fullEndKey ? visualEndOffsetMinutes : null
       });
     };
     let currentWeekIndex = getCalendarWeekIndex(visibleDays[0], range.startKey);
@@ -7088,6 +7105,31 @@ function getCalendarEventArrivalMs(event, dateKey){
   return dayStartMs + (overnightMinutes * 60000);
 }
 
+function getCalendarEventDepartureMs(event, dateKey){
+  const normalizedDateKey = normalizeCalendarDateKey(dateKey || event?.date);
+  if (!normalizedDateKey) return NaN;
+  const dayStartMs = getDateKeyStartMs(normalizedDateKey);
+  if (!Number.isFinite(dayStartMs)) return NaN;
+  const departureMinutes = Number(event?.departureMinutes);
+  if (!Number.isFinite(departureMinutes)) return NaN;
+  return dayStartMs + (departureMinutes * 60000);
+}
+
+function getCalendarGateSyncReferenceMs(event, {
+  arrivalMs = NaN,
+  departureMs = NaN,
+  force = false,
+  nowMs = Date.now()
+} = {}){
+  if (!Number.isFinite(arrivalMs)) return NaN;
+  if (!force) return arrivalMs;
+  const status = String(event?.gateTimeSync?.status || '').trim().toLowerCase();
+  if (status !== 'pending') return arrivalMs;
+  if (arrivalMs <= nowMs) return arrivalMs;
+  if (Number.isFinite(departureMs)) return departureMs;
+  return arrivalMs;
+}
+
 function getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs){
   if (!Number.isFinite(arrivalAgeMs) || arrivalAgeMs < 0) return 'skip';
   if (arrivalAgeMs <= CALENDAR_GATE_SYNC_LOOKBACK_MS){
@@ -7404,8 +7446,18 @@ function collectCalendarGateSyncCandidates(eventsByDate, {
       const arrivalMs = getCalendarEventArrivalMs(event, normalizedDateKey);
       if (!Number.isFinite(arrivalMs)) return;
       if (!force && !isCalendarGateSyncDue(event, { arrivalMs, nowMs })) return;
-      const arrivalAgeMs = nowMs - arrivalMs;
-      if (arrivalMs < startMs || arrivalMs > endMs) return;
+      const departureMs = Number.isFinite(timing?.startMs)
+        ? timing.startMs
+        : getCalendarEventDepartureMs(event, normalizedDateKey);
+      const referenceMs = getCalendarGateSyncReferenceMs(event, {
+        arrivalMs,
+        departureMs,
+        force,
+        nowMs
+      });
+      if (!Number.isFinite(referenceMs)) return;
+      if (referenceMs < startMs || referenceMs > endMs) return;
+      const arrivalAgeMs = nowMs - referenceMs;
       const provider = getCalendarGateSyncProviderForArrivalAge(arrivalAgeMs);
       if (provider === 'skip') return;
       const flightIcaoCandidates = buildCalendarAirlabsFlightIcaoCandidates(flightInfo.prefix, flightInfo.number);
