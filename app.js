@@ -2118,6 +2118,36 @@ function parseDurationToMinutes(value){
   return Math.round(asNumber * 60);
 }
 
+function parseDurationOrCompactClockToMinutes(value){
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  if (text.includes(':')){
+    return parseDurationToMinutes(text);
+  }
+  if (/^\d{3,4}$/.test(text)){
+    const padded = text.padStart(4, '0');
+    const hours = Number(padded.slice(0, 2));
+    const minutes = Number(padded.slice(2));
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes < 0 || minutes > 59){
+      return NaN;
+    }
+    return (hours * 60) + minutes;
+  }
+  return NaN;
+}
+
+function parseDurationTokenToMinutes(value, { allowDecimalHours = false } = {}){
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  if (text.includes(':')) return parseDurationToMinutes(text);
+  if (/^\d{3,4}$/.test(text)) return parseDurationOrCompactClockToMinutes(text);
+  if (allowDecimalHours){
+    const asNumber = Number(text);
+    if (Number.isFinite(asNumber)) return Math.round(asNumber * 60);
+  }
+  return NaN;
+}
+
 function formatDurationMinutes(totalMinutes){
   if (!Number.isFinite(totalMinutes)) return '--:--';
   const safeMinutes = Math.max(0, Math.round(totalMinutes));
@@ -5039,8 +5069,11 @@ function getCalendarEventScheduleShiftMinutes(event, dateKey){
   };
 }
 
+const CALENDAR_TIME_SHIFT_HIGHLIGHT_THRESHOLD_MINUTES = 2;
+
 function getCalendarTimeShiftClass(shiftMinutes){
-  if (!Number.isFinite(shiftMinutes) || shiftMinutes === 0) return '';
+  if (!Number.isFinite(shiftMinutes)) return '';
+  if (Math.abs(shiftMinutes) < CALENDAR_TIME_SHIFT_HIGHLIGHT_THRESHOLD_MINUTES) return '';
   return shiftMinutes < 0 ? ' is-early' : ' is-late';
 }
 
@@ -5310,13 +5343,30 @@ function normalizeCalendarState(){
       if (!Array.isArray(event.identifiers)) event.identifiers = [];
       if (!Array.isArray(event.legs)) event.legs = [];
       if (!Array.isArray(event.segments)) event.segments = [];
-      if (!Number.isFinite(event.blockGrowthMinutes)) event.blockGrowthMinutes = 0;
-      if (!Number.isFinite(event.blockMinutes)) event.blockMinutes = null;
-      if (!Number.isFinite(event.departureMinutes)) event.departureMinutes = null;
-      if (!Number.isFinite(event.arrivalMinutes)) event.arrivalMinutes = null;
-      if (!Number.isFinite(event.originalDepartureMinutes)) event.originalDepartureMinutes = null;
-      if (!Number.isFinite(event.originalArrivalMinutes)) event.originalArrivalMinutes = null;
-      if (!Number.isFinite(event.originalBlockMinutes)) event.originalBlockMinutes = null;
+      event.blockGrowthMinutes = Number.isFinite(event.blockGrowthMinutes)
+        ? Math.max(0, Math.round(Number(event.blockGrowthMinutes)))
+        : 0;
+      const normalizedBlock = Number(event.blockMinutes);
+      event.blockMinutes = Number.isFinite(normalizedBlock) ? Math.max(0, normalizedBlock) : null;
+      event.departureMinutes = normalizeCalendarStoredClockMinutes(event.departureMinutes);
+      event.arrivalMinutes = normalizeCalendarStoredClockMinutes(event.arrivalMinutes, { allowNextDayOffset: true });
+      event.originalDepartureMinutes = normalizeCalendarStoredClockMinutes(event.originalDepartureMinutes);
+      event.originalArrivalMinutes = normalizeCalendarStoredClockMinutes(event.originalArrivalMinutes, { allowNextDayOffset: true });
+      const normalizedOriginalBlock = Number(event.originalBlockMinutes);
+      event.originalBlockMinutes = Number.isFinite(normalizedOriginalBlock)
+        ? Math.max(0, normalizedOriginalBlock)
+        : null;
+      if (shouldRepairCalendarEventOriginalBaseline(event)){
+        event.originalDepartureMinutes = Number.isFinite(event.departureMinutes) ? event.departureMinutes : null;
+        event.originalArrivalMinutes = Number.isFinite(event.arrivalMinutes) ? event.arrivalMinutes : null;
+        const blockFallback = Number.isFinite(event.blockMinutes)
+          ? event.blockMinutes
+          : Number(event.creditMinutes);
+        event.originalBlockMinutes = Number.isFinite(blockFallback)
+          ? Math.max(0, blockFallback)
+          : null;
+        event.blockGrowthMinutes = 0;
+      }
       return event;
     }).filter(Boolean);
     const pairingIdFromEvents = getCalendarPairingIdFromEvents(day.events);
@@ -7304,6 +7354,7 @@ function updateCalendarPairingMetrics(targetEventsByDate = calendarState.eventsB
       day.pairing.thgMinutes = thgTotal || null;
     });
     ensureCalendarPairingOriginalTimes(pairing.pairingId, targetEventsByDate);
+    recomputeCalendarBlockGrowthForPairing(pairing.pairingId, targetEventsByDate);
   });
 }
 
@@ -9498,6 +9549,57 @@ function parseScheduleClock(value){
   return NaN;
 }
 
+function normalizeCalendarStoredClockMinutes(value, { allowNextDayOffset = false } = {}){
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  let minutes = NaN;
+  if (text.includes(':') || /^\d{3,4}$/.test(text)){
+    minutes = parseScheduleClock(text);
+  }
+  if (!Number.isFinite(minutes)){
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return null;
+    minutes = numeric;
+    if (Number.isInteger(numeric) && numeric >= 1000 && numeric <= 2359){
+      const compactMinutes = parseScheduleClock(String(Math.trunc(numeric)).padStart(4, '0'));
+      if (Number.isFinite(compactMinutes)) minutes = compactMinutes;
+    }
+  }
+  if (!allowNextDayOffset){
+    if (minutes < 0 || minutes > 1439) return null;
+  } else if (minutes < 0){
+    return null;
+  }
+  return minutes;
+}
+
+function getCalendarClockDriftMinutes(currentMinutes, originalMinutes){
+  if (!Number.isFinite(currentMinutes) || !Number.isFinite(originalMinutes)) return NaN;
+  const options = [originalMinutes - 1440, originalMinutes, originalMinutes + 1440];
+  let smallest = Infinity;
+  options.forEach((candidate) => {
+    const drift = Math.abs(currentMinutes - candidate);
+    if (drift < smallest) smallest = drift;
+  });
+  return Number.isFinite(smallest) ? smallest : NaN;
+}
+
+function shouldRepairCalendarEventOriginalBaseline(event){
+  if (!event || typeof event !== 'object') return false;
+  const source = String(event.timeSource || '').trim().toLowerCase();
+  if (source === 'manual' || source === 'airlabs') return false;
+  const currentDep = Number(event.departureMinutes);
+  const currentArr = Number(event.arrivalMinutes);
+  const originalDep = Number(event.originalDepartureMinutes);
+  const originalArr = Number(event.originalArrivalMinutes);
+  const depDrift = getCalendarClockDriftMinutes(currentDep, originalDep);
+  const arrDrift = getCalendarClockDriftMinutes(currentArr, originalArr);
+  const repairThreshold = 10 * 60;
+  return (Number.isFinite(depDrift) && depDrift > repairThreshold)
+    || (Number.isFinite(arrDrift) && arrDrift > repairThreshold);
+}
+
 function extractFirstClockFromLine(line){
   const match = String(line || '').match(/\b(\d{1,2}:\d{2}|\d{3,4})\b/);
   if (!match) return NaN;
@@ -10835,6 +10937,16 @@ function parsePastedScheduleText(text){
   lines.forEach((line) => {
     let workingLine = line.trim();
     if (!workingLine) return;
+    const packagePairingMatch = workingLine.match(/^T(\d{3,5})\b/i);
+    if (packagePairingMatch && /\bOPERAT|BASE\/DOM/i.test(workingLine)){
+      finalizeDay();
+      currentDateKey = null;
+      currentLines = [];
+      const pairingToken = `T${packagePairingMatch[1]}`;
+      ensurePairing(pairingToken, true);
+      workingLine = workingLine.replace(packagePairingMatch[0], '').trim();
+      if (!workingLine) return;
+    }
     const pairingMatch = workingLine.match(/\bPairing\s*#?\s*([A-Z0-9]{2,6})\b/i);
     if (pairingMatch){
       ensurePairing(pairingMatch[1]);
@@ -10936,6 +11048,7 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
     const trimmed = String(line || '').trim();
     if (!trimmed) return;
     const durations = trimmed.match(/\d{1,2}:\d{2}/g) || [];
+    const compactDurationTokens = trimmed.match(/\b\d{1,3}:\d{2}\b|\b\d{3,4}\b/g) || [];
     if (/\bC\/I\b/i.test(trimmed)){
       const minutes = extractFirstClockFromLine(trimmed);
       if (Number.isFinite(minutes)) checkInMinutes = minutes;
@@ -10963,9 +11076,9 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
         return;
       }
     }
-    const tripCreditMatch = trimmed.match(/\bTRIP\b\s+(\d{1,3}:\d{2})\b/i);
+    const tripCreditMatch = trimmed.match(/\bTRIP\b\s+(\d{1,3}:\d{2}|\d{3,4})\b/i);
     if (tripCreditMatch){
-      const minutes = parseDurationToMinutes(tripCreditMatch[1]);
+      const minutes = parseDurationTokenToMinutes(tripCreditMatch[1]);
       if (Number.isFinite(minutes)){
         tripCreditMinutes = minutes;
         if (pairingContext){
@@ -10973,19 +11086,19 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
         }
       }
     }
-    const tafbMatch = trimmed.match(/TRIP TAFB\s+(\d{1,3}:\d{2})/i);
+    const tafbMatch = trimmed.match(/\bTRIP\s+TAFB\b\s+(\d{1,3}:\d{2}|\d{3,4})/i);
     if (tafbMatch){
-      const minutes = parseDurationToMinutes(tafbMatch[1]);
+      const minutes = parseDurationTokenToMinutes(tafbMatch[1]);
       if (Number.isFinite(minutes)){
         tripTafbMinutes = minutes;
         if (pairingContext){
           pairingContext.tripTafbMinutes = minutes;
         }
       }
-      const tafbDurations = trimmed.match(/\d{1,3}:\d{2}/g) || [];
+      const tafbDurations = compactDurationTokens;
       const tripCreditToken = tafbDurations.length ? tafbDurations[tafbDurations.length - 1] : null;
       if (tripCreditToken){
-        const creditMinutes = parseDurationToMinutes(tripCreditToken);
+        const creditMinutes = parseDurationTokenToMinutes(tripCreditToken);
         if (Number.isFinite(creditMinutes)){
           tripCreditMinutes = creditMinutes;
           if (pairingContext){
@@ -10993,17 +11106,42 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
           }
         }
       }
-      const thgMatch = trimmed.match(/\bTHG\s+(\d{1,3}:\d{2})/i);
+      const thgMatch = trimmed.match(/\bTHG\s+(\d{1,3}:\d{2}|\d{3,4})/i);
       if (thgMatch){
-        const thgValue = parseDurationToMinutes(thgMatch[1]);
+        const thgValue = parseDurationTokenToMinutes(thgMatch[1]);
         if (Number.isFinite(thgValue)){
           thgMinutes = Number.isFinite(thgMinutes) ? thgMinutes + thgValue : thgValue;
         }
       }
     }
+    if (/TAFB\/PTDB/i.test(trimmed)){
+      const tafbSummaryMatch = trimmed.match(/\bTAFB\/PTDB\b[^\d]*(\d{1,3}:\d{2}|\d{3,4})\b/i);
+      if (tafbSummaryMatch){
+        const tafbSummaryMinutes = parseDurationTokenToMinutes(tafbSummaryMatch[1]);
+        if (Number.isFinite(tafbSummaryMinutes)){
+          tripTafbMinutes = tafbSummaryMinutes;
+          if (pairingContext){
+            pairingContext.tripTafbMinutes = tafbSummaryMinutes;
+          }
+        }
+      }
+      const totalTailMatch = trimmed.match(/\bTOTAL\b[^\d]*(?:-\s*)?((?:\d{1,3}:\d{2}|\d{3,4})(?:\s+(?:\d{1,3}:\d{2}|\d{3,4}))*)\s*$/i);
+      if (totalTailMatch){
+        const totalTokens = totalTailMatch[1].trim().split(/\s+/);
+        const totalCreditToken = totalTokens[totalTokens.length - 1];
+        const parsedTotalCredit = parseDurationTokenToMinutes(totalCreditToken);
+        if (Number.isFinite(parsedTotalCredit)){
+          tripCreditMinutes = parsedTotalCredit;
+          if (pairingContext){
+            pairingContext.tripCreditMinutes = parsedTotalCredit;
+          }
+        }
+      }
+    }
     const extraMatch = trimmed.match(/^(DPG|THG)\b/i);
-    if (extraMatch && durations.length){
-      const minutes = parseDurationToMinutes(durations[durations.length - 1]);
+    if (extraMatch){
+      const extraTokenMatch = trimmed.match(/\b(\d{1,3}:\d{2}|\d{3,4})\s*$/);
+      const minutes = extraTokenMatch ? parseDurationTokenToMinutes(extraTokenMatch[1]) : NaN;
       if (Number.isFinite(minutes)){
         if (!Number.isFinite(summaryCreditMinutes)) summaryCreditMinutes = minutes;
         if (extraMatch[1].toUpperCase() === 'DPG'){
@@ -11043,6 +11181,9 @@ function buildCalendarEventFromText(dateKey, lines, pairingContext){
         segments,
         departureMinutes: Number.isFinite(departureMinutes) ? departureMinutes : null,
         arrivalMinutes: Number.isFinite(arrivalMinutes) ? arrivalMinutes : null,
+        originalDepartureMinutes: Number.isFinite(departureMinutes) ? departureMinutes : null,
+        originalArrivalMinutes: Number.isFinite(arrivalMinutes) ? arrivalMinutes : null,
+        originalBlockMinutes: Number.isFinite(blockMinutes) ? blockMinutes : null,
         cancellation: cancellationStatus || null,
         blockGrowthMinutes: 0,
         pairingId: pairing?.pairingId || ''
@@ -19299,9 +19440,9 @@ const INFO_COPY = {
     marginalProv: 'Marginal provincial/territorial tax rate based on annualized taxable income.'
   },
   calendar: {
-    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Imported pairings keep TRIP credit until first manual edit; manual/new or edited pairings use guarantee logic. Classic mode compares duty-day credit vs TTG (TAFB/4). Aligned mode uses A13.15 logic: greater of duty-day value (sum of max FTC vs DPG where DPG=max(4:25,FDP/2)), TTG, and ADG (4:30/day effective January 2027 block period) with red-eye 4:25/day pre-ADG where applicable. CNX PP credit is removed from the base calculation and added back on top, with pre-CNX PP floor protection.',
+    pairingCredit: 'Per-flight credit uses block time computed from departure/arrival with time-zone/DST awareness; deadheads earn 50% of block except when ending after the original last-flight arrival on a CNX PP extension (full block). Imported pairings keep TRIP credit until first manual edit; manual/new or edited pairings use guarantee logic. Classic mode compares duty-day credit vs TTG (TAFB/4). Aligned mode uses A13.15 logic: greater of duty-day value (sum of max FTC vs DPG where DPG=max(4:25,FDP/2)), TTG, and ADG (4:30/day effective January 2027 block period) with red-eye 4:25/day pre-ADG where applicable. CNX PP credit is removed from the base calculation and added back on top, with pre-CNX PP floor protection. Block-growth minutes are recomputed from original-vs-current leg times whenever pairing metrics refresh, and stale imported baselines are reset to the current schedule to prevent phantom growth.',
     cancellation: 'Cancellation status applies visual styling only (CNX vs CNX PP) and does not adjust credit or block totals.',
-    creditValue: 'Credit value multiplies displayed monthly total credit by the calendar credit hourly rate. Pairing credit follows the same Classic/Aligned guarantee logic described in Total credit (including DPG/TTG/ADG or red-eye guarantees in Aligned mode), plus CNX PP floor handling and block-growth rules.',
+    creditValue: 'Credit value multiplies displayed monthly total credit by the calendar credit hourly rate. Pairing credit follows the same Classic/Aligned guarantee logic described in Total credit (including DPG/TTG/ADG or red-eye guarantees in Aligned mode), plus CNX PP floor handling and recomputed block-growth rules.',
     postOriginalCredit: 'Minutes of credit after the original last-flight arrival when a CNX PP pairing is extended.',
     associatedTtg: 'Additional TTG from extending the pairing past the original check-out (original to new check-out) divided by 4; shown when pairing credit uses TAFB/4.',
     premiumOverride: 'Aligned mode flags draft/premium/override exposure from A30/A32 logic: 100% draft premium outside original pairing window (A30.08.01), 50% DoG override on applicable inside-window leg portions (A30.08.03), and associated TTG/ADG/red-eye guarantee premiums where extension increases guarantees.',
